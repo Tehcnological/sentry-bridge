@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Signal</title>
+  <g id="signal" fill="none" stroke="#3FA9F5" stroke-width="50" stroke-linecap="round">
+    <path d="M198,580 A242,242 0 0 0 440,822"/>
+    <path d="M77,580 A363,363 0 0 0 440,943"/>
+    <path d="M-44,580 A484,484 0 0 0 440,1064"/>
+  </g>
+</svg>

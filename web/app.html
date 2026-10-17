@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Sentry Bridge</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body class="dark">
+  <a class="skip" href="#bridge-panel">Skip to controls</a>
+  <div class="preview-bar">
+    <span id="adapter-label">Preview · sample data</span>
+    <div class="preview-options">
+      <label>Platform<select id="host"><option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option><option value="android">Android</option><option value="pi">Raspberry Pi</option><option value="esp32">ESP32</option></select></label>
+      <label>State<select id="scenario"><option value="stopped">Stopped</option><option value="waiting">Waiting</option><option value="running">Receiving</option><option value="lost">Disconnected</option><option value="mode">Mode off</option></select></label>
+    </div>
+  </div>
+  <main>
+    <header class="app-header">
+      <h1>Sentry Bridge</h1>
+    </header>
+    <nav class="tabbar" aria-label="Bridge sections">
+      <div class="tabs" role="tablist" aria-label="Bridge sections">
+        <button id="bridge-tab" role="tab" aria-selected="true" aria-controls="bridge-panel">Bridge</button>
+        <button id="settings-tab" role="tab" aria-selected="false" aria-controls="settings-panel" tabindex="-1">Settings</button>
+        <button id="diagnostics-tab" role="tab" aria-selected="false" aria-controls="diagnostics-panel" tabindex="-1">Diagnostics</button>
+      </div>
+    </nav>
+    <div class="status-column">
+    <section class="group receiver" aria-labelledby="receiver-heading">
+      <div class="receiver-top">
+        <!-- Phosphor Icons "broadcast" (fill), the web stand-in for the iOS antenna.radiowaves.left.and.right symbol.
+        MIT License
+
+        Copyright (c) 2023 Phosphor Icons
+
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+
+        The above copyright notice and this permission notice shall be included in all
+        copies or substantial portions of the Software.
+
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+        -->
+        <svg class="receiver-mark" viewBox="0 0 256 256" width="40" height="40" fill="currentColor" aria-hidden="true" focusable="false"><path d="M168,128a40,40,0,1,1-40-40A40,40,0,0,1,168,128Zm40,0a79.74,79.74,0,0,0-20.37-53.33,8,8,0,1,0-11.92,10.67,64,64,0,0,1,0,85.33,8,8,0,0,0,11.92,10.67A79.79,79.79,0,0,0,208,128ZM80.29,85.34A8,8,0,1,0,68.37,74.67a79.94,79.94,0,0,0,0,106.67,8,8,0,0,0,11.92-10.67,63.95,63.95,0,0,1,0-85.33Zm158.28-4A119.48,119.48,0,0,0,213.71,44a8,8,0,1,0-11.42,11.2,103.9,103.9,0,0,1,0,145.56A8,8,0,1,0,213.71,212,120.12,120.12,0,0,0,238.57,81.29ZM32.17,168.48A103.9,103.9,0,0,1,53.71,55.22,8,8,0,1,0,42.29,44a119.87,119.87,0,0,0,0,168,8,8,0,1,0,11.42-11.2A103.61,103.61,0,0,1,32.17,168.48Z"/></svg>
+        <div><span class="receiver-label">Receiver</span><h2 id="receiver-heading">Stopped</h2></div>
+      </div>
+      <button id="start" class="primary">Start</button>
+      <dl class="stats" aria-label="Sample receiver status"><div><dt>GPS</dt><dd id="gps">-</dd></div><div><dt>Traffic</dt><dd id="traffic">-</dd></div><div><dt>Weather frames</dt><dd id="weather">-</dd></div><div><dt>Last packet</dt><dd id="age">-</dd></div></dl>
+    </section>
+    <div class="warning" id="warning" role="status" hidden></div>
+    <a class="update-note" id="update-note" target="_blank" rel="noopener noreferrer" hidden></a>
+    </div>
+    <div id="bridge-panel" class="tab-panel" role="tabpanel" aria-labelledby="bridge-tab" tabindex="0">
+      <section class="destination-section" aria-labelledby="destination-heading">
+        <h2 id="destination-heading" class="group-title">EFB setup</h2>
+        <div class="group">
+          <div class="destination-options segmented">
+            <label><input type="radio" name="topology" value="same" id="same"><span>This device</span></label>
+            <label><input type="radio" name="topology" value="network" id="network" checked><span>Other device</span></label>
+          </div>
+          <label class="field" id="address-field">IP address<input id="address" type="text" inputmode="decimal" placeholder="192.168.x.x" maxlength="15" autocomplete="off"></label>
+          <div class="discovery live-controls" id="discovery" hidden><button id="find-efb">Find EFB</button><ul id="discovered" class="discovered" aria-live="polite"></ul></div>
+          <details class="setup-details"><summary>Connection details</summary><div><p id="topology-help"></p><p>In the EFB, choose a Stratux or GDL90 device. Ports are in Settings.</p></div></details>
+          <div class="route-footer"><span id="route-summary">UDP 4000</span><button id="check">Check setup</button></div>
+          <div id="validation" class="validation" role="status" hidden></div>
+        </div>
+      </section>
+    </div>
+    <section id="settings-panel" class="tab-panel settings-panel" role="tabpanel" aria-labelledby="settings-tab" tabindex="0" hidden>
+      <section class="live-controls" aria-labelledby="receiver-settings-heading" hidden>
+        <h2 id="receiver-settings-heading" class="group-title">Receiver</h2>
+        <div class="group">
+          <label class="setting-row"><span>Compatibility Mode <small id="mode-value">Not checked</small></span><input id="compatibility" aria-label="Compatibility Mode" type="checkbox" role="switch" disabled></label>
+          <label class="setting-row"><span>Automatic restoration</span><input id="auto-restore" type="checkbox" role="switch" checked></label>
+          <label class="setting-row" id="auto-start-row" hidden><span>Start bridge on boot</span><input id="auto-start" type="checkbox" role="switch" checked></label>
+          <label class="setting-row" id="update-row" hidden><span>Check for updates <small>Once a day from GitHub, while the bridge is stopped</small></span><input id="update-check" type="checkbox" role="switch"></label>
+          <div class="actions"><button data-action="read">Read receiver</button><span id="power-value">Power Savings: not checked</span></div>
+          <div class="actions"><a id="receiver-web" href="http://192.168.4.1/settings/" target="_blank" rel="noopener noreferrer">Open Sentry web settings</a></div>
+          <details><summary>Mode verification</summary>
+            <label class="setting-row"><span>Backup before enabling</span><input id="mode-backup" type="checkbox" role="switch" checked></label>
+            <label class="setting-row"><span>Verify received packets</span><input id="mode-verify" type="checkbox" role="switch" checked></label>
+            <label class="field">Verification duration (seconds)<input id="verify-seconds" type="number" value="3" min="1" max="30"></label>
+          </details>
+          <details><summary>Bridge settings</summary>
+            <div class="form-grid">
+              <label class="field">Receiver IP<input id="sentry-ip" type="text" value="192.168.4.1" maxlength="15"></label>
+              <label class="field">Receiver UDP port<input id="listen-port" type="number" value="4000" min="1" max="65535"></label>
+              <label class="field">EFB UDP port<input id="efb-port" type="number" value="4000" min="1" max="65535"></label>
+              <label class="field">Receiver HTTP port<input id="http-port" type="number" value="80" min="1" max="65535"></label>
+              <label class="field">Ownship ICAO<input id="ownship" type="text" maxlength="6" autocomplete="off"></label>
+              <label class="field">Reference latitude<input id="ref-lat" type="number" min="-90" max="90" step="any"></label>
+              <label class="field">Reference longitude<input id="ref-lon" type="number" min="-180" max="180" step="any"></label>
+              <label class="field">Target expiry (seconds)<input id="stale" type="number" value="15" min="1" max="60" step="any"></label>
+              <label class="field">Report interval (seconds)<input id="interval" type="number" value="1" min="0.1" max="10" step="any"></label>
+              <label class="field">Log interval (seconds)<input id="stats-interval" type="number" value="10" min="1" max="600"></label>
+              <label class="field">EFB discovery port (0 = off)<input id="announce-port" type="number" value="63093" min="0" max="65535"></label>
+            </div>
+            <label class="setting-row"><span>Relay GPS, heartbeat and weather</span><input id="relay" type="checkbox" role="switch" checked></label>
+            <p class="detail-note">Blank receiver IP accepts any source. Blank reference uses receiver GPS or global position decoding. An EFB on this device with the EFB port equal to the receiver port shares that port.</p>
+          </details>
+          <div class="actions"><button id="save-settings">Save settings</button><span id="settings-result" role="status"></span></div>
+        </div>
+        <p class="group-footer">Power Savings can be disabled in Sentry's own web settings. ForeFlight is optional.</p>
+      </section>
+      <h2 class="group-title">Appearance</h2>
+      <div class="group">
+        <label class="setting-row"><span>Theme</span><select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+        <label class="setting-row"><span>Reduced motion</span><input type="checkbox" role="switch" id="motion"></label>
+        <label class="setting-row" id="expressive-row" hidden><span>Material 3 Expressive <small>Android style</small></span><input type="checkbox" role="switch" id="expressive"></label>
+      </div>
+      <h2 class="group-title">Compatibility</h2>
+      <div class="group">
+        <a class="setting-row link-row limits-link" href="https://github.com/Tehcnological/sentry-bridge/blob/master/docs/Compatibility.md" target="_blank" rel="noopener noreferrer"><span>Compatibility and limitations</span></a>
+      </div>
+      <h2 class="group-title">Legal</h2>
+      <div class="group">
+        <a class="setting-row link-row" href="/privacy.html"><span>Privacy</span></a>
+        <a class="setting-row link-row" href="/legal.html"><span>Licenses</span></a>
+      </div>
+      <div class="live-controls actions exit" hidden><button id="quit" class="destructive">Exit Sentry Bridge</button></div>
+    </section>
+    <section id="diagnostics-panel" class="tab-panel" role="tabpanel" aria-labelledby="diagnostics-tab" tabindex="0" hidden>
+      <h2 class="group-title">Diagnostics</h2>
+      <div class="group">
+        <dl class="diagnostics"><div><dt>Mode</dt><dd id="diagnostic-mode">Preview, no live forwarding</dd></div><div><dt>Receiver input</dt><dd id="diagnostic-input">UDP 4000</dd></div><div><dt>Output</dt><dd id="output-summary">Not configured</dd></div><div><dt>Decoder</dt><dd id="engine">-</dd></div><div><dt>EFB display</dt><dd>Unverified</dd></div><div><dt>Weather display</dt><dd>Unverified</dd></div></dl>
+      </div>
+      <div class="live-controls" hidden>
+        <div id="operation" class="operation" role="status"></div>
+        <h2 class="group-title">Tools</h2>
+        <div class="group">
+          <details><summary>Receiver tools</summary>
+            <div class="actions"><button data-action="read">Read status</button><button data-action="backup">Backup settings</button><button id="check-mode">Check mode</button></div>
+            <label class="field narrow">Mode check (seconds)<input id="check-seconds" type="number" value="8" min="1" max="30"></label>
+            <pre id="device-status" class="tool-output" hidden></pre>
+            <div class="actions"><button data-action="logs">List receiver logs</button></div>
+            <div class="form-grid"><label class="field">Receiver log<select id="receiver-logs"><option value="all">All logs</option></select></label><label class="field">Limit per log (MiB)<input id="log-limit" type="number" value="20" min="1" max="20"></label></div>
+            <div class="actions"><button id="get-logs">Download receiver logs</button></div>
+          </details>
+          <details><summary>Packet capture</summary>
+            <div class="form-grid"><label class="field">Duration (seconds; 0 = until stopped)<input id="capture-seconds" type="number" value="0" min="0" max="3600"></label><label class="field">Analysis port<input id="analysis-port" type="number" value="4000" min="1" max="65535"></label></div>
+            <div class="actions"><button id="capture-start">Record packets</button><button id="capture-stop" disabled>Stop recording</button></div>
+            <label class="field">Import capture<input id="capture-upload" type="file" accept=".jsonl,.pcap,.pcapng"></label>
+            <label class="field">Capture<select id="analysis-capture"></select></label>
+            <label class="field narrow">Hex samples per message ID<input id="hex-samples" type="number" value="3" min="0" max="10"></label>
+            <div class="actions"><button id="analyze">Analyze capture</button></div>
+            <p class="detail-note">Recordings contain position and device data. Files stay on this bridge until you download them. Recording stops at 32 MiB.</p>
+          </details>
+          <details><summary>Weather comparison</summary>
+            <div class="form-grid"><label class="field">Receiver capture<select id="weather-source"></select></label><label class="field">EFB capture<select id="weather-output"></select></label><label class="field">Receiver input port<input id="weather-input-port" type="number" value="4000" min="1" max="65535"></label><label class="field">EFB output port<input id="weather-output-port" type="number" value="4001" min="1" max="65535"></label></div>
+            <div class="actions"><button id="compare-weather">Compare weather frames</button></div>
+            <p class="detail-note">Checks recorded frames; does not verify EFB weather display.</p>
+          </details>
+          <details><summary>WebSocket diagnostics</summary>
+            <div class="form-grid"><label class="field">Path<input id="ws-path" type="text" value="/" maxlength="256"></label><label class="field">Duration (seconds)<input id="ws-seconds" type="number" value="10" min="1" max="60"></label></div>
+            <div class="actions"><button id="probe-ws">Probe receiver WebSocket</button></div>
+          </details>
+          <details><summary>Simulator</summary>
+            <label class="setting-row"><span>Use simulator</span><input id="simulator" type="checkbox" role="switch"></label>
+            <label class="setting-row"><span>GPS fix</span><input id="sim-gps" type="checkbox" role="switch" checked></label>
+            <label class="setting-row"><span>UAT traffic</span><input id="sim-uat" type="checkbox" role="switch" checked></label>
+            <label class="setting-row"><span>Weather frames</span><input id="sim-weather" type="checkbox" role="switch" checked></label>
+            <p class="detail-note">Stop the bridge before changing receiver. Simulator output is limited to this device.</p>
+          </details>
+          <details><summary>Files</summary><div id="files"></div></details>
+          <details><summary>Bridge log</summary><pre id="bridge-log" class="tool-output"></pre></details>
+          <details><summary>Last result</summary><pre id="tool-result" class="tool-output"></pre></details>
+        </div>
+      </div>
+    </section>
+    <dialog id="limits-dialog" class="limits-dialog" aria-labelledby="limits-title">
+        <h2 id="limits-title">Compatibility and limitations</h2>
+        <p>Check what Sentry Bridge provides on this platform before relying on it in flight.</p>
+        <p><a class="limits-link" href="https://github.com/Tehcnological/sentry-bridge/blob/master/docs/Compatibility.md" target="_blank" rel="noopener noreferrer">Read compatibility and limitations</a></p>
+        <p class="detail-note">This link is also at the bottom of Settings.</p>
+        <label class="check-row"><input type="checkbox" id="limits-hide"><span>Don't show again</span></label>
+        <div class="dialog-actions"><button type="button" id="limits-cancel">Cancel</button><button type="button" id="limits-start" class="primary">Start</button></div>
+    </dialog>
+  </main>
+</body>
+</html>

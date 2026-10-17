@@ -1,0 +1,34 @@
+{
+  "fill": {
+    "solid": "srgb:0.05490,0.16471,0.27843,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "4-aircraft.svg",
+          "name": "4-aircraft"
+        }
+      ]
+    },
+    {
+      "layers": [
+        {
+          "image-name": "3-signal.svg",
+          "name": "3-signal"
+        }
+      ]
+    },
+    {
+      "layers": [
+        {
+          "image-name": "2-rings.svg",
+          "name": "2-rings"
+        }
+      ]
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

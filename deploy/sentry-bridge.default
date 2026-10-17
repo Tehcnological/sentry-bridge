@@ -1,0 +1,9 @@
+# Options for bridge.py (see: bridge.py --help)
+# --auto-enable is required in the cockpit: compatibility mode resets on every Sentry power-up.
+# It re-enables only after a power cycle, never after Disable is pressed in ForeFlight.
+# Set your aircraft's ICAO hex so it isn't shown as traffic, e.g. --ownship-icao A1B2C3
+# Add --relay if tablets connect to a different network than the Sentry's.
+# Add --log-raw /var/lib/sentry-bridge/raw.jsonl to record flights (uses SD card space).
+# Required: the tablet's IPv4 address on the Sentry WiFi. The bridge sends only there (no broadcast)
+# and will not start until 192.168.4.X is replaced with that address.
+BRIDGE_ARGS="--dest 192.168.4.X:4000 --auto-enable"

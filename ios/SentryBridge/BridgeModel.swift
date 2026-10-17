@@ -1,0 +1,354 @@
+import Foundation
+import SwiftUI
+import UIKit
+import Network
+import BackgroundTasks
+
+// Cancellation is shared only with the scheduler submission queue.
+private final class SessionSubmission: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+}
+
+@MainActor final class BridgeModel: ObservableObject {
+    /// The app and its intents share this one model, so there is never a second worker.
+    static let shared = BridgeModel()
+    @Published var settings: BridgeSettings
+    @Published var snapshot = BridgeSnapshot()
+    @Published var state = "Stopped"
+    @Published var message: String?
+    @Published var busy = false
+    @Published var sessionActive = false
+    @Published var localNetworkDenied = false
+    @Published var discoveryVisible = false
+    @Published var findingEFBs = false
+    @Published var discoveredEFBs: [DiscoveredEFB] = []
+    @Published var discoveryMessage: String?
+    private var discoveryWorker: BridgeWorker?
+    private var discoveryTask: Task<Void, Never>?
+    private var discoveryToken = UUID()
+    @Published private(set) var diagnosticLines: [String] = []
+    private var lastDiagnosticSample = -30.0
+    var diagnosticReport: String { diagnosticLines.joined(separator: "\n") }
+    private func record(_ event: String) {
+        diagnosticLines.append("\(ISO8601DateFormatter().string(from: Date())) monotonic=\(String(format: "%.3f", sbio_now())) \(event)")
+        if diagnosticLines.count > 512 { diagnosticLines.removeFirst(diagnosticLines.count - 512) }
+    }
+    private var worker: BridgeWorker?
+    private var token = UUID()
+    private var task: BGTask?
+    private var taskIdentifier: String?
+    private var submission: SessionSubmission?
+    private static let submissionQueue = DispatchQueue(label: "io.sentrybridge.session-submission", qos: .userInitiated)
+    private var probe: NWConnection?
+    private var stopReason: String?
+    private var savedValidatedSettings = false
+    private var testing = false
+    private let storeKey = "bridge.settings.v1"
+    /// Labelled demo with bundled sample data; the saved route is restored when it ends.
+    @Published private(set) var demo = false
+    private var demoReplayer: DemoReplayer?
+    private var settingsBeforeDemo: BridgeSettings?
+    func startDemo() {
+        guard !busy, !discoveryVisible else { return }
+        guard let replayer = DemoReplayer() else { message = "Demo data is unavailable."; return }
+        settingsBeforeDemo = settings
+        var route = BridgeSettings()
+        route.source = "127.0.0.1"; route.inputPort = DemoReplayer.inputPort
+        // The worker opens a decode-only adapter with no output socket.
+        route.destination = "127.0.0.1"; route.outputPort = DemoReplayer.outputPort
+        route.experiment = false; route.restoreCompatibility = false; route.keepAwake = settings.keepAwake
+        settings = route; demo = true; demoReplayer = replayer
+        start()
+        if busy { replayer.start(); record("Demo with sample data; nothing is forwarded to an EFB") } else { endDemo() }
+    }
+    private func endDemo() {
+        guard demo else { return }
+        demoReplayer?.stop(); demoReplayer = nil
+        if let saved = settingsBeforeDemo { settings = saved }
+        settingsBeforeDemo = nil; demo = false
+    }
+    init() {
+        settings = UserDefaults.standard.data(forKey: "bridge.settings.v1")
+            .flatMap { try? JSONDecoder().decode(BridgeSettings.self, from: $0) } ?? BridgeSettings()
+        // Older builds allowed any length from 1 to 240; round up to the nearest offered length.
+        settings.sessionMinutes = BridgeSettings.sessionLengths.first { $0 >= settings.sessionMinutes } ?? 240
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
+            testing = true; settings = BridgeSettings(); syntheticSettings()
+            if ProcessInfo.processInfo.arguments.contains("--reset-compatibility-notice") {
+                UserDefaults.standard.removeObject(forKey: BridgeView.noticeHiddenKey)
+            }
+        }
+        #endif
+    }
+    func syntheticSettings() {
+        guard !busy else { return }
+        settings.source = "127.0.0.1"; settings.inputPort = "14000"
+        settings.destination = "127.0.0.1"; settings.outputPort = "14001"
+    }
+    func findEFBs() {
+        exitDiscovery()
+        discoveryVisible = true; findingEFBs = true
+        discoveredEFBs = []; discoveryMessage = nil
+        let id = UUID(); discoveryToken = id
+        let usingBridge = busy && worker != nil
+        let deadline = sbio_now() + 6
+        if !usingBridge {
+            let search = BridgeWorker(); discoveryWorker = search
+            search.findEFBs(settings, update: { [weak self] entries in
+                DispatchQueue.main.async {
+                    guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
+                    if self.discoveredEFBs != entries { self.discoveredEFBs = entries }
+                }
+            }, finish: { [weak self] error in
+                DispatchQueue.main.async {
+                    guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
+                    self.findingEFBs = false; self.discoveryWorker = nil
+                    self.discoveryMessage = error ?? (self.discoveredEFBs.isEmpty ? "No eligible EFB announcements received." : nil)
+                }
+            })
+        }
+        discoveryTask = Task { @MainActor [weak self] in
+            #if DEBUG
+            if self?.testing == true && ProcessInfo.processInfo.arguments.contains("--ui-delay-discovery-observer") {
+                // Reproduce a delayed observer without blocking the UI or networking worker.
+                do { try await Task.sleep(nanoseconds: 8_000_000_000) } catch { return }
+            }
+            #endif
+            while !Task.isCancelled {
+                guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
+                let now = sbio_now()
+                // Sample once more before ending the search. A delayed first main-actor
+                // turn must not discard announcements already received by the worker.
+                if usingBridge && self.findingEFBs {
+                    if self.discoveredEFBs != self.snapshot.efbs { self.discoveredEFBs = self.snapshot.efbs }
+                    if let error = self.snapshot.discoveryError {
+                        self.discoveryMessage = error; self.findingEFBs = false
+                    }
+                }
+                let fresh = self.discoveredEFBs.filter { now - $0.seen < 30 }
+                if fresh != self.discoveredEFBs { self.discoveredEFBs = fresh }
+                if usingBridge && now >= deadline && self.findingEFBs {
+                    self.findingEFBs = false
+                    self.discoveryMessage = self.snapshot.discoveryError ?? (self.discoveredEFBs.isEmpty ? "No eligible EFB announcements received." : nil)
+                }
+                do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
+            }
+        }
+    }
+    func useEFB(_ entry: DiscoveredEFB) {
+        guard !busy else { return }
+        guard sbio_now() - entry.seen < 30,
+              sbio_efb_candidate(entry.address, entry.port, settings.source, UInt16(settings.inputPort) ?? 0) != 0 else {
+            discoveredEFBs.removeAll { $0.id == entry.id }; return
+        }
+        settings.destination = entry.address
+        exitDiscovery()
+    }
+    func exitDiscovery() {
+        discoveryToken = UUID(); discoveryWorker?.stop(); discoveryWorker = nil
+        discoveryTask?.cancel(); discoveryTask = nil
+        findingEFBs = false; discoveryVisible = false; discoveredEFBs = []
+    }
+    func start() {
+        guard !busy, !discoveryVisible else { return }
+        var sourceIP: UInt32 = 0, destinationIP: UInt32 = 0
+        guard sb_parse_ipv4(settings.source, &sourceIP) == 1,
+              sb_parse_ipv4(settings.destination, &destinationIP) == 1 else {
+            message = "Enter numeric IPv4 addresses for the receiver and destination."; return
+        }
+        guard let input = UInt16(settings.inputPort), input > 0,
+              let output = UInt16(settings.outputPort), output > 0 else {
+            message = "Use ports from 1 to 65535."; return
+        }
+        guard !settings.experiment || BridgeSettings.sessionLengths.contains(settings.sessionMinutes) else { message = "Choose a session length of 60, 120, 180 or 240 minutes."; return }
+        savedValidatedSettings = false
+        snapshot = BridgeSnapshot(); message = nil; localNetworkDenied = false; stopReason = nil
+        token = UUID(); busy = true; state = "Starting"
+        diagnosticLines = []; lastDiagnosticSample = -30
+        record("User Start; mode=\(settings.experiment ? "session experiment" : "foreground"); requested minutes=\(settings.sessionMinutes)")
+        let id = token
+        if settings.experiment {
+            requestSession(id)
+        } else { launchWorker(id, duration: nil) }
+    }
+    private func requestSession(_ id: UUID) {
+        let identifier = (Bundle.main.bundleIdentifier ?? "io.github.tehcnological.sentrybridge") + ".bridge." + id.uuidString
+        taskIdentifier = identifier
+        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { [weak self] backgroundTask in
+            MainActor.assumeIsolated {
+                guard let self, self.token == id, self.busy, self.state != "Stopping",
+                      let continued = backgroundTask as? BGContinuedProcessingTask else {
+                    backgroundTask.setTaskCompleted(success: false); return
+                }
+                self.task = continued; self.sessionActive = true
+                self.record("Continued-processing launch accepted")
+                continued.progress.totalUnitCount = Int64(self.settings.sessionMinutes * 60)
+                continued.expirationHandler = { [weak self] in
+                    DispatchQueue.main.async {
+                        guard let self, self.token == id, self.sessionActive else { return }
+                        self.stop(reason: "Bridge Session cancelled or expired; forwarding stopped.")
+                    }
+                }
+                self.launchWorker(id, duration: Double(self.settings.sessionMinutes * 60))
+            }
+        }
+        guard registered else {
+            busy = false; state = "Stopped"; message = "System could not register the Bridge Session."
+            taskIdentifier = nil; UIApplication.shared.isIdleTimerDisabled = false; return
+        }
+        let minutes = settings.sessionMinutes
+        let submission = SessionSubmission(); self.submission = submission
+        state = "Requesting session"
+        let finished: (Error?) -> Void = { [weak self] error in
+            if submission.isCancelled { BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier) }
+            DispatchQueue.main.async {
+                guard let self, self.token == id, self.busy, self.state != "Stopping" else { return }
+                if let error {
+                    self.record("Submission failed: \(error.localizedDescription)")
+                    let reason = "Bridge Session unavailable: \(error.localizedDescription). Try foreground mode."
+                    if self.worker != nil { self.stop(reason: reason) }
+                    else {
+                        self.busy = false; self.state = "Stopped"; self.message = reason
+                        self.taskIdentifier = nil; self.submission = nil
+                        UIApplication.shared.isIdleTimerDisabled = false
+                    }
+                } else { self.record("Request submitted using immediate-start policy") }
+            }
+        }
+        Self.submissionQueue.async {
+            guard !submission.isCancelled else { return }
+            // Create and submit the request on this queue; it never crosses queue ownership.
+            let request = BGContinuedProcessingTaskRequest(identifier: identifier, title: "Bridge Session", subtitle: "Preparing a \(minutes)-minute Bridge Session")
+            request.strategy = .fail
+            if #available(iOS 27.0, *) {
+                BGTaskScheduler.shared.submitTaskRequest(request, completionHandler: finished)
+            } else {
+                do { try BGTaskScheduler.shared.submit(request); finished(nil) }
+                catch { finished(error) }
+            }
+            // Stop may race the scheduler accepting the request.
+            if submission.isCancelled { BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier) }
+        }
+    }
+    private func launchWorker(_ id: UUID, duration: Double?) {
+        let worker = BridgeWorker(); self.worker = worker; state = "Waiting for data"
+        UIApplication.shared.isIdleTimerDisabled = settings.keepAwake
+        checkLocalNetwork()
+        worker.run(settings, duration: duration, demo: demo, update: { [weak self] value in
+            DispatchQueue.main.async {
+                guard let self, self.token == id, self.state != "Stopping" else { return }
+                if !self.savedValidatedSettings {
+                    if !self.testing && !self.demo { UserDefaults.standard.set(try? JSONEncoder().encode(self.settings), forKey: self.storeKey) }
+                    self.savedValidatedSettings = true
+                }
+                let previous = self.snapshot
+                self.snapshot = value
+                // Each shared-input rebind result after a WiFi address change is a diagnostics event.
+                if let rebind = value.inputRebind, rebind != previous.inputRebind { self.record("Receiver input: \(rebind)") }
+                if value.elapsed - self.lastDiagnosticSample >= 30 {
+                    self.record("elapsed=\(Int(value.elapsed)) input=\(value.received) sent=\(value.forwarded) age=\(String(format: "%.2f", value.age)) maxGap=\(String(format: "%.2f", value.maxGap)) weather=\(value.weather) outputErrors=\(value.sendErrors) receiver=\(value.receiverContact ?? "none")")
+                    self.lastDiagnosticSample = value.elapsed
+                }
+                self.state = value.activity(since: previous)
+                if let continued = self.task as? BGContinuedProcessingTask {
+                    continued.progress.completedUnitCount = min(Int64(value.elapsed), continued.progress.totalUnitCount)
+                    continued.updateTitle("Bridge Session", subtitle: value.sessionSubtitle(minutes: self.settings.sessionMinutes))
+                }
+            }
+        }, finish: { [weak self] error, completed in
+            DispatchQueue.main.async {
+                guard let self, self.token == id else { return }
+                self.record("Worker stopped; completed=\(completed); \(error ?? self.stopReason ?? (completed ? "monitoring period completed" : "user stop"))")
+                self.task?.setTaskCompleted(success: completed && error == nil)
+                self.task = nil; self.sessionActive = false; self.taskIdentifier = nil
+                self.submission?.cancel(); self.submission = nil
+                self.worker = nil; self.busy = false; self.state = "Stopped"
+                self.endDemo()
+                self.message = error ?? self.stopReason ?? (completed ? "Selected monitoring period completed." : nil)
+                self.probe?.cancel(); self.probe = nil
+                UIApplication.shared.isIdleTimerDisabled = false
+            }
+        })
+    }
+    func stop(reason: String? = nil) {
+        guard busy else { return }
+        state = "Stopping"; stopReason = reason
+        record(reason ?? "User Stop")
+        submission?.cancel(); submission = nil
+        if let taskIdentifier { BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier) }
+        if let worker { worker.stop() }
+        else {
+            token = UUID(); busy = false; sessionActive = false; state = "Stopped"; endDemo()
+            task?.setTaskCompleted(success: false); task = nil; taskIdentifier = nil; message = reason
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+    }
+    #if DEBUG
+    /// Intent outcomes, recorded only in UI-test mode so tests can check the dialog text.
+    @Published private(set) var intentOutcomes: [String] = []
+    #endif
+    private func intentOutcome(_ outcome: String) -> String {
+        record("Shortcut: \(outcome)")
+        #if DEBUG
+        if testing { intentOutcomes.append(outcome) }
+        #endif
+        return outcome
+    }
+    /// Starts the saved route for a Shortcut or Siri request and returns the outcome to show.
+    func startFromIntent() -> String { intentOutcome(startIntentOutcome()) }
+    func stopFromIntent() -> String { intentOutcome(stopIntentOutcome()) }
+    private func startIntentOutcome() -> String {
+        if busy {
+            // No second worker: report the actual state instead of starting again.
+            switch state {
+            case "Stopping": return "Bridge is stopping. Start again after it stops."
+            case "Requesting session": return "A Bridge Session request is already pending."
+            case "Starting": return "Bridge is already starting."
+            default: return sessionActive ? "Bridge Session already running." : "Bridge already running."
+            }
+        }
+        exitDiscovery()
+        settings.experiment = true
+        start()
+        guard busy else { return message ?? "Bridge could not start." }
+        return "Requesting a Bridge Session."
+    }
+    private func stopIntentOutcome() -> String {
+        guard busy else { return "Bridge is not running." }
+        if state == "Stopping" { return "Bridge is already stopping." }
+        stop(reason: "Stopped by shortcut.")
+        return "Bridge stopping."
+    }
+    func backgrounded() {
+        exitDiscovery()
+        record("Scene backgrounded; sessionActive=\(sessionActive)")
+        if busy && !sessionActive { stop(reason: "Foreground bridge stopped when hidden. Turn on Bridge Session in Settings to keep forwarding in the background.") }
+        UIApplication.shared.isIdleTimerDisabled = false
+    }
+    func foregrounded() { record("Scene foregrounded"); UIApplication.shared.isIdleTimerDisabled = busy && settings.keepAwake }
+    private func checkLocalNetwork() {
+        guard let localHost = [settings.source, settings.destination].first(where: { !BridgeSettings.isLoopback($0) }) else { return }
+        // UDP connect prompts for local network access without transmitting receiver commands.
+        let currentToken = token
+        let connection = NWConnection(host: NWEndpoint.Host(localHost), port: 9, using: .udp)
+        probe = connection
+        let deny: () -> Void = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.token == currentToken, self.busy else { return }
+                self.localNetworkDenied = true
+                self.stop(reason: "Local Network access denied. Enable Sentry Bridge in Settings → Privacy & Security → Local Network, then Start again.")
+            }
+        }
+        connection.pathUpdateHandler = { path in
+            if path.unsatisfiedReason == .localNetworkDenied { deny() }
+        }
+        connection.stateUpdateHandler = { [weak connection] state in
+            if case .waiting = state, connection?.currentPath?.unsatisfiedReason == .localNetworkDenied { deny() }
+        }
+        connection.start(queue: DispatchQueue(label: "io.sentrybridge.permission"))
+    }
+}

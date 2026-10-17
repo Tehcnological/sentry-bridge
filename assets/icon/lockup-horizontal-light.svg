@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2160 600" width="2160" height="600">
+  <title>Sentry Bridge</title>
+  <g transform="translate(44 44) scale(0.5)">
+  <clipPath id="square"><rect width="1024" height="1024" rx="184"/></clipPath>
+  <g clip-path="url(#square)">
+  <g id="background">
+    <rect width="1024" height="1024" fill="#0E2A47"/>
+  </g>
+  <g id="rings" fill="none" stroke="#3FA9F5" stroke-width="8">
+    <path d="M512.0,976.0 A464,464 0 0 0 913.84,280.0"/>
+    <path d="M744.0,110.16 A464,464 0 0 0 48.0,512.0"/>
+  </g>
+  <g id="signal" fill="none" stroke="#3FA9F5" stroke-width="50" stroke-linecap="round">
+    <path d="M198,580 A242,242 0 0 0 440,822"/>
+    <path d="M77,580 A363,363 0 0 0 440,943"/>
+    <path d="M-44,580 A484,484 0 0 0 440,1064"/>
+  </g>
+  <g id="aircraft" fill="#FFFFFF">
+    <path d="M826,108 L890,200 L826,292 L762,200 Z"/>
+    <path transform="translate(545 465) rotate(45)" d="M0,-220 C20,-220 27,-205 27,-185 L29,-110 L292,-108 Q300,-108 300,-100 L300,-40 Q300,-32 292,-32 L28,-30 L12,170 L90,172 Q96,172 96,178 L96,212 Q96,218 90,218 L8,220 Q6,236 0,236 Q-6,236 -8,220 L-90,218 Q-96,218 -96,212 L-96,178 Q-96,172 -90,172 L-12,170 L-28,-30 L-292,-32 Q-300,-32 -300,-40 L-300,-100 Q-300,-108 -292,-108 L-29,-110 L-27,-185 C-27,-205 -20,-220 0,-220 Z"/>
+  </g>
+  </g>
+  </g>
+  <text x="640" y="380" font-family="Segoe UI Semibold, Segoe UI, -apple-system, Helvetica Neue, Arial, sans-serif" font-weight="600" font-size="230" fill="#152B46">Sentry Bridge</text>
+</svg>

@@ -1,0 +1,40 @@
+.venv/
+__pycache__/
+backups/
+*.jsonl
+*.pcap
+*.pcapng
+# Local captures and device dumps: contain home position, WiFi SSID, serials, or uAvionix code
+*-report.txt
+settings-now.json
+index.html
+settings-page.html
+calibration.html
+sentry-logs/
+build/
+dist/
+*.spec
+build-c/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+android/build.log
+*.p12
+*.password
+
+# Local signing and workstation tooling
+local-signing/
+.local-tools/
+signing-check/
+ui-renders/
+
+# Local Xcode state and Apple signing material
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.mobileprovision
+*.provisionprofile
+*.cer
+*.p8

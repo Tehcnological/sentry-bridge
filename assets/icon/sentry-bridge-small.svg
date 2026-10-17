@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Sentry Bridge</title>
+  <clipPath id="square"><rect width="1024" height="1024" rx="184"/></clipPath>
+  <g clip-path="url(#square)">
+  <g id="background">
+    <rect width="1024" height="1024" fill="#0E2A47"/>
+  </g>
+  <g id="signal" fill="none" stroke="#3FA9F5" stroke-width="72" stroke-linecap="round">
+    <path d="M190,694 A140,140 0 0 0 330,834"/>
+    <path d="M60,694 A270,270 0 0 0 330,964"/>
+  </g>
+  <g id="aircraft" fill="#FFFFFF">
+    <path transform="translate(585 440) rotate(45) scale(1.05)" d="M0,-220 C20,-220 27,-205 27,-185 L29,-110 L292,-108 Q300,-108 300,-100 L300,-40 Q300,-32 292,-32 L28,-30 L12,170 L90,172 Q96,172 96,178 L96,212 Q96,218 90,218 L8,220 Q6,236 0,236 Q-6,236 -8,220 L-90,218 Q-96,218 -96,212 L-96,178 Q-96,172 -90,172 L-12,170 L-28,-30 L-292,-32 Q-300,-32 -300,-40 L-300,-100 Q-300,-108 -292,-108 L-29,-110 L-27,-185 C-27,-205 -20,-220 0,-220 Z"/>
+  </g>
+  </g>
+</svg>

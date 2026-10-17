@@ -1,0 +1,62 @@
+# Compatibility and limitations
+
+Sentry Bridge forwards the Sentry's Compatibility Mode data as standard GDL90. It does not change the
+Sentry's firmware and cannot add data the Sentry does not send in that mode. Read the section for your
+platform before relying on the bridge in flight. This page will grow as hardware testing covers more
+devices and EFBs.
+
+## All platforms
+
+- ForeFlight can still connect directly to Sentry for GPS and traffic in Compatibility Mode. The sensor
+  limitations below also apply to ForeFlight.
+- AHRS, CO, temperature, barometric sensor and battery data are unavailable to apps in Compatibility Mode.
+- Weather frames are relayed; actual EFB weather display still needs hardware verification.
+- Disable Power Savings in Sentry's web settings; ForeFlight is optional. Power Savings shuts Sentry down
+  after 30 minutes without ForeFlight connected.
+- Compatibility Mode resets on power-up. Keep automatic restoration on; turning the mode off stops bridging.
+- Limited hardware testing so far: Sentry Plus, WiFi firmware 1.0.32, with FltPlan Go on Android and
+  ForeFlight, Garmin Pilot, AvareX and FltPlan Go on one iPad. Other devices, EFB versions and long
+  background use need validation.
+
+## Android
+
+- With the EFB on the same device, the bridge shares UDP 4000 with it, and one EFB at a time receives the
+  output. Android allows two apps on one port only when both allow it; if the EFB does not, the bridge
+  reports the port in use. Then set **EFB UDP port** in Settings (for example 4001) and the same port in
+  the EFB.
+- The bridge attempts to rebind a quiet shared input after WiFi address changes. Host regression
+  checks cover this; physical-device recovery remains unverified. If data does not resume, Stop/Start
+  and check the receiver/EFB network addresses.
+- Keep the bridge's notification visible; battery savers that stop background apps also stop the bridge.
+
+## Windows, macOS and Linux
+
+- Desktop EFB targets are Custom GDL90: enter the EFB's known address and port.
+- Allow Sentry Bridge through the firewall on the network the Sentry WiFi uses, including Public networks
+  on Windows.
+- With the EFB on the same computer, the bridge shares UDP 4000 with it. On Linux the EFB must allow port
+  sharing; otherwise set another EFB port in Settings and in the EFB.
+
+## Raspberry Pi
+
+- The Pi runs the bridge for EFBs on other devices only: choose **Other device** and enter the EFB's
+  address.
+- The web control page uses plain HTTP with a password on the Sentry WiFi; anyone on that network can see
+  its traffic.
+
+## ESP32
+
+- Not available yet. The layout is a preview of a planned port.
+
+## iPhone and iPad
+
+- Not in the App Store: install free with your own Apple ID; see [Install on iPhone or iPad](iOS-Sideload.md).
+- Requires iOS or iPadOS 26 or later.
+- The bridge forwards while the app is visible. The Bridge Session option keeps it running in the
+  background for a chosen 60 to 240 minutes; it is experimental and iOS can end it earlier. Tested in
+  the background for up to 34 minutes on one iPad.
+- Allow Local Network access when asked; without it the bridge cannot reach the Sentry or the EFB.
+- On the same device the bridge shares UDP 4000 with the EFB (choose a Stratux or GDL90 device in the
+  EFB), and one EFB at a time receives it; close other EFBs. The device must be on the Sentry's WiFi;
+  on another network Start says to join it. After a WiFi address change the bridge reattaches by itself.
+- For an EFB on another device, enter that device's address (or use Find EFB); it receives on UDP 4000.

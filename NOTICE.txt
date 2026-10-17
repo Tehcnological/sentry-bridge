@@ -1,0 +1,54 @@
+Sentry Bridge
+Copyright (c) 2026 Sentry Bridge contributors
+
+Sentry Bridge is distributed under GNU GPL version 3 only (GPL-3.0-only), with
+the additional permission below; see LICENSE. It is provided WITHOUT ANY
+WARRANTY, including MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+Third-party components keep their own licenses, listed below.
+
+Additional permission under GNU GPL version 3, section 7:
+The copyright holders of Sentry Bridge give you permission to convey this
+program, or a work based on it, through an application store (such as the
+Apple App Store) whose terms of service or usage rules restrict recipients in
+ways this License would not otherwise allow, as long as the Corresponding
+Source of the conveyed version is available to its recipients under this
+License at no charge. This permission covers only material whose copyright is
+held by the Sentry Bridge contributors; it does not cover third-party
+components under other licenses. You may remove this permission from your
+copies or modified versions. Contributions to Sentry Bridge are accepted under
+the GPL with this permission.
+
+The native decoder (core/sbdecode.c) was written clean-room from
+docs/Decoder-Spec.md. The Python reference keeps this attribution:
+- pyModeS 2.22.0, Junzi Sun and contributors, GNU GPL version 3.
+  https://github.com/junzis/pyModeS/tree/v2.22.0
+  bridge.py imports it at run time; it is installed separately.
+- dump978 uat_decode.c, Copyright 2015 Oliver Jowett,
+  GNU GPL version 2 or (at your option) any later version.
+  https://github.com/mutability/dump978/blob/master/uat_decode.c
+  uat.py follows this implementation. Any covered adaptation is distributed
+  here under version 3. Original license: notices/dump978-GPL-2.0.txt.
+See docs/Credits-and-Legal.md.
+
+Android includes Kotlin standard library 2.0.21, Apache License 2.0.
+Copyright 2010-2024 JetBrains s.r.o. and respective authors and developers.
+See notices/Apache-2.0.txt and notices/Kotlin-NOTICE.txt. The resolved Android
+runtime also includes org.jetbrains:annotations:13.0 (Apache-2.0); its original
+copyright notices are retained in notices/JetBrains-Annotations.txt.
+
+Packaged Windows Python tools include CPython and its incorporated components.
+The checked runtime is CPython 3.11.0; see notices/Python-3.11.0.txt, including
+PSF, historical Python, OpenSSL/SSLeay, bzip2, libffi and other component terms.
+This product includes software developed by the OpenSSL Project for use in the
+OpenSSL Toolkit (http://www.openssl.org/). This product includes cryptographic
+software written by Eric Young. Runtime version changes require a notice audit. Microsoft runtime DLLs supplied
+with the Python Windows distribution remain Microsoft components; their presence
+does not make them GPL-covered source or establish a right to redistribute them
+outside the original runtime terms. Windows runtime redistribution remains a
+release review item.
+Android and the native command-line bridge do not include Python.
+
+The inline broadcast glyph in web/app.html is from Phosphor Icons (MIT).
+Its full copyright and permission notice is preserved beside the glyph.
+Other third-party licenses apply to their respective components, not to the
+whole project. Build/test dependencies are not necessarily shipped components.

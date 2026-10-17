@@ -1,0 +1,23 @@
+Sentry Bridge converts 1090ES and 978 MHz UAT traffic from a Sentry or Sentry Plus
+in Compatibility Mode to GDL90 for compatible EFBs. It relays available GPS,
+heartbeat and weather frames over the receiver's WiFi.
+
+<ul>
+<li>Run beside one EFB on the same Android device, or send to an EFB on another device.</li>
+<li>Request Compatibility Mode again after receiver power cycles.</li>
+<li>Receiver settings, backups, logs, capture analysis and a loopback simulator.</li>
+<li>Local processing, with optional GitHub update notifications disabled by default.</li>
+<li>Free software under GPLv3, with third-party license notices included.</li>
+</ul>
+
+Requires Android 8 or later and compatible receiver hardware. Same-device port
+sharing depends on the EFB. Hardware coverage is limited; support is not established
+for every EFB, device or firmware. EFB weather display remains unverified. AHRS,
+CO, temperature, barometric sensor and battery data are unavailable in Compatibility
+Mode, including to ForeFlight. Disable Power Savings in the receiver's web settings.
+
+Advisory only; not certified for navigation or collision avoidance. It does not
+replace see-and-avoid, required equipment or a weather briefing. The bridge does
+not decrypt the encrypted stream or modify receiver firmware. Not affiliated with
+or endorsed by uAvionix, ForeFlight or EFB vendors. Captures can contain flight tracks;
+read Privacy in Settings before recording or sharing them.

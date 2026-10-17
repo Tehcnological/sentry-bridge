@@ -1,0 +1,324 @@
+/* Sentry Bridge shared GUI (desktop, Pi, Android WebView).
+   Default look follows the iOS app's inset-grouped Form (ios/SentryBridge/BridgeView.swift): same palette,
+   12 px groups, 10 px controls, system font. The top bar is a frosted-glass web approximation of Apple's
+   Liquid Glass, not an Apple component. body.expressive (Android, on by default) swaps in Material 3
+   Expressive-inspired tokens: tonal surfaces, 28 px groups, pill controls. Not the official @material/web. */
+:root {
+  color-scheme:light;
+  --bg:#f2f2f7;
+  --surface:#fff;
+  --ink:#111318;
+  --muted:#636366;
+  --line:rgb(60 60 67 / .16);
+  --fill:rgb(118 118 128 / .12);
+  --input:rgb(118 118 128 / .1);
+  --accent:#126dc4;           /* filled buttons, as BridgeView accent */
+  --on-accent:#fff;
+  --tint:#126dc4;             /* links, switches, selected states (controlTint) */
+  --danger:#c62f2a;
+  --warning:#9c5200;
+  --note-bg:#fff7e0;
+  --note-ink:#5f4710;
+  --note-line:rgb(196 164 73 / .45);
+  --glass:rgb(242 242 247 / .72);
+  --glass-edge:rgb(255 255 255 / .7);
+  --shadow:0 1px 2px rgb(16 35 60 / .06);
+  --selected:#fff;
+  --radius-group:12px;
+  --radius-control:10px;
+  --radius-button:12px;
+  --button-height:50px;
+  --title-weight:700;
+  --ease:cubic-bezier(.2,.8,.2,1);
+  font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",Roboto,system-ui,sans-serif;
+  -webkit-text-size-adjust:100%;
+}
+body.dark {
+  color-scheme:dark;
+  --bg:#0b1727;
+  --surface:#132239;
+  --ink:#e6edf7;
+  --muted:#abbbd0;
+  --line:rgb(171 187 208 / .16);
+  --fill:rgb(171 187 208 / .14);
+  --input:rgb(171 187 208 / .1);
+  --tint:#52a5ed;
+  --danger:#c93a35;
+  --warning:#edc391;
+  --note-bg:#2a2614;
+  --note-ink:#f4dfac;
+  --note-line:rgb(210 180 83 / .35);
+  --glass:rgb(11 23 39 / .7);
+  --glass-edge:rgb(171 187 208 / .14);
+  --shadow:none;
+  --selected:#2a3d58;
+}
+/* Material 3 Expressive-inspired tokens for Android: tonal surfaces from the brand blue, larger shapes. */
+body.expressive {
+  --bg:#f6f8fd;
+  --surface:#e7edf7;
+  --ink:#151b24;
+  --muted:#4f5b6b;
+  --line:rgb(80 96 120 / .14);
+  --fill:#d8e2f2;
+  --input:#dbe4f2;
+  --accent:#1f5fae;
+  --tint:#1f5fae;
+  --glass:rgb(246 248 253 / .8);
+  --radius-group:28px;
+  --radius-control:16px;
+  --radius-button:999px;
+  --button-height:56px;
+  --title-weight:600;
+  --ease:cubic-bezier(.34,1.4,.64,1);  /* expressive spring overshoot */
+}
+body.expressive.dark {
+  --bg:#0c1522;
+  --surface:#18263a;
+  --ink:#e2e9f5;
+  --muted:#b2c0d4;
+  --line:rgb(178 192 212 / .14);
+  --fill:#22344d;
+  --input:#1e2f46;
+  --accent:#a6c8ff;
+  --on-accent:#00305f;
+  --tint:#a6c8ff;
+  --glass:rgb(12 21 34 / .82);
+}
+
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+html { scroll-behavior:smooth; }
+body { margin:0; min-height:100dvh; background:var(--bg); color:var(--ink); }
+button,input,select { font:inherit; color:inherit; }
+button,select,input[type=checkbox],input[type=radio],summary { cursor:pointer; }
+h1,h2,p,dl,dd { margin:0; }
+a { color:var(--tint); text-decoration:none; }
+a:hover { text-decoration:underline; }
+small { color:var(--muted); }
+:focus-visible { outline:2px solid var(--tint); outline-offset:3px; border-radius:var(--radius-control); }
+.skip { position:absolute; top:-60px; left:12px; z-index:3; background:var(--surface); padding:10px 14px; border-radius:var(--radius-control); }
+.skip:focus { top:8px; }
+
+/* Buttons: one filled primary, tinted secondary, red destructive. */
+button {
+  min-height:44px; padding:10px 18px; border:0; border-radius:var(--radius-control);
+  background:var(--fill); color:var(--tint); font-weight:600;
+  transition:transform .18s var(--ease),background-color .2s,opacity .2s;
+}
+button:hover:not(:disabled):not([aria-selected=true]) { background:color-mix(in srgb,var(--fill),var(--tint) 10%); }
+button:active:not(:disabled) { transform:scale(.97); }
+button:disabled,input:disabled,select:disabled { opacity:.42; cursor:not-allowed; }
+.primary {
+  display:block; width:100%; min-height:var(--button-height); margin-top:16px;
+  border-radius:var(--radius-button); background:var(--accent); color:var(--on-accent); font-size:17px;
+}
+.primary:hover:not(:disabled) { background:color-mix(in srgb,var(--accent),#000 8%); }
+.primary.stop,.destructive { background:var(--danger); color:#fff; }
+.primary.stop:hover:not(:disabled),.destructive:hover:not(:disabled) { background:color-mix(in srgb,var(--danger),#000 10%); }
+body.expressive button:not(.primary) { border-radius:999px; }
+
+/* Inputs: filled, label above (iOS field()). */
+input[type=text],input[type=number],select {
+  width:100%; min-height:44px; padding:10px 12px; border:1px solid transparent; border-radius:var(--radius-control);
+  background:var(--input); color:var(--ink);
+}
+input[type=text]:focus,input[type=number]:focus,select:focus { border-color:var(--tint); outline:none; }
+input::placeholder { color:var(--muted); opacity:.8; }
+input[type=file] { max-width:100%; padding:10px 0; font-size:13px; color:var(--muted); }
+
+/* Preview strip (offline preview only). */
+.preview-bar { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:8px 20px; font-size:12px; color:var(--muted); border-bottom:1px solid var(--line); }
+.preview-options { display:flex; gap:16px; }
+.preview-options label { display:flex; align-items:center; gap:8px; }
+.preview-options select { width:auto; min-height:32px; padding:4px 10px; font-size:12px; }
+
+/* Page: one readable column, like the iOS Form on iPad. */
+main { max-width:720px; margin:0 auto; padding:24px 20px calc(48px + env(safe-area-inset-bottom)); }
+.app-header { padding:8px 4px 4px; }
+.app-header h1 { font-size:34px; line-height:1.15; font-weight:var(--title-weight); letter-spacing:-.6px; }
+
+/* Tabs as a segmented control in a sticky glass bar. */
+.tabbar {
+  position:sticky; top:0; z-index:2; margin:8px -20px 0; padding:10px 20px;
+  background:var(--bg);
+  box-shadow:inset 0 -1px 0 var(--glass-edge);
+}
+/* The blur re-samples the page on every scroll frame: only on wide screens, and never under reduced transparency. */
+@media (min-width:1024px) and (prefers-reduced-transparency:no-preference) {
+  .tabbar { background:var(--glass); -webkit-backdrop-filter:blur(20px) saturate(180%); backdrop-filter:blur(20px) saturate(180%); }
+}
+.tabs,.segmented { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:2px; padding:2px; border-radius:calc(var(--radius-control) - 1px); background:var(--fill); }
+/* Segments are styled on the span after each radio (input:checked + span), not with :has(), so older
+   Android WebViews (before Chromium 105) still show the selection and keyboard focus. */
+.tabs button,.segmented span {
+  display:flex; align-items:center; justify-content:center; min-height:36px; padding:6px 12px;
+  border-radius:calc(var(--radius-control) - 3px); background:transparent; color:var(--ink); font-size:14px; font-weight:500;
+  transition:background-color .2s,box-shadow .2s,transform .18s var(--ease);
+}
+/* Hover never touches the selected tab, so it keeps its selected colours. */
+.tabs button:hover:not(:disabled):not([aria-selected=true]) { background:transparent; }  /* outranks the generic button hover */
+body.expressive .tabs button:hover:not(:disabled):not([aria-selected=true]) { background:var(--fill); }
+.tabs button:hover:not([aria-selected=true]) { opacity:.75; }
+.tabs button[aria-selected=true],.segmented input:checked + span {
+  background:var(--selected); font-weight:600; box-shadow:0 1px 3px rgb(0 0 0 / .12),0 0 0 .5px rgb(0 0 0 / .04);
+}
+body.expressive .tabs,body.expressive .segmented { gap:6px; padding:0; background:transparent; }
+body.expressive .tabs button,body.expressive .segmented span { min-height:44px; border-radius:999px; background:var(--fill); }
+body.expressive .tabs button[aria-selected=true],body.expressive .segmented input:checked + span { background:var(--accent); color:var(--on-accent); box-shadow:none; }
+.segmented { margin:4px 0 6px; }
+.segmented label { display:grid; position:relative; cursor:pointer; }
+.segmented input { position:absolute; opacity:0; inset:0; margin:0; cursor:pointer; }
+/* Plain :focus first for WebViews before Chromium 86; engines with :focus-visible then hide it after a tap.
+   The second rule is separate so an engine that rejects :focus-visible drops only that rule. */
+.segmented input:focus + span { outline:2px solid var(--tint); outline-offset:2px; }
+.segmented input:focus:not(:focus-visible) + span { outline:none; }
+.segmented input:disabled + span { opacity:.42; cursor:not-allowed; }
+
+/* Inset grouped sections. */
+.group { margin-top:8px; padding:4px 16px; border-radius:var(--radius-group); background:var(--surface); box-shadow:var(--shadow); }
+.group-title { margin:28px 16px 0; font-size:13px; font-weight:400; color:var(--muted); }
+body.expressive .group-title { font-size:14px; font-weight:600; color:var(--tint); }
+.group-footer { margin:8px 16px 0; font-size:13px; color:var(--muted); }
+.tab-panel { margin-top:4px; }
+.tab-panel:focus-visible { outline-offset:6px; }
+
+/* Receiver status card. */
+.receiver { margin-top:20px; padding:18px 16px 16px; }
+.receiver-top { display:flex; align-items:center; gap:14px; }
+.receiver-mark { flex-shrink:0; color:var(--accent); }
+.receiver-label { display:block; font-size:13px; color:var(--muted); }
+.receiver h2 { font-size:22px; line-height:1.2; font-weight:var(--title-weight); letter-spacing:-.3px; }
+.stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:18px; padding-top:14px; border-top:1px solid var(--line); }
+.stats dt { font-size:12px; color:var(--muted); }
+.stats dd { margin-top:2px; font-size:22px; line-height:1.2; font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:-.3px; }
+.warning {
+  margin-top:12px; padding:12px 16px; border-radius:var(--radius-group);
+  background:var(--surface); background:color-mix(in srgb,var(--surface),var(--warning) 12%);  /* first value for engines without color-mix() */ color:var(--warning); font-size:14px; font-weight:500;
+}
+
+.update-note { display:block; margin-top:12px; padding:12px 16px; border-radius:var(--radius-group); background:var(--surface); color:var(--tint); font-size:14px; font-weight:500; }
+
+/* Rows and fields inside a group: hairline separators between rows, none after the last. */
+/* Hairlines between visible rows only, so a hidden trailing element leaves no stray line. */
+.group:not(.receiver) > :not([hidden]) ~ :not([hidden]),.group details > :not([hidden]) ~ :not([hidden]) { border-top:1px solid var(--line); }
+.setting-row { display:flex; justify-content:space-between; align-items:center; gap:16px; min-height:48px; padding:10px 0; font-size:15px; }
+.setting-row small { display:block; font-size:12px; margin-top:1px; }
+.setting-row select { width:auto; min-width:140px; }
+.field { display:block; padding:12px 0; font-size:13px; color:var(--muted); }
+.field input,.field select { margin-top:6px; font-size:15px; }
+.narrow { max-width:240px; }
+.form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 16px; }
+.form-grid .field { min-width:0; }
+.actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:12px 0; font-size:14px; color:var(--muted); }
+.actions.exit { justify-content:center; margin-top:28px; }
+.actions.exit button { min-width:220px; }
+.detail-note { padding:12px 0; font-size:13px; color:var(--muted); }
+
+/* iOS-style switch (tinted, as the app's Toggle tint); Material 3 shape under .expressive. */
+input[role=switch] {
+  appearance:none; position:relative; flex-shrink:0; width:51px; height:31px; margin:0;
+  border-radius:999px; background:var(--fill); transition:background-color .2s;
+}
+input[role=switch]::after {
+  content:""; position:absolute; top:2px; left:2px; width:27px; height:27px; border-radius:50%;
+  background:#fff; box-shadow:0 2px 4px rgb(0 0 0 / .22); transition:transform .22s var(--ease);
+}
+input[role=switch]:checked { background:var(--tint); }
+input[role=switch]:checked::after { transform:translateX(20px); }
+body.expressive input[role=switch] { width:52px; height:32px; background:var(--fill); box-shadow:inset 0 0 0 2px var(--muted); }
+body.expressive input[role=switch]::after { top:8px; left:8px; width:16px; height:16px; background:var(--muted); box-shadow:none; transition:transform .25s var(--ease),width .25s var(--ease),height .25s var(--ease),top .25s var(--ease); }
+body.expressive input[role=switch]:checked { background:var(--accent); box-shadow:none; }
+body.expressive input[role=switch]:checked::after { top:4px; width:24px; height:24px; background:var(--on-accent); transform:translateX(20px); }
+
+/* Disclosure rows with a chevron. */
+summary { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:48px; list-style:none; font-size:15px; color:var(--ink); }
+summary::-webkit-details-marker { display:none; }
+summary::after { content:""; width:8px; height:8px; margin-right:4px; border-right:2px solid var(--muted); border-bottom:2px solid var(--muted); transform:rotate(-45deg); transition:transform .2s var(--ease); }
+details[open] > summary::after { transform:rotate(45deg); }
+.setup-details p { padding:8px 0; font-size:14px; color:var(--muted); }
+
+/* EFB setup. */
+.discovery { padding:12px 0; font-size:14px; }
+.discovered { list-style:none; padding:0; margin:8px 0 0; }
+.discovered li { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-top:1px solid var(--line); }
+.discovered li.note { display:block; color:var(--muted); border-top:0; }
+.route-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 0; font-size:14px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.validation { padding:12px 0; font-size:14px; }
+.validation.error { color:var(--warning); }
+.validation strong { font-weight:600; }
+.validation ul { padding-left:18px; margin:6px 0 0; font-variant-numeric:tabular-nums; }
+.validation p { margin:8px 0; }
+.validation details { color:var(--muted); }
+
+/* Diagnostics. */
+.diagnostics { font-size:15px; }
+.diagnostics > div { display:grid; grid-template-columns:150px 1fr; gap:16px; padding:12px 0; }
+.diagnostics > div:not(:last-child) { border-bottom:1px solid var(--line); }
+.diagnostics dt { color:var(--muted); }
+.diagnostics dd { overflow-wrap:anywhere; text-align:right; }
+.tool-output { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.55 ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace; max-height:320px; overflow:auto; margin:0; padding:12px 0; }
+.operation { margin-top:12px; padding:0 16px; font-size:14px; overflow-wrap:anywhere; }
+.operation:empty { display:none; }
+.operation.error { color:var(--warning); }
+#files > div { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
+#files a { overflow-wrap:anywhere; }
+
+
+/* Compatibility link row and the pre-Start dialog. */
+.link-row { color:var(--tint); }
+.link-row::after { content:""; width:8px; height:8px; margin-right:4px; border-right:2px solid var(--muted); border-top:2px solid var(--muted); transform:rotate(45deg); }
+.limits-dialog { width:min(440px,calc(100vw - 32px)); padding:20px; border:0; border-radius:var(--radius-group); background:var(--surface); color:var(--ink); box-shadow:0 12px 40px rgb(0 0 0 / .3); }
+.limits-dialog::backdrop { background:rgb(5 12 22 / .5); }
+.limits-dialog h2 { font-size:20px; font-weight:var(--title-weight); margin-bottom:8px; }
+.limits-dialog p { margin:8px 0; font-size:15px; }
+.check-row { display:flex; align-items:center; gap:12px; min-height:44px; font-size:15px; cursor:pointer; }
+.check-row input { width:22px; height:22px; margin:0; accent-color:var(--tint); }
+.dialog-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+.dialog-actions .primary { margin-top:0; min-height:44px; font-size:15px; }
+
+/* Landscape on every platform (desktop and Pi windows, tablets, phones turned sideways): status on the left, the selected tab on the right, like the
+   iPad split layout. The status card stays in view while a long tab scrolls. The note spans the bottom. */
+@media (orientation:landscape) and (min-width:768px) {
+  main, html body.mobile main {  /* beats the narrower phone column below */
+    max-width:1180px; display:grid; grid-template-columns:minmax(320px,380px) minmax(0,1fr); column-gap:32px;
+    grid-template-rows:auto auto 1fr;
+    grid-template-areas:"header tabs" "status panel" ". panel";
+  }
+  .app-header { grid-area:header; align-self:end; }
+  .tabbar { grid-area:tabs; align-self:end; margin:0; padding:10px 0; top:0; }
+  .status-column { grid-area:status; align-self:start; }
+  .tab-panel { grid-area:panel; min-width:0; }
+  .tab-panel > :first-child,.tab-panel > section:first-child > .group-title:first-child { margin-top:20px; }
+  .stats { grid-template-columns:1fr 1fr; }
+}
+/* Sticky only when the whole status column fits below the tab bar; on a phone turned sideways it scrolls. */
+@media (orientation:landscape) and (min-width:768px) and (min-height:640px) {
+  .status-column { position:sticky; top:72px; }
+}
+
+/* Narrow screens and the Android shell. */
+@media (max-width:640px) {
+  main { padding:12px 16px calc(40px + env(safe-area-inset-bottom)); }
+  .tabbar { margin:8px -16px 0; padding:10px 16px; }
+  .preview-bar { display:block; padding:8px 16px; }
+  .preview-options { margin-top:6px; }
+  .preview-options label { flex:1; min-width:0; }
+  .preview-options select { width:100%; }
+  .app-header h1 { font-size:30px; }
+  .stats { grid-template-columns:1fr 1fr; gap:14px; }
+  .form-grid { grid-template-columns:1fr; }
+  .diagnostics > div { grid-template-columns:1fr; gap:2px; }
+  .diagnostics dd { text-align:left; }
+}
+body.mobile main { max-width:520px; }
+body.mobile .stats { grid-template-columns:1fr 1fr; }
+body.reduced-motion *,body.reduced-motion *::after { transition:none !important; animation:none !important; scroll-behavior:auto !important; }
+@media (prefers-reduced-motion:reduce) { *,*::after { transition:none !important; scroll-behavior:auto !important; } }
+
+/* Offline document pages share the saved application's compact typography. */
+body.legal { display: block; overflow: auto; }
+body.legal main { display: block; max-width: 70ch; margin: 0 auto; padding: 24px; }
+body.legal h1, body.legal h2 { margin: 24px 0 12px; }
+body.legal p { margin: 12px 0; line-height: 1.6; }
+body.legal pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.5; }

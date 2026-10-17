@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Rings</title>
+  <g id="rings" fill="none" stroke="#3FA9F5" stroke-width="8">
+    <path d="M512.0,976.0 A464,464 0 0 0 913.84,280.0"/>
+    <path d="M744.0,110.16 A464,464 0 0 0 48.0,512.0"/>
+  </g>
+</svg>
