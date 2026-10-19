@@ -16,7 +16,21 @@ License at no charge. This permission covers only material whose copyright is
 held by the Sentry Bridge contributors; it does not cover third-party
 components under other licenses. You may remove this permission from your
 copies or modified versions. Contributions to Sentry Bridge are accepted under
-the GPL with this permission.
+the GPL with this permission and the one below.
+
+Additional permission under GNU GPL version 3, section 7, for the small-board
+firmware (firmware/):
+If you modify this program, or any covered work, by linking or combining it
+with the Espressif ESP-IDF WiFi, PHY and coexistence libraries, or with the
+Raspberry Pi cyw43-driver and the CYW43439 WiFi firmware it contains (or
+modified versions of those), containing parts covered by the terms of their
+own licenses, the copyright holders of Sentry Bridge grant you additional
+permission to convey the resulting work. Corresponding Source for a non-source
+form of such a combination need not include the source code of those
+libraries and that firmware. This permission covers only material whose
+copyright is held by the Sentry Bridge contributors. You may remove it from
+your copies or modified versions. The firmware's third-party notices are in
+firmware/notices/Third-Party.txt.
 
 The native decoder (core/sbdecode.c) was written clean-room from
 docs/Decoder-Spec.md. The Python reference keeps this attribution:

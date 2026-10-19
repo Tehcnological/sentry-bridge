@@ -87,7 +87,7 @@ function shared() { return topology() === "same" && efbPort() === (status?.setti
 // Compatibility and limitations: one section per platform in docs/Compatibility.md, linked from the bottom of
 // Settings and from a dialog before each Start until "Don't show again" is saved with Start.
 const LIMITS_DOC = "https://github.com/Tehcnological/sentry-bridge/blob/master/docs/Compatibility.md";
-const LIMITS_SECTION = {android:"android",windows:"windows-macos-and-linux",macos:"windows-macos-and-linux",linux:"windows-macos-and-linux",pi:"raspberry-pi",esp32:"esp32"};
+const LIMITS_SECTION = {android:"android",windows:"windows-macos-and-linux",macos:"windows-macos-and-linux",linux:"windows-macos-and-linux",esp32:"small-boards-esp32-c3-pico-w-pico-2-w"};
 const LIMITS_KEY = "sentrybridge-hide-limits";
 function confirmLimits() {
   try { if (localStorage.getItem(LIMITS_KEY) === "1") return Promise.resolve(true); } catch { /* Storage is optional. */ }
@@ -106,10 +106,16 @@ function confirmLimits() {
     dialog.oncancel = event => { event.preventDefault(); finish(false); };  // Escape
   });
 }
+// No EFB on ESP32; Android EFBs hold UDP 4000 without sharing, so only the simulator uses This device there.
+function noThisDevice() {
+  const host = $("host").value;
+  return host === "esp32" || host === "android" && !status?.simulator;
+}
 function updateDestination() {
   const host = $("host").value;
   document.querySelectorAll(".limits-link").forEach(link => link.href = LIMITS_DOC+"#"+(LIMITS_SECTION[host] || "all-platforms"));
-  $("same").disabled = ["pi","esp32"].includes(host);
+  $("same").disabled = noThisDevice();
+  $("same").closest("label").hidden = noThisDevice();
   if ($("same").disabled) $("network").checked = true;
   const local = topology() === "same";
   $("address-field").hidden = local;
@@ -286,11 +292,7 @@ function updateFiles(files) {
 }
 function renderLive(s) {
   status = s;
-  $("adapter-label").textContent = s.simulator ? "Simulator · local traffic only" : s.host === "pi" ? "Raspberry Pi" : "Local bridge";
-  $("quit").hidden = s.host === "pi" || s.service === "pi";
-  $("auto-start-row").hidden = s.host !== "pi" && s.service !== "pi";
-  $("auto-start").disabled = pending || s.job.state === "running";
-  if (!pending && (s.host === "pi" || s.service === "pi")) $("auto-start").checked = s.autoStart;
+  $("adapter-label").textContent = s.simulator ? "Simulator · local traffic only" : "Local bridge";
   $("receiver-heading").textContent = s.recording && !s.running ? "Recording" : {stopped:"Stopped",waiting:"Waiting for Sentry",running:"Receiving",lost:"Disconnected",mode:"Mode off"}[s.state];
   $("start").textContent = s.running ? "Stop" : "Start"; $("start").classList.toggle("stop",!!s.running);
   $("start").disabled = pending || s.job.state === "running" && !s.running || s.monitoring && !s.running;
@@ -299,7 +301,7 @@ function renderLive(s) {
   $("gps").textContent = heartbeat ? s.gps ? "Fix" : "No fix" : "-";
   $("traffic").textContent = s.running ? String(s.traffic) : "-";
   $("weather").textContent = s.monitoring ? String(s.weather) : "-";
-  $("age").textContent = s.lastPacketSeconds === null ? "-" : s.lastPacketSeconds+"s";
+  $("age").textContent = s.lastPacketSeconds === null ? "-" : Math.round(s.lastPacketSeconds*10)/10+"s";  // Android sends the raw float
   const power = s.device?.settings?.Power?.powerSavings;
   const problem = uiError || s.error || (s.job.state === "failed" ? s.job.action+": "+s.job.error : "") || (s.state === "lost" ? "No receiver data. Check Sentry power and WiFi." : s.state === "mode" ? "Compatibility Mode is off. Enable it in Settings." : power === true ? "Power Savings is on. Disable it in Sentry's web settings before flight." : "");
   $("warning").textContent = problem; $("warning").hidden = !problem;
@@ -314,11 +316,13 @@ function renderLive(s) {
   if (!pending) pullForm(s);
   if (s.running && s.routesRequest) $("output-summary").textContent = s.routesRequest.address+":"+s.settings.efbPort;
   const currentMode = s.monitoring && s.lastPacketSeconds !== null && s.lastPacketSeconds < 10 ? s.mode : null;
-  const knownMode = currentMode || s.modeObservation?.mode || "";
+  // Running but the receiver is silent: an earlier result says nothing about it now (it resets to ForeFlight mode at power-up).
+  const silent = s.monitoring && !currentMode;
+  const knownMode = currentMode || (silent ? "" : s.modeObservation?.mode || "");
   const on = knownMode.startsWith("PUBLIC"), off = knownMode.startsWith("ENCRYPTED");
-  const modeLabel = on || off ? (on ? "On" : "Off")+(currentMode ? "" : " · last checked") : s.modeRequested === true ? "On requested · unverified" : s.modeRequested === false ? "Off requested · unverified" : "Not checked";
+  const modeLabel = on || off ? (on ? "On" : "Off")+(currentMode ? "" : " · last checked") : silent ? "No receiver data" : s.modeRequested === true ? "On requested · unverified" : s.modeRequested === false ? "Off requested · unverified" : "Not checked";
   $("mode-value").textContent = pending || s.job.state === "running" && ["Compatibility Mode","Automatic restoration"].includes(s.job.action) ? "Updating…" : modeLabel;
-  if (!pending && s.job.state !== "running") $("compatibility").checked = on || !off && s.modeRequested === true;
+  if (!pending && s.job.state !== "running") $("compatibility").checked = on || !off && !silent && s.modeRequested === true;
   $("compatibility").disabled = pending || s.job.state === "running";
   $("power-value").textContent = "Power Savings: "+(power === true ? "on" : power === false ? "off" : "not checked");
   const receiverWeb = $("receiver-web");
@@ -335,7 +339,9 @@ function renderLive(s) {
   for (const input of $("bridge-panel").querySelectorAll("input,select")) {
     input.disabled = locked || input.dataset.unavailable === "true";
   }
-  $("same").disabled = locked || ["pi","esp32"].includes($("host").value);
+  $("same").disabled = locked || noThisDevice();
+  $("same").closest("label").hidden = noThisDevice();
+  if (!locked && noThisDevice() && $("same").checked) { $("network").checked = true; updateDestination(); }
   $("check").disabled = locked;
   $("capture-start").disabled = pending || s.recording || s.job.state === "running";
   $("capture-stop").disabled = pending || !s.recording || s.job.state === "running";
@@ -381,7 +387,6 @@ async function poll() {
   setTimeout(poll,document.hidden ? 5000 : 1000);
 }
 for (const button of document.querySelectorAll("[data-action]")) button.addEventListener("click",() => act(button.dataset.action));
-$("auto-start").addEventListener("change",() => act("autostart",{enabled:$("auto-start").checked}));
 $("save-settings").addEventListener("click",async () => {
   // The EFB port belongs to the route: show it on the Bridge tab and check the route again.
   try { if (await act("settings",settingsRequest())) { $("settings-result").textContent = "Saved"; updateDestination(); } } catch(error) { showError(error); }

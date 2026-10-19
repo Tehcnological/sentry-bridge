@@ -96,6 +96,14 @@ class TestReleaseBundle(unittest.TestCase):
         (self.dist / "test-report.json").write_text(json.dumps(self.tests))
         (self.dist / "android-build-report.json").write_text(json.dumps(self.apk))
 
+    def test_firmware_is_not_distributed_yet(self):
+        # Owner decision: firmware is source-only until it is tested on boards. Shipping it means
+        # adding firmware/notices/Third-Party.txt and the newlib notices to the release assets.
+        publish = (ROOT / "tools/Publish-Release.ps1").read_text(encoding="utf-8")
+        for name in ("sentry-bridge-esp32c3.bin", "sentry-bridge-pico-w.uf2", "sentry-bridge-pico2-w.uf2"):
+            self.assertNotIn(name, rb.DISTRIBUTION_ASSETS)
+            self.assertNotIn(name, publish)
+
     def add_ios_export(self):
         for name in IOS_EXPORT:
             path = self.root / name

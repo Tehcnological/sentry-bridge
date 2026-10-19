@@ -21,8 +21,9 @@ if(NOT MSVC)
   target_link_libraries(sbcore PUBLIC m)
 endif()
 
-# Shared build of the core for the Python parity tests (ctypes)
-add_library(sbcore_shared SHARED core/sbcore.c)
+# Shared build of the core for the Python parity tests (ctypes), with the firmware's board-independent loop
+add_library(sbcore_shared SHARED core/sbcore.c firmware/common/fw_bridge.c)
+target_include_directories(sbcore_shared PRIVATE core)
 set_target_properties(sbcore_shared PROPERTIES OUTPUT_NAME sbcore WINDOWS_EXPORT_ALL_SYMBOLS ON)
 if(NOT MSVC)
   target_link_libraries(sbcore_shared PRIVATE m)

@@ -2,8 +2,8 @@
 
 ## Setup and operation
 
-- [Android](Android.md), [Windows](Windows.md), [Raspberry Pi](Raspberry-Pi.md),
-  [iPhone and iPad](iOS-Sideload.md)
+- [Android](Android.md), [Windows](Windows.md), [iPhone and iPad](iOS-Sideload.md),
+  [small-board firmware](Firmware.md)
 - [Compatibility and limitations](Compatibility.md)
 - [GUI controls](GUI-Controls.md), [Troubleshooting](Troubleshooting.md)
 - [Privacy](Privacy.md), [Credits and legal](Credits-and-Legal.md)

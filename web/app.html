@@ -14,7 +14,7 @@
   <div class="preview-bar">
     <span id="adapter-label">Preview · sample data</span>
     <div class="preview-options">
-      <label>Platform<select id="host"><option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option><option value="android">Android</option><option value="pi">Raspberry Pi</option><option value="esp32">ESP32</option></select></label>
+      <label>Platform<select id="host"><option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option><option value="android">Android</option><option value="esp32">ESP32</option></select></label>
       <label>State<select id="scenario"><option value="stopped">Stopped</option><option value="waiting">Waiting</option><option value="running">Receiving</option><option value="lost">Disconnected</option><option value="mode">Mode off</option></select></label>
     </div>
   </div>
@@ -86,7 +86,6 @@
         <div class="group">
           <label class="setting-row"><span>Compatibility Mode <small id="mode-value">Not checked</small></span><input id="compatibility" aria-label="Compatibility Mode" type="checkbox" role="switch" disabled></label>
           <label class="setting-row"><span>Automatic restoration</span><input id="auto-restore" type="checkbox" role="switch" checked></label>
-          <label class="setting-row" id="auto-start-row" hidden><span>Start bridge on boot</span><input id="auto-start" type="checkbox" role="switch" checked></label>
           <label class="setting-row" id="update-row" hidden><span>Check for updates <small>Once a day from GitHub, while the bridge is stopped</small></span><input id="update-check" type="checkbox" role="switch"></label>
           <div class="actions"><button data-action="read">Read receiver</button><span id="power-value">Power Savings: not checked</span></div>
           <div class="actions"><a id="receiver-web" href="http://192.168.4.1/settings/" target="_blank" rel="noopener noreferrer">Open Sentry web settings</a></div>

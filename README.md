@@ -6,9 +6,10 @@ relays available standard GPS, heartbeat and weather frames.
 
 ## Project status
 
-Version **0.2.0**. Android and Windows apps share Bridge, Settings and Diagnostics screens and a C decoder. Raspberry Pi
-has a web controller installed from source. Linux/macOS desktop operation is from
-source. ESP32 is a layout preview, with no working firmware.
+Version **0.2.0**. Android and Windows apps share Bridge, Settings and Diagnostics screens and a C decoder.
+Linux/macOS desktop operation is from source. [Firmware for small boards](docs/Firmware.md)
+(ESP32-C3, Raspberry Pi Pico W and Pico 2 W) bridges for EFBs on any device, including Android; it
+builds but is not yet tested with a receiver.
 
 A native iOS/iPadOS 26+ app installs outside the App Store; see
 [iPhone and iPad](docs/iOS-Sideload.md). Its background Bridge Session is experimental.
@@ -24,21 +25,22 @@ A native iOS/iPadOS 26+ app installs outside the App Store; see
    is optional. Leave **Automatic restoration** enabled to request Compatibility
    Mode again after receiver power cycles.
 
-On the same device the bridge shares UDP 4000 with one EFB. Android/Linux require
-the EFB to allow port sharing; otherwise configure another EFB port in both apps.
+On iPhone, iPad, Windows and macOS the bridge shares UDP 4000 with one EFB on the same
+device. On Android, use the bridge for an EFB on another device: Android EFBs do not
+share UDP 4000. Linux needs the EFB to allow port sharing, or another EFB port.
 For another device, output goes to its configured address. An announcement does not
 add a destination. Desktop targets are Custom GDL90. Ports remain editable in Settings.
 
-Use [Android](docs/Android.md), [Windows](docs/Windows.md) or
-[Raspberry Pi](docs/Raspberry-Pi.md) for platform setup and download/source instructions.
+Use [Android](docs/Android.md) or [Windows](docs/Windows.md) for platform setup and
+download/source instructions.
 Use **Stop** to end forwarding. Desktop browser fallback can keep the bridge
 running after a tab closes; **Settings → Exit Sentry Bridge** ends the controller.
 
 ## Compatibility and safety
 
-Hardware coverage is limited: Sentry Plus WiFi firmware 1.0.32, FltPlan Go on Android,
-and ForeFlight, Garmin Pilot, AvareX and FltPlan Go on one iPad. That is not a promise
-for every version, device or flight. See [Compatibility](docs/Compatibility.md).
+Hardware coverage is limited: Sentry Plus WiFi firmware 1.0.32 with ForeFlight, Garmin
+Pilot, AvareX and FltPlan Go on one iPad. EFB output from the Android app has not been
+verified on a device yet. That is not a promise for every version, device or flight. See [Compatibility](docs/Compatibility.md).
 
 - AHRS, CO, temperature, barometric sensor and battery data are unavailable to EFBs
   in Compatibility Mode, including ForeFlight. The bridge does not invent them.
@@ -58,7 +60,7 @@ Dark appearance is the default; Android Expressive styling defaults on. Saved
 appearance choices survive updates.
 
 Traffic is processed locally. Optional GitHub update checks are enabled by default
-on Windows/Pi and disabled on Android; they only notify. Captures and backups can
+on Windows and disabled on Android; they only notify. Captures and backups can
 contain flight tracks and identifiers. Review [Privacy](docs/Privacy.md) before
 recording or sharing data. Privacy and license texts are also available offline in Settings.
 

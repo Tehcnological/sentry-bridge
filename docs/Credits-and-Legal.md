@@ -19,6 +19,10 @@ The full terms are in [LICENSE](../LICENSE).
 - Kotlin standard library is Apache-2.0. Packaged Windows Python tools include
   CPython and its incorporated components under their respective terms.
 - The Phosphor broadcast glyph is MIT; its full notice remains in web/app.html.
+- The small-board firmware links ESP-IDF (Apache-2.0, with binary-only WiFi libraries) or the
+  Raspberry Pi Pico SDK with cyw43-driver (Raspberry Pi devices only), plus FreeRTOS, lwIP,
+  TinyUSB, newlib and others. A GPLv3 section 7 permission in NOTICE.txt allows that linking;
+  the notices are in `firmware/notices/Third-Party.txt`.
 
 Offline license texts are in Settings → Licenses. Build/test dependencies are
 separate from the shipped runtime inventory; changing packaging requires another audit.

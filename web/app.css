@@ -1,4 +1,4 @@
-/* Sentry Bridge shared GUI (desktop, Pi, Android WebView).
+/* Sentry Bridge shared GUI (desktop and Android WebView).
    Default look follows the iOS app's inset-grouped Form (ios/SentryBridge/BridgeView.swift): same palette,
    12 px groups, 10 px controls, system font. The top bar is a frosted-glass web approximation of Apple's
    Liquid Glass, not an Apple component. body.expressive (Android, on by default) swaps in Material 3
@@ -94,7 +94,8 @@ button,input,select { font:inherit; color:inherit; }
 button,select,input[type=checkbox],input[type=radio],summary { cursor:pointer; }
 h1,h2,p,dl,dd { margin:0; }
 a { color:var(--tint); text-decoration:none; }
-a:hover { text-decoration:underline; }
+/* Hover only where a pointer hovers: on touch screens it sticks to the last tapped control. */
+@media (hover:hover) { a:hover { text-decoration:underline; } }
 small { color:var(--muted); }
 :focus-visible { outline:2px solid var(--tint); outline-offset:3px; border-radius:var(--radius-control); }
 .skip { position:absolute; top:-60px; left:12px; z-index:3; background:var(--surface); padding:10px 14px; border-radius:var(--radius-control); }
@@ -106,16 +107,16 @@ button {
   background:var(--fill); color:var(--tint); font-weight:600;
   transition:transform .18s var(--ease),background-color .2s,opacity .2s;
 }
-button:hover:not(:disabled):not([aria-selected=true]) { background:color-mix(in srgb,var(--fill),var(--tint) 10%); }
+@media (hover:hover) { button:hover:not(:disabled):not([aria-selected=true]) { background:color-mix(in srgb,var(--fill),var(--tint) 10%); } }
 button:active:not(:disabled) { transform:scale(.97); }
 button:disabled,input:disabled,select:disabled { opacity:.42; cursor:not-allowed; }
 .primary {
   display:block; width:100%; min-height:var(--button-height); margin-top:16px;
   border-radius:var(--radius-button); background:var(--accent); color:var(--on-accent); font-size:17px;
 }
-.primary:hover:not(:disabled) { background:color-mix(in srgb,var(--accent),#000 8%); }
+@media (hover:hover) { .primary:hover:not(:disabled) { background:color-mix(in srgb,var(--accent),#000 8%); } }
 .primary.stop,.destructive { background:var(--danger); color:#fff; }
-.primary.stop:hover:not(:disabled),.destructive:hover:not(:disabled) { background:color-mix(in srgb,var(--danger),#000 10%); }
+@media (hover:hover) { .primary.stop:hover:not(:disabled),.destructive:hover:not(:disabled) { background:color-mix(in srgb,var(--danger),#000 10%); } }
 body.expressive button:not(.primary) { border-radius:999px; }
 
 /* Inputs: filled, label above (iOS field()). */
@@ -157,9 +158,9 @@ main { max-width:720px; margin:0 auto; padding:24px 20px calc(48px + env(safe-ar
   transition:background-color .2s,box-shadow .2s,transform .18s var(--ease);
 }
 /* Hover never touches the selected tab, so it keeps its selected colours. */
-.tabs button:hover:not(:disabled):not([aria-selected=true]) { background:transparent; }  /* outranks the generic button hover */
-body.expressive .tabs button:hover:not(:disabled):not([aria-selected=true]) { background:var(--fill); }
-.tabs button:hover:not([aria-selected=true]) { opacity:.75; }
+@media (hover:hover) { .tabs button:hover:not(:disabled):not([aria-selected=true]) { background:transparent; }  /* outranks the generic button hover */ }
+@media (hover:hover) { body.expressive .tabs button:hover:not(:disabled):not([aria-selected=true]) { background:var(--fill); } }
+@media (hover:hover) { .tabs button:hover:not([aria-selected=true]) { opacity:.75; } }
 .tabs button[aria-selected=true],.segmented input:checked + span {
   background:var(--selected); font-weight:600; box-shadow:0 1px 3px rgb(0 0 0 / .12),0 0 0 .5px rgb(0 0 0 / .04);
 }
@@ -229,7 +230,7 @@ input[role=switch]:checked::after { transform:translateX(20px); }
 body.expressive input[role=switch] { width:52px; height:32px; background:var(--fill); box-shadow:inset 0 0 0 2px var(--muted); }
 body.expressive input[role=switch]::after { top:8px; left:8px; width:16px; height:16px; background:var(--muted); box-shadow:none; transition:transform .25s var(--ease),width .25s var(--ease),height .25s var(--ease),top .25s var(--ease); }
 body.expressive input[role=switch]:checked { background:var(--accent); box-shadow:none; }
-body.expressive input[role=switch]:checked::after { top:4px; width:24px; height:24px; background:var(--on-accent); transform:translateX(20px); }
+body.expressive input[role=switch]:checked::after { top:4px; width:24px; height:24px; background:var(--on-accent); transform:translateX(16px); } /* 4px from the right edge, as from the top */
 
 /* Disclosure rows with a chevron. */
 summary { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:48px; list-style:none; font-size:15px; color:var(--ink); }
@@ -277,7 +278,7 @@ details[open] > summary::after { transform:rotate(45deg); }
 .dialog-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
 .dialog-actions .primary { margin-top:0; min-height:44px; font-size:15px; }
 
-/* Landscape on every platform (desktop and Pi windows, tablets, phones turned sideways): status on the left, the selected tab on the right, like the
+/* Landscape on every platform (desktop windows, tablets, phones turned sideways): status on the left, the selected tab on the right, like the
    iPad split layout. The status card stays in view while a long tab scrolls. The note spans the bottom. */
 @media (orientation:landscape) and (min-width:768px) {
   main, html body.mobile main {  /* beats the narrower phone column below */

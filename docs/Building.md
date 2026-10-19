@@ -146,3 +146,9 @@ under AddressSanitizer and UndefinedBehaviorSanitizer. Results are recorded in
 `dist/posix-test-report.json`. Use `--report` to choose a different report path. Physical device
 networking, suspend and background behavior still need checks on the intended hardware.
 
+## Small-board firmware
+
+On Linux or WSL, `python3 tools/build_firmware.py` builds the ESP32-C3, Pico W and Pico 2 W images
+into `dist/` and writes `dist/firmware-report.json`. It expects ESP-IDF 5.4.1 (with its tools),
+pico-sdk 2.1.1 and the Arm GNU toolchain 14.2 under `~/fw`, or pass `--tools`. Releases do
+not include the images yet. See [Small-board firmware](Firmware.md).

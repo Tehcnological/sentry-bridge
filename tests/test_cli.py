@@ -296,17 +296,6 @@ class TestCli(unittest.TestCase):
             finally:
                 run.stop()
 
-    def test_pi_default_args_need_an_edited_destination(self):
-        """The Pi service's shipped args stop with a clear error until --dest is set."""
-        line = next(l for l in (ROOT / "deploy/sentry-bridge.default").read_text().splitlines()
-                    if l.startswith("BRIDGE_ARGS="))
-        args = line.split("=", 1)[1].strip('"').split()
-        self.assertIn("--dest", args)
-        for name, cmd in self.each():
-            p = subprocess.run([*cmd, *args], capture_output=True, text=True, timeout=20)
-            self.assertEqual(p.returncode, 2, f"{name}: {p.stdout}{p.stderr}")
-            self.assertIn("192.168.4.X", p.stdout + p.stderr, name)
-
     def test_broadcast_destination_is_rejected(self):
         for name, cmd in self.each():
             for args in ([], ["--dest", "192.168.4.255:4000"], ["--dest", "255.255.255.255:4000"]):

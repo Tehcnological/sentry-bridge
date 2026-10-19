@@ -10,13 +10,14 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# Firmware images (tools/build_firmware.py) are not release assets until they are tested on boards.
 ASSETS = ("sentry-bridge.exe", "sentry-ctl.exe", "sentry-bridge-gui.exe", "sentry-bridge.apk")
 CERTIFICATE = "1afa17aec207256b2352089f9d4e0a1417d09c859e11fa349aef8d45d0a019c5"
 DISTRIBUTION_ASSETS = ASSETS + ("sentry-bridge-source.zip", "LICENSE", "NOTICE.txt")
 # Sources Git records as 100755. Listed because a release export (git archive) has no Git
 # metadata and Windows drops the bits; verify() checks them against the GitHub tree.
-EXECUTABLES = ("capture.py", "deploy/install-web.sh", "deploy/install.sh", "sentry_ctl.py", "sim.py")
-SOURCE_DIRS = ("notices", "core", "cli", "android", "tests", "tools", "docs", "deploy", "assets")
+EXECUTABLES = ("capture.py", "sentry_ctl.py", "sim.py")
+SOURCE_DIRS = ("notices", "core", "cli", "firmware", "android", "tests", "tools", "docs", "assets")
 ROOT_FILES = (".gitignore", "Run-Gui.cmd", "CMakeLists.txt", "LICENSE", "NOTICE.txt", "README.md", "bridge.py", "capture.py",
               "gdl90.py", "sentry_ctl.py", "sim.py", "uat.py", "ws_probe.py",
               "requirements.txt", "requirements-dev.txt", "requirements-build.txt")
@@ -25,7 +26,6 @@ PUBLIC_ASSETS = ("config/android-simulator.json", "web/app.html", "web/app.css",
                  # Build inputs listed by name: a suffix rule would also pick up untracked local files
                  # such as android/local.properties.
                  "android/gradle.properties", "android/gradle/wrapper/gradle-wrapper.properties",
-                 "deploy/sentry-bridge.default",
                  # F-Droid store text and icon, read from the public source
                  "fastlane/metadata/android/en-US/title.txt", "fastlane/metadata/android/en-US/short_description.txt",
                  "fastlane/metadata/android/en-US/full_description.txt", "fastlane/metadata/android/en-US/images/icon.png")
@@ -47,7 +47,7 @@ EXCLUDED_DIRS = {"build", "build-c", ".gradle", ".cxx", "__pycache__", ".git",
                  "DerivedData", "xcuserdata", ".build", ".swiftpm", ".cache", ".venv",
                  ".local-tools", "local-signing", "signing-check", "captures", "logs", "sentry-logs"}
 SOURCE_SUFFIXES = {".c", ".h", ".py", ".ps1", ".sh", ".java", ".kt", ".kts", ".xml",
-                   ".md", ".txt", ".yml", ".yaml", ".service", ".conf", ".rc", ".ico", ".svg"}
+                   ".md", ".txt", ".yml", ".yaml", ".service", ".conf", ".rc", ".ico", ".svg", ".defaults"}  # sdkconfig.defaults
 
 
 def sha256(path):
@@ -103,6 +103,11 @@ def check_checkout(root=ROOT):
 
 def load(path):
     return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def app_version(root=ROOT):
+    match = re.search(r'#define SB_VERSION "([^"]+)"', (root / "core/sbcore.h").read_text())
+    return match[1] if match else None
 
 
 def validate_reports(root, dist, tag):

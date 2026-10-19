@@ -34,7 +34,7 @@ class TestRoutes(unittest.TestCase):
         self.assertEqual(other["warnings"], [])
 
     def test_other_device_uses_its_address_on_the_efb_port(self):
-        for host in ("windows", "pi", "esp32", "android"):
+        for host in ("windows", "esp32", "android"):
             with self.subTest(host=host):
                 result = validate_route(route("network", host, " 192.168.7.23 "), PORTS)
                 self.assertEqual(result["routes"], [{"address": "192.168.7.23", "port": 4000, "shared": False}])
@@ -49,7 +49,7 @@ class TestRoutes(unittest.TestCase):
         self.assertEqual(validate_settings({**DEFAULTS, "efbPort": 63093})["efbPort"], 63093)
 
     def test_no_efb_hosts_cannot_choose_this_device(self):
-        for host in ("pi", "esp32"):
+        for host in ("esp32",):
             with self.subTest(host=host), self.assertRaisesRegex(ValueError, "Other device"):
                 validate_route(route(host=host), PORTS)
 

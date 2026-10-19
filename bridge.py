@@ -16,7 +16,7 @@ the Sentry comes up encrypted after a gap in its stream (a power cycle or the br
 starting). A switch in the middle of a running stream is somebody pressing Disable in
 ForeFlight, and is left alone.
 
-Typical cockpit use (Pi joined to the Sentry WiFi, tablet on the same WiFi):
+Typical cockpit use (this computer joined to the Sentry WiFi, tablet on the same WiFi):
     python3 bridge.py --ownship-icao A1B2C3 --dest 192.168.4.20:4000
 
 The tablet keeps receiving heartbeat/ownship straight from the Sentry and gets traffic

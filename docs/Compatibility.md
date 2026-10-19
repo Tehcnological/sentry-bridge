@@ -14,12 +14,19 @@ devices and EFBs.
 - Disable Power Savings in Sentry's web settings; ForeFlight is optional. Power Savings shuts Sentry down
   after 30 minutes without ForeFlight connected.
 - Compatibility Mode resets on power-up. Keep automatic restoration on; turning the mode off stops bridging.
-- Limited hardware testing so far: Sentry Plus, WiFi firmware 1.0.32, with FltPlan Go on Android and
-  ForeFlight, Garmin Pilot, AvareX and FltPlan Go on one iPad. Other devices, EFB versions and long
-  background use need validation.
+- Limited hardware testing so far: Sentry Plus, WiFi firmware 1.0.32, with ForeFlight, Garmin Pilot,
+  AvareX and FltPlan Go on one iPad. The Android app receives and decodes traffic on a device, but EFB
+  output on Android has not been verified yet. Other devices, EFB versions and long background use
+  need validation.
 
 ## Android
 
+- **Use Android as a bridge for another device (Other device).** An EFB on the same Android phone
+  usually cannot receive from the bridge: Android lets two apps share UDP 4000 only if both allow it,
+  and EFBs tested so far (FltPlan Go, Garmin Pilot) do not. iPhone and iPad do not have this limit.
+- Garmin Pilot for Android does not accept GDL90 input, from the bridge or from the receiver directly.
+  Garmin Pilot works on iPhone and iPad. On Android, use an EFB with GDL90 input such as FltPlan Go,
+  or run the bridge for a Garmin Pilot iPad (**Other device**).
 - With the EFB on the same device, the bridge shares UDP 4000 with it, and one EFB at a time receives the
   output. Android allows two apps on one port only when both allow it; if the EFB does not, the bridge
   reports the port in use. Then set **EFB UDP port** in Settings (for example 4001) and the same port in
@@ -37,16 +44,11 @@ devices and EFBs.
 - With the EFB on the same computer, the bridge shares UDP 4000 with it. On Linux the EFB must allow port
   sharing; otherwise set another EFB port in Settings and in the EFB.
 
-## Raspberry Pi
+## Small boards (ESP32-C3, Pico W, Pico 2 W)
 
-- The Pi runs the bridge for EFBs on other devices only: choose **Other device** and enter the EFB's
-  address.
-- The web control page uses plain HTTP with a password on the Sentry WiFi; anyone on that network can see
-  its traffic.
-
-## ESP32
-
-- Not available yet. The layout is a preview of a planned port.
+- Firmware for these boards bridges for every EFB on the receiver's WiFi, including Android EFBs.
+  It builds for all three boards but has not been tested with a receiver yet. See
+  [Small-board firmware](Firmware.md).
 
 ## iPhone and iPad
 

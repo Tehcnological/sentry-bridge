@@ -8,8 +8,8 @@ import errno
 import socket
 import sys
 
-HOSTS = {"android", "ios", "windows", "macos", "linux", "pi", "esp32"}
-NO_EFB_HOSTS = {"pi", "esp32"}  # no EFB runs on these, so only Other device
+HOSTS = {"android", "ios", "windows", "macos", "linux", "esp32"}
+NO_EFB_HOSTS = {"esp32"}  # no EFB runs on these, so only Other device
 
 
 def interface_broadcasts():

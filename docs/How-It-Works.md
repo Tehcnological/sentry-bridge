@@ -44,7 +44,7 @@ ForeFlight mode on every power-up, so the bridge turns it back on (`--auto-enabl
 | `cli/` | Native command-line bridge (`sentry-bridge.exe`) |
 | `android/` | Kotlin service and screen, calling the core through JNI |
 | `bridge.py` | Python reference implementation and optional legacy headless service |
-| `tools/gui_server.py` / `tools/pi_server.py` | Desktop/Pi controller, using the C core when available |
+| `tools/gui_server.py` | Desktop controller, using the C core when available |
 
 The test suite runs simulated traffic (a busy, lossy scenario with many aircraft, and UAT messages
 with injected byte errors), structured fuzz and random input through both the Python bridge and the C

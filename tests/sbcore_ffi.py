@@ -61,13 +61,14 @@ def _lib_name() -> str:
 
 def _build() -> Path | None:
     out = ROOT / "build" / _lib_name()
-    if out.exists() and out.stat().st_mtime >= max((ROOT / "core" / n).stat().st_mtime for n in ("sbcore.c", "sbcore.h", "sbdecode.c")):
+    sources = [ROOT / "core" / n for n in ("sbcore.c", "sbcore.h", "sbdecode.c")] + [ROOT / "firmware/common" / n for n in ("fw_bridge.c", "fw_bridge.h")]
+    if out.exists() and out.stat().st_mtime >= max(p.stat().st_mtime for p in sources):
         return out
     cc = next((c for c in (os.environ.get("CC"), "cc", "gcc", "clang") if c and shutil.which(c)), None)
     if not cc:
         return None
     out.parent.mkdir(exist_ok=True)
-    cmd = [cc, "-std=c99", "-O2", "-shared", "-o", str(out), str(SRC)]
+    cmd = [cc, "-std=c99", "-O2", "-shared", "-o", str(out), "-I" + str(ROOT / "core"), str(SRC), str(ROOT / "firmware/common/fw_bridge.c")]
     if sys.platform != "win32":
         cmd[3:3] = ["-fPIC"]
         cmd.append("-lm")

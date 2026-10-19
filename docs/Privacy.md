@@ -1,6 +1,6 @@
 # Privacy
 
-Effective 2026-10-13. This policy describes the Android, Windows and Python/Pi
+Effective 2026-10-13. This policy describes the Android, Windows and Python
 Sentry Bridge applications in this source revision. iOS has a separate implementation
 and distribution review. The project does not operate a flight-data collection service.
 
@@ -30,7 +30,7 @@ saved them, including any cloud-synced folder. Delete those copies separately.
 On Android, clear app storage in system Settings or uninstall to remove app-private
 data; exported files remain. On Windows, close the application before removing
 its data directory under %LOCALAPPDATA%/SentryBridge. Source GUI data defaults to
-.local-tools/gui-data; the Pi service uses /var/lib/sentry-bridge. Browser storage,
+.local-tools/gui-data. Browser storage,
 backups, filesystem snapshots and system logs may retain additional copies.
 
 ## Internet connections
@@ -38,7 +38,7 @@ backups, filesystem snapshots and system logs may retain additional copies.
 Optional update checks request release metadata from GitHub, at most once daily
 while stopped. They send normal connection metadata such as IP address and HTTP
 headers; they do not upload captures or flight data. Checks notify only and do not
-download or install executable updates. Windows/Pi default to enabled; Android
+download or install executable updates. Windows defaults to enabled; Android
 defaults to disabled and suppresses checks for recognized F-Droid installs.
 Turn off Check for updates in Settings to disable these requests. Saved choices
 are preserved. GitHub handles requests under its own privacy policy.
@@ -51,9 +51,7 @@ operating system, browser, receiver, EFB or chosen export destination.
 
 ## Web controls and sharing
 
-Desktop controls bind to loopback and use session authentication. The Pi web
-service uses a password over plain HTTP; its traffic and password are observable
-on that network. Do not expose it to the Internet. These controls are not a secure
+Desktop controls bind to loopback and use session authentication. These controls are not a secure
 cloud storage service. Do not post raw recordings, backups, secrets or location
 histories in issues. Review and redact reports before sharing; public posts may
 be copied and retained by others.

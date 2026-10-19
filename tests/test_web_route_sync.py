@@ -8,12 +8,13 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 NAMES = ("updateDestination", "routeState", "pullForm", "pullSettings", "pullValue", "pullCheck",
-         "snapshotForm", "efbPort", "shared", "invalidate", "restoreRoutes")
+         "snapshotForm", "efbPort", "shared", "invalidate", "restoreRoutes", "noThisDevice")
 
 # Runs app.js's own functions against a small DOM. Prints the state after each poll.
 HARNESS = r"""
 class El { constructor(id) { this.id = id; this.value = ""; this._checked = false; this.hidden = false;
   this.disabled = false; this.textContent = ""; }
+  closest() { return $(this.id + "-label"); }
   get checked() { return this._checked; }
   set checked(on) {  // the two topology radios share a group, as in the page
     if (on && (this.id === "same" || this.id === "network")) $(this.id === "same" ? "network" : "same")._checked = false;
@@ -53,6 +54,13 @@ status = saved; restoreRoutes(saved.routesRequest);
 checked = true; $("validation").hidden = false; $("output-summary").textContent = "192.168.4.30:4000";
 out.push(poll(saved));
 out[out.length - 1].output = $("output-summary").textContent;
+// Android: This device is hidden (EFBs there hold UDP 4000) unless the simulator runs.
+$("host").value = "android"; $("same").checked = true; status = {settings, simulator: false};
+updateDestination();
+const android = {hidden: $("same-label").hidden, network: $("network").checked};
+status = {settings, simulator: true}; updateDestination();
+android.simulatorHidden = $("same-label").hidden;
+out.push(android);
 console.log(JSON.stringify(out));
 """
 
@@ -82,7 +90,8 @@ class TestWebRouteSync(unittest.TestCase):
             "FUNCTIONS", "\n".join(function_source(script, name) for name in NAMES))
         result = subprocess.run([node(), "-"], input=harness, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
-        same, network, port, reload = json.loads(result.stdout)
+        same, network, port, reload, android = json.loads(result.stdout)
+        self.assertEqual(android, {"hidden": True, "network": True, "simulatorHidden": False})
         self.assertTrue(same["hidden"])
         self.assertTrue(same["checked"])  # an unchanged poll keeps the validation
         self.assertEqual(network["address"], "192.168.4.20")
