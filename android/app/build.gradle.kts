@@ -30,7 +30,7 @@ android {
         versionCode = (System.getenv("SB_ANDROID_VERSION_CODE")
             ?: rootProject.file("version-code.txt").readText().trim()).toInt()
         require(versionCode in 1..2100000000) { "Invalid Android version code" }
-        versionName = "0.2.0"
+        versionName = "0.2.1"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }

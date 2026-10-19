@@ -1,7 +1,7 @@
 # Android
 
 Requires Android 8 or newer. The app runs the bridge in the background with a notification, next to
-your EFB. The current 0.2.0 source uses shared **Bridge**, **Settings** and **Diagnostics** screens;
+your EFB. The current 0.2.1 source uses shared **Bridge**, **Settings** and **Diagnostics** screens;
 see [GUI controls](GUI-Controls.md) for every control and [Building from source](Building.md) for Android
 tool limits.
 

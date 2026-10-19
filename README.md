@@ -6,7 +6,7 @@ relays available standard GPS, heartbeat and weather frames.
 
 ## Project status
 
-Version **0.2.0**. Android and Windows apps share Bridge, Settings and Diagnostics screens and a C decoder.
+Version **0.2.1**. Android and Windows apps share Bridge, Settings and Diagnostics screens and a C decoder.
 Linux/macOS desktop operation is from source. [Firmware for small boards](docs/Firmware.md)
 (ESP32-C3, Raspberry Pi Pico W and Pico 2 W) bridges for EFBs on any device, including Android; it
 builds but is not yet tested with a receiver.

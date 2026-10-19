@@ -3,7 +3,8 @@
 
     python3 tools/check_version.py v0.2.0
 
-Bump both before tagging: SB_VERSION in core/sbcore.h and versionName in android/app/build.gradle.kts.
+Bump all three before tagging: SB_VERSION in core/sbcore.h, versionName in android/app/build.gradle.kts
+and CFBundleShortVersionString in ios/SentryBridge/Info.plist.
 """
 
 import re
@@ -14,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCES = {
     "core/sbcore.h (SB_VERSION)": r'#define SB_VERSION "([^"]+)"',
     "android/app/build.gradle.kts (versionName)": r'versionName = "([^"]+)"',
+    "ios/SentryBridge/Info.plist (CFBundleShortVersionString)": r"<key>CFBundleShortVersionString</key><string>([^<]+)</string>",
 }
 
 

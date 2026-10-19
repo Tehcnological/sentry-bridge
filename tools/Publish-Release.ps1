@@ -6,7 +6,9 @@ param(
     [Parameter(Mandatory=$true)][string]$NotesFile,
     [string]$Repository = 'Tehcnological/sentry-bridge',
     # Releases normally come from master. Set this only for a deliberate release from another branch.
-    [switch]$AllowUnmergedCommit
+    [switch]$AllowUnmergedCommit,
+    # Marks a test release as a pre-release, so it never becomes Latest. Tags with a suffix always are.
+    [switch]$Prerelease
 )
 $ErrorActionPreference = 'Stop'
 # GitHub reports commit SHAs in lowercase; send and compare the same form.
@@ -102,7 +104,7 @@ foreach ($publishRef in @('master', $Commit)) {
     }
 }
 $publishArguments = @('release','create',$Tag,'--repo',$Repository,'--target',$Commit,'--draft','--title',$Tag,'--notes-file',(Resolve-Path -LiteralPath $NotesFile).Path)
-if ($Tag.Contains('-')) { $publishArguments += '--prerelease' }
+if ($Prerelease -or $Tag.Contains('-')) { $publishArguments += '--prerelease' }
 # Keep in step with DISTRIBUTION_ASSETS in tools/release_bundle.py, plus SHA256SUMS and the manifest.
 $publishFiles = @('sentry-bridge.exe','sentry-ctl.exe','sentry-bridge-gui.exe','sentry-bridge.apk','sentry-bridge-source.zip','LICENSE','NOTICE.txt','SHA256SUMS','release-manifest.json')
 $publishArguments += $publishFiles | ForEach-Object { Join-Path $publishBundle $_ }
@@ -139,9 +141,10 @@ if ($null -ne $publishTagCommit -and $publishTagCommit -ne $Commit) { throw 'The
 $publishResult = Invoke-CapturedNative -FilePath $publishGh -Arguments @('api', '-X', 'PATCH', "repos/$Repository/releases/$publishReleaseId", '-F', 'draft=false')
 if ($publishResult.ExitCode -ne 0) { throw 'Publication failed; inspect the draft in GitHub.' }
 $publishPublished = Invoke-CapturedNative -FilePath $publishGh -Arguments @('api', "repos/$Repository/releases/tags/$Tag")
-if ($publishPublished.ExitCode -ne 0 -or [int64]((($publishPublished.Stdout -join [Environment]::NewLine) | ConvertFrom-Json).id) -ne $publishReleaseId) {
-    throw 'Publication could not be confirmed; inspect the release in GitHub.'
-}
+if ($publishPublished.ExitCode -ne 0) { throw 'Publication could not be confirmed; inspect the release in GitHub.' }
+$publishPublishedRelease = ($publishPublished.Stdout -join [Environment]::NewLine) | ConvertFrom-Json
+if ([int64]$publishPublishedRelease.id -ne $publishReleaseId) { throw 'Publication could not be confirmed; inspect the release in GitHub.' }
+if ([bool]$publishPublishedRelease.prerelease -ne ($Prerelease -or $Tag.Contains('-'))) { throw 'Published, but the pre-release flag is wrong; fix it in GitHub now (it decides which release the update check offers).' }
 $publishTagCommit = Get-PublishTagCommit -Attempts 5
 if ($null -eq $publishTagCommit) { throw "Published, but the tag is not visible yet; check in GitHub that $Tag points to $Commit." }
 if ($publishTagCommit -ne $Commit) { throw 'The published tag does not point to the release commit; inspect the release in GitHub now.' }

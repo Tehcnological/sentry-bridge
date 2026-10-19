@@ -37,5 +37,5 @@ share its signing identity. This document does not guarantee acceptance.
   matches the signed APK apart from its signature.
 - Linux (Ubuntu in WSL, OpenJDK 17.0.20.1, the same SDK packages from `sdkmanager`): an unsigned
   build matches the signed Windows release APK apart from its signature.
-
-Not yet run: F-Droid's own build server (`fdroid build`), which uses Debian and its own JDK.
+- F-Droid's own build tool (`fdroid build`, fdroidserver 2.4.5) reproduced the v0.2.0 release APK and
+  verified its signer.

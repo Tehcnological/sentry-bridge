@@ -107,7 +107,7 @@ elif args[:2]==['release','create']:
             state['assets'].append({'name':p.name,'size':p.stat().st_size,'digest':'sha256:'+digest})
     target=args[args.index('--target')+1]
     # changed-target: the draft as GitHub holds it targets another commit than requested.
-    draft=dict(tag_name=args[2],draft=True,assets=state['assets'],target_commitish='b'*40 if mode=='changed-target' else target)
+    draft=dict(tag_name=args[2],draft=True,prerelease='--prerelease' in args,assets=state['assets'],target_commitish='b'*40 if mode=='changed-target' else target)
     releases.append(dict(draft,id=4242))
     # ambiguous-draft: a second draft for the tag appeared while uploading.
     if mode=='ambiguous-draft': releases.append(dict(draft,id=4243))
@@ -159,9 +159,9 @@ class TestPublishRelease(unittest.TestCase):
                                 SB_LOCAL_TOOLS=str(tools), SB_SIGNING_DIR=str(self.root/'local-signing'))
         self.pwsh = shutil.which('pwsh')
 
-    def run_publisher(self, mode, commit='a'*40):
+    def run_publisher(self, mode, commit='a'*40, extra=()):
         result = subprocess.run([self.pwsh,'-NoProfile','-File',str(self.root/'tools/Run-Publisher.ps1'),
-            '-Tag','v0.1.3','-Commit',commit,'-NotesFile',str(self.root/'notes.md')],
+            '-Tag','v0.1.3','-Commit',commit,'-NotesFile',str(self.root/'notes.md'),*extra],
             env=dict(self.environment, SB_FAKE_GH_MODE=mode), capture_output=True, text=True, timeout=60)
         state_path = self.fake / 'state.json'
         state = json.loads(state_path.read_text()) if state_path.exists() else {}
@@ -180,6 +180,13 @@ class TestPublishRelease(unittest.TestCase):
         # The verified draft was published by its release ID, and nothing else changed.
         self.assertEqual([(r['id'],r['draft']) for r in state['releases']],[(4242,False)])
         self.assertEqual(state['tags'],{'v0.1.3':'a'*40})
+        self.assertFalse(state['releases'][0]['prerelease'])
+
+    def test_prerelease_switch_marks_a_plain_tag(self):
+        result,state = self.run_publisher('success', extra=('-Prerelease',))
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertTrue(state.get('published'))
+        self.assertTrue(state['releases'][0]['prerelease'])
 
     def test_publishes_when_an_annotated_tag_points_to_the_commit(self):
         result,state = self.run_publisher('annotated-tag')
