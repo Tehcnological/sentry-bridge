@@ -4,9 +4,9 @@
 - Is the bridge running, and does its status show aircraft? If it shows aircraft but the EFB does
   not, check the EFB's GDL90 port matches where the bridge sends (**EFB UDP port** in Settings,
   default 4000).
-- With an EFB on the same device, the bridge shares port 4000 with it. On Android and Linux the EFB
-  must allow port sharing; if the bridge reports the port in use, set another EFB port in Settings
-  and the same port in the EFB.
+- With an EFB on the same computer, the bridge shares port 4000 with it. On Linux the EFB must allow
+  port sharing; if the bridge reports the port in use, set another EFB port in Settings and the same
+  port in the EFB. On Android the EFB must be on another device.
 
 ## The bridge says the Sentry is in ForeFlight (encrypted) mode
 Compatibility Mode resets on every power-up, and ForeFlight's Disable button turns it off. Use
