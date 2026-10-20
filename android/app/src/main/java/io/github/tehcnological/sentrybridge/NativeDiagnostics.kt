@@ -348,6 +348,7 @@ object NativeDiagnostics {
         Socket().use { socket ->
             network.bindSocket(socket)
             socket.connect(InetSocketAddress(config.sentryIp, config.httpPort), 3000)
+            ensureOpen()  // the connect can take 3 s: no upgrade request after Exit
             socket.soTimeout = 1000
             val input = socket.getInputStream().buffered()
             val out = socket.getOutputStream()

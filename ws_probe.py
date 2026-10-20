@@ -65,24 +65,50 @@ def _send_frame(sock: socket.socket, opcode: int, payload: bytes = b"") -> None:
     sock.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
 
-def connect(host: str, port: int = 80, path: str = "/", timeout: float = 5.0) -> tuple[socket.socket, bytes]:
-    """Open the WebSocket. Returns the socket and any frame bytes that arrived with the handshake."""
-    sock = socket.create_connection((host, port), timeout=timeout)
+HANDSHAKE_LIMIT_S = 10.0  # the whole handshake, however slowly its bytes arrive; the same limit as Android
+STEP_S = .5  # longest wait between cancellation checks while connecting or reading the handshake
+
+
+def connect(host: str, port: int = 80, path: str = "/", timeout: float = 5.0,
+            cancelled=lambda: False) -> tuple[socket.socket, bytes]:
+    """Open the WebSocket. Returns the socket and any frame bytes that arrived with the handshake.
+    cancelled is checked at least every STEP_S; once it is true, nothing more is sent."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if cancelled():
+            raise WSError("cancelled")
+        try:
+            sock = socket.create_connection((host, port), timeout=max(.05, min(STEP_S, deadline - time.monotonic())))
+            break
+        except socket.timeout:
+            if time.monotonic() >= deadline:
+                raise
     try:
-        return sock, _handshake(sock, host, path)
+        sock.settimeout(STEP_S)
+        return sock, _handshake(sock, host, path, cancelled)
     except BaseException:
         sock.close()
         raise
 
 
-def _handshake(sock: socket.socket, host: str, path: str) -> bytes:
+def _handshake(sock: socket.socket, host: str, path: str, cancelled=lambda: False) -> bytes:
     key = base64.b64encode(os.urandom(16)).decode()
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
            f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nOrigin: http://{host}\r\n\r\n")
+    if cancelled():
+        raise WSError("cancelled")
     sock.sendall(req.encode())
     resp = b""
+    deadline = time.monotonic() + HANDSHAKE_LIMIT_S
     while b"\r\n\r\n" not in resp:
-        chunk = sock.recv(1024)
+        if cancelled():
+            raise WSError("cancelled")
+        if time.monotonic() > deadline:
+            raise WSError(f"handshake took longer than {HANDSHAKE_LIMIT_S:.0f} s")
+        try:
+            chunk = sock.recv(1024)
+        except socket.timeout:
+            continue
         if not chunk:
             raise WSError(f"closed during handshake, got: {resp[:300]!r}")
         resp += chunk
@@ -106,12 +132,14 @@ class Reader:
     def __init__(self, sock: socket.socket, pending: bytes = b"", cancelled=lambda: False):
         self.sock = sock
         self.buf = pending
-        self.cancelled = cancelled  # checked per frame: a stream of pings alone never ends message()
+        self.cancelled = cancelled  # checked per frame and per read: pings or a trickled frame never hold it
         self.parts: list[bytes] = []
         self.first_op: int | None = None
 
     def _fill(self, n: int) -> None:
         while len(self.buf) < n:
+            if self.cancelled():
+                raise WSError("cancelled")
             chunk = self.sock.recv(65536)
             if not chunk:
                 raise WSError("connection closed")

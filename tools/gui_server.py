@@ -213,7 +213,7 @@ class Controller:
             self.closing.set()
         self.sensor_cancel.set()
         if self.sensor_thread is not None:
-            self.sensor_thread.join(3)  # it checks every frame and at least once a second
+            self.sensor_thread.join(5)  # it checks every half second at most, after the reader it replaced
         try:
             self.runtime.stop()
         except ValueError as error:  # the UDP thread is a daemon; finish the rest of shutdown anyway
@@ -313,7 +313,7 @@ class Controller:
             s = self.runtime.settings
             self.sensor_session, self.sensor_cancel = session, threading.Event()
             self.sensor_thread = threading.Thread(target=self._read_sensors, name="gui-sensors", daemon=True,
-                                                  args=(self.sensor_cancel, s["sentryIp"], s["httpPort"]))
+                                                  args=(self.sensor_cancel, s["sentryIp"], s["httpPort"], self.sensor_thread))
             self.sensor_thread.start()
         if self.contacting:
             return False
@@ -333,16 +333,19 @@ class Controller:
         threading.Thread(target=run, name="gui-keepalive", daemon=True).start()
         return True
 
-    def _read_sensors(self, cancel, host, port):
+    def _read_sensors(self, cancel, host, port, previous=None):
         """While forwarding, listen to the receiver's /stats WebSocket for battery, CO and temperature.
-        Read-only, like its own statistics page: the handshake, pong replies and a close."""
+        Read-only, like its own statistics page: the handshake, pong replies and a close. Every wait
+        checks cancel at least every ws_probe.STEP_S, and a replacement starts after the reader it replaces."""
+        if previous is not None:
+            previous.join()
         forwarding = lambda: (not cancel.is_set() and self.runtime.forwarding and self.runtime.active()
                               and not self.closing.is_set())
         while forwarding():
             sock = None
             try:
-                sock, pending = ws_probe.connect(host, port, "/stats")
-                sock.settimeout(1.0)
+                sock, pending = ws_probe.connect(host, port, "/stats", cancelled=lambda: not forwarding())
+                sock.settimeout(ws_probe.STEP_S)
                 reader = ws_probe.Reader(sock, pending, lambda: not forwarding())
                 while forwarding():
                     try:
