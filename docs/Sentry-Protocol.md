@@ -53,6 +53,26 @@ In ForeFlight mode the stream contains only `0x25` and the encrypted `0x26`.
 | `GET /settings/?action=get` | Settings: `wifi`, `client`, `led`, `ahrs`, `coAlarmLevel`, `Power` |
 | `POST /settings/?action=set` | Partial update: only the posted keys change |
 | `GET /data/` | Directory index of stored telemetry logs (CSV) |
+| `GET /data/<name>` | One stored file; the current one may still be growing |
+| `GET /data?action=get` | JSON inventory: `numFiles`, `currCSV`, `currLOG`, `files`. With `&file=<prefix>`, metadata for matching files (name, size, type, start/end time and position where known) |
+| `GET /data?action=get&file=currCSV` | The current telemetry CSV as text (`file=currLOG`: the current diagnostic log). Flushes the logger first |
+| `GET /stats` | Statistics page; its WebSocket at `/stats` pushes nested JSON about twice a second (see below) |
+| `GET /calibration?action=get` | Stored calibration: ADC reference (mV), CO sensitivity and offset, manufacturing date and serial, whether defaults are in use |
+| `GET /networkInfo?action=get` | Station WiFi state, last disconnect reason and a list of visible access points. Starts a WiFi scan and can take seconds |
+| `GET /coredump` | Crash dump page; `?action=download` returns the stored dump |
+| `GET /espUpdate`, `GET /pingUpdate` | Firmware upload pages for the WiFi and attached processors |
+
+No route asks for authentication, and none is limited by Compatibility Mode. An unknown path returns
+the status page, so a 200 at a guessed URL does not mean the page exists.
+
+**Requests that change the Sentry, including plain GETs:**
+- `/data?action=rm&file=<prefix>` deletes every file whose name starts with the prefix (case-insensitive).
+- `/coredump?action=erase` erases the crash dump; `/coredump?action=test` crashes the firmware on purpose.
+- `/settings/?action=set` writes settings and can run calibration, factory defaults or tests.
+- A multipart POST to `/espUpdate` or `/pingUpdate` installs firmware and reboots or interrupts reception.
+
+Sentry Bridge only reads `/?action=get` and the settings, sets `publicGDL90`, and downloads `/data/`
+files. Anyone on the Sentry's WiFi can make the requests above, another reason to set a WiFi password.
 
 Other keys the settings page posts: `loadDefaults` (factory reset), `calAHRS`, and
 `tests: {coAlarm | Display | LED}`. `?action=set` reads the JSON body regardless of HTTP verb.
@@ -66,6 +86,50 @@ password box can be rejected or clear a stored password. Post only the key you w
   bridge and no ForeFlight, that means mid-flight, and the Sentry comes back in ForeFlight mode.
   Turn it off in Sentry's native web settings (`http://192.168.4.1/settings/`) while joined to
   the receiver WiFi, or in ForeFlight's Sentry settings. ForeFlight is not required.
+
+### Statistics WebSocket (`/stats`)
+About twice a second it sends nested JSON with system, traffic, communication and sensor statistics.
+The sensor fields are read before Compatibility Mode removes sensor reports from the UDP stream, so
+this is the likeliest live source of what Compatibility Mode drops:
+
+| Field | Meaning |
+|---|---|
+| `batteryVoltage_mv`, `batteryCapacity_%` | Battery voltage (mV) and charge (%) |
+| `CO_SENSOR_PPM`, `CO_SENSOR_ADC_MV`, `CO_SENSOR_STATE` | CO concentration (ppm), raw sensor voltage, sensor state |
+| `sensor.baro.pressure_mbar`, `sensor.baro.altitude_m`, `sensor.baro.temp_c` | Pressure (mbar), baro altitude (m), temperature (°C) |
+| `sensor.ats.temp_c`, `sensor.ats.humidity_pRH` | Temperature (°C), relative humidity (%) |
+| `sensor.imu.roll`, `sensor.imu.pitch` | Attitude; units and sign conventions unknown |
+| `sensor.als_Lux` | Ambient light (lux) |
+
+`/stats?action=get` is not a JSON getter; use the WebSocket.
+
+### Stored logs (`/data/`)
+- A telemetry CSV starts when logging starts after the clock is set, named `L<YYMMDDhhmmss>.csv`.
+  After a GPS fix it can be renamed to add two signed coordinates (likely degrees × 10⁷) separated
+  by underscores. The time zone of the name is unknown.
+- One row about every second. A file grows for the whole power-on session; there is no size-based
+  rotation.
+- When a new file starts, files dated in the future are removed and the oldest `L` files are pruned
+  to 15, so about 16 remain including the current one. `M…log` diagnostic files are pruned the same
+  way. Downloading never deletes.
+- Values are separated by a comma and a space, and a row can end with a trailing separator.
+
+| Columns | Units |
+|---|---|
+| `Timestamp` | Unix time, seconds |
+| `HeapAvailable`, `HeapLowWaterFree` | Bytes |
+| `Sensor::battery_mV`, `Sensor::batteryCapacity_%` | mV, % |
+| `Sensor::CO_Sensor_ppm`, `Sensor::CO_Sensor_Healthy`, `Sensor::CO_SensorTemp_C` | ppm, boolean, °C |
+| `Sensor::baroAlt_mm`, `Sensor::baroTemp_CE2` | mm, hundredths of °C |
+| `Sensor::IMU::attX`, `attY`, `attZ` | Attitude; scale and axes unknown |
+| `Sensor::IMU::offsetX`, `offsetY`, `offsetZ` | Offsets; units unknown |
+| `Sensor::IMU::quaternionW`, `quaternionX`, `quaternionY`, `quaternionZ` | Unitless |
+| `Sensor::IMU::accelX`, `accelY`, `accelZ` | Acceleration; units unknown |
+| `Sensor::IMU::rateX`, `rateY`, `rateZ` | Rotation rate; units unknown |
+
+All IMU columns carry the full `Sensor::IMU::` prefix. Pressure is not logged, only baro altitude.
+
+The routes, statistics fields and log format in this section are not yet confirmed on hardware.
 - `Power.autoOnEnabled`: powers the Sentry on when USB power is applied.
 
 ## WebSocket (`ws://192.168.4.1/`)
@@ -95,8 +159,7 @@ as well as a broadcast.
 | UDP 67 | DHCP server for its WiFi |
 | UDP 68 | DHCP client, only when joined to another WiFi network |
 
-No HTTPS, mDNS, SSH or Telnet service is known. Port 80 also serves `/stats`, `/networkInfo`,
-`/calibration`, `/coredump`, `/espUpdate` and `/pingUpdate`; their contents are not documented here.
+No HTTPS, mDNS, SSH or Telnet service is known. For the pages on port 80, see [HTTP API](#http-api-port-80).
 
 The recipient rules, announcement matching and port list above are not yet confirmed with a capture
 on hardware.
@@ -105,5 +168,6 @@ on hardware.
 - **FIS-B weather**: no `0x07` uplink frames have been seen, because no ground station was in range.
   Whether weather passes through in standard form is unknown. If it does, the bridge relays the
   frames unchanged (tested with simulated uplinks).
-- **CO, battery, temperature, attitude**: not found on any channel in Compatibility Mode (UDP, HTTP,
-  WebSocket). Candidates: the stored logs under `/data/`, and the `0x28` summary.
+- **CO, battery, temperature, attitude**: not in the UDP stream in Compatibility Mode. The
+  [statistics WebSocket](#statistics-websocket-stats) should carry them live; confirm that its values
+  stay fresh in Compatibility Mode and find the IMU units before relying on them.
