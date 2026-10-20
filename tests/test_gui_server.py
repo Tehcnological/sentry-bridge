@@ -266,10 +266,16 @@ class TestGUI(unittest.TestCase):
     def test_a_silent_stats_connection_is_replaced(self):
         # A receiver that restarts never closes the old connection; it just goes quiet. The reader must notice
         # and connect again instead of waiting on it for the rest of the session.
-        peer = self.stats_peer("silent")
-        with patch.object(gui_server, "SENSORS_SILENT_S", .5), patch.object(gui_server, "SENSORS_RETRY_S", .2):
-            self.forward_to(peer)
-            wait_for(lambda: peer["connections"] >= 2)
+        # Pings, or a frame trickled a byte at a time, keep bytes arriving but are no message either.
+        for mode in ("silent", "pings", "partial-frame"):
+            with self.subTest(mode):
+                if mode != "silent":  # the first run uses setUp's controller
+                    self.c.close()
+                    self.c = Controller(Path(self.tmp.name) / mode)
+                peer = self.stats_peer(mode)
+                with patch.object(gui_server, "SENSORS_SILENT_S", .5), patch.object(gui_server, "SENSORS_RETRY_S", .2):
+                    self.forward_to(peer)
+                    wait_for(lambda: peer["connections"] >= 2)
 
     def test_restart_cancels_the_waiting_reader_and_uses_the_new_receiver(self):
         old, new = self.stats_peer(), self.stats_peer("pings")
