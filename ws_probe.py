@@ -76,10 +76,29 @@ def connect(host: str, port: int = 80, path: str = "/", timeout: float = 5.0,
     """Open the WebSocket. Returns the socket and any frame bytes that arrived with the handshake.
     cancelled is checked at least every STEP_S; once it is true, nothing more is sent."""
     deadline = time.monotonic() + timeout
-    family, kind, proto, _, address = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)[0]
+    failure = None
+    # Each resolved address in turn, as socket.create_connection does, within one overall deadline.
+    for family, kind, proto, _, address in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        try:
+            sock = _connect_one(family, kind, proto, address, deadline, cancelled)
+        except (socket.timeout, WSError):
+            raise
+        except OSError as error:
+            failure = error
+            continue
+        try:
+            sock.settimeout(STEP_S)
+            return sock, _handshake(sock, host, path, cancelled)
+        except BaseException:
+            sock.close()
+            raise
+    raise failure or OSError(f"{host} has no address")
+
+
+def _connect_one(family, kind, proto, address, deadline, cancelled) -> socket.socket:
+    """One connection attempt, polled in steps: a slow SYN-ACK still completes within the timeout."""
     sock = socket.socket(family, kind, proto)
     try:
-        # One connection attempt, polled in steps: a slow SYN-ACK still completes within the timeout.
         sock.setblocking(False)
         error = sock.connect_ex(address)
         while error not in (0, errno.EISCONN):
@@ -93,8 +112,7 @@ def connect(host: str, port: int = 80, path: str = "/", timeout: float = 5.0,
                 error = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
                 if error:
                     raise OSError(error, os.strerror(error))
-        sock.settimeout(STEP_S)
-        return sock, _handshake(sock, host, path, cancelled)
+        return sock
     except BaseException:
         sock.close()
         raise

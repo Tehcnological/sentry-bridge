@@ -168,6 +168,20 @@ class TestProbe(unittest.TestCase):
         self.assertGreaterEqual(len(waits), 2)  # longer than one step, and still the same attempt
         self.assertEqual(summ.messages, 2)
 
+    def test_a_refused_first_address_falls_back_to_the_next(self):
+        # A host name can resolve to an address that refuses (say ::1) before one that works.
+        with socket.socket() as closed:
+            closed.bind(("127.0.0.1", 0))
+            refused = closed.getsockname()  # nothing listens here once closed
+        srv = FakeSentry()
+        srv.start()
+        stream = (socket.AF_INET, socket.SOCK_STREAM, 6, "")
+        resolved = [(*stream, refused), (*stream, ("127.0.0.1", srv.port))]
+        with patch.object(ws_probe.socket, "getaddrinfo", return_value=resolved):
+            summ = ws_probe.collect("receiver.example", srv.port, "/", seconds=5)
+        srv.join(timeout=5)
+        self.assertEqual(summ.messages, 2)
+
     def test_cancel_while_connecting_sends_nothing(self):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
