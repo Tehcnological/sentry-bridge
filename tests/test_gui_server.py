@@ -124,6 +124,17 @@ class TestGUI(unittest.TestCase):
         self.assertIn("/?action=get", gets)
         self.assertIn("Keepalive: receiver status OK", "\n".join(self.c.runtime.logs))
 
+    def test_sensors_come_from_the_statistics_websocket_while_forwarding(self):
+        self.simulator()
+        self.assertIsNone(self.c.status()["sensors"])
+        self.c.action("start", self.route(free_port()))
+        wait_for(lambda: self.c.status()["sensors"] is not None)
+        # The cabin sensor, not the warmer baro sensor on the board.
+        self.assertEqual(self.c.status()["sensors"], {"batteryPercent": 80, "coPpm": 0, "temperatureC": 21.5})
+        self.c.action("stop", {})
+        wait_for(lambda: not self.c.sensor_thread.is_alive())
+        self.assertIsNone(self.c.status()["sensors"])
+
     def send_simulator_packets(self):
         receiver = self.c.simulator
         packets = (receiver.sim.datagrams(0) if receiver.public else

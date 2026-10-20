@@ -148,6 +148,12 @@ class TestProbe(unittest.TestCase):
             self.assertLessEqual(out.stat().st_size, 300)
         srv.join(timeout=5)
 
+    def test_sensor_values_match_shared_cases(self):
+        # The same cases run on Android and iOS, so every platform shows the same readings.
+        cases = json.loads((Path(__file__).parent / "data" / "stats-cases.json").read_text(encoding="utf-8"))
+        for case in cases:
+            self.assertEqual(ws_probe.sensor_values(case["message"]), case["expected"], case["message"])
+
     def test_refused_handshake_reports_headers(self):
         srv = FakeSentry(refuse=True)
         srv.start()

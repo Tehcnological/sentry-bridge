@@ -56,6 +56,10 @@ def main():
         assert run("lognames", *links).stdout.splitlines() == expected
         # A malformed escape rejects that link only (URLDecoder threw for the whole list before).
         assert run("lognames", "%zz.csv", "log.csv").stdout.splitlines() == ["-", "log.csv"]
+        # Receiver sensors: the same readings as ws_probe.sensor_values for the shared cases.
+        cases = json.loads((ROOT / "tests/data/stats-cases.json").read_text(encoding="utf-8"))
+        shown = [json.loads(line) for line in run("sensors", *(json.dumps(case["message"]) for case in cases)).stdout.splitlines()]
+        assert shown == [case["expected"] for case in cases], shown
         assert "passed" in run("power").stdout
         assert "passed" in run("gps").stdout
         # GPS freshness refreshes only on complete CRC-valid heartbeats, valid or invalid GPS bit.

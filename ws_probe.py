@@ -23,6 +23,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import socket
@@ -171,6 +172,30 @@ def flatten(obj, prefix: str = "") -> dict:
             out.update(flatten(v, f"{prefix}[{i}]"))
     else:
         out[prefix] = obj
+    return out
+
+
+# Sensor values the bridge shows from the Sentry's /stats WebSocket. Matched on the end of the flattened
+# path, so the nesting may change; the first listed suffix with a plausible number wins. Android and iOS
+# apply the same table (tests/data/stats-cases.json keeps them in step).
+SENSORS = (("batteryPercent", ("batterycapacity_%",), 0, 100, 0),
+           ("coPpm", ("co_sensor_ppm",), 0, 2000, 0),
+           ("temperatureC", ("ats.temp_c", "baro.temp_c"), -40, 85, 1))  # the baro sensor reads the warm board
+
+
+def sensor_values(obj) -> dict:
+    """Plausible battery, CO and temperature readings in a /stats message; absent ones are left out."""
+    flat = {key.lower(): value for key, value in flatten(obj).items()}
+    out = {}
+    for name, suffixes, low, high, digits in SENSORS:
+        for suffix in suffixes:
+            found = [v for k, v in flat.items() if (k == suffix or k.endswith("." + suffix))
+                     and isinstance(v, (int, float)) and not isinstance(v, bool) and low <= v <= high]
+            if found:
+                scale = 10 ** digits  # half up, as Kotlin and Swift round
+                value = math.floor(found[0] * scale + .5)
+                out[name] = value / scale if digits else int(value)
+                break
     return out
 
 

@@ -30,6 +30,7 @@ the browser and contacts their hosts. See [Privacy](Privacy.md).
 |---|---|
 | Start/stop forwarding, destinations and selected EFB ports | Bridge |
 | EFB discovery: list announcing EFBs and fill in an Other device address | Bridge → Find EFB |
+| Receiver battery, CO and temperature, and the CO warning at the receiver's alarm level | Bridge, while forwarding (read from the receiver's `/stats` WebSocket; none in the Android simulator) |
 | `sentry-ctl enable` / `disable` | Settings → Receiver → Compatibility Mode |
 | Automatic restoration after a power cycle | Settings → Receiver → Automatic restoration; saved immediately |
 | Backup-before-enable, optional packet verification and duration | Settings → Mode verification |

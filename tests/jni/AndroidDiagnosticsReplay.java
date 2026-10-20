@@ -24,6 +24,9 @@ public class AndroidDiagnosticsReplay {
         } else if (args[0].equals("lognames")) {
             // One line per receiver link: the decoded file name, or "-" when it is rejected.
             for (int i = 1; i < args.length; i++) { String name = d.logName(args[i]); System.out.println(name == null ? "-" : name); }
+        } else if (args[0].equals("sensors")) {
+            // One line per /stats message: the readings the app shows.
+            for (int i = 1; i < args.length; i++) System.out.println(d.sensorValues(args[i]));
         } else if (args[0].equals("mode")) {
             System.out.println(d.describeMode(new JSONObject(args[1])));
         } else if (args[0].equals("power")) {
@@ -256,7 +259,7 @@ public class AndroidDiagnosticsReplay {
                     d.websocket(new android.net.Network(), settings, "/", 30.0, new File(args[1], "handshake.jsonl"), () -> {
                         if (closing.get()) throw new IllegalStateException("Sentry Bridge was closed.");
                         return kotlin.Unit.INSTANCE;
-                    });
+                    }, text -> kotlin.Unit.INSTANCE);
                 } catch (Throwable error) { result.set(error); }
             });
             worker.setDaemon(true); worker.start();

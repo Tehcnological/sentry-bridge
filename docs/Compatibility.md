@@ -10,6 +10,9 @@ devices and EFBs.
 - ForeFlight can still connect directly to Sentry for GPS and traffic in Compatibility Mode. The sensor
   limitations below also apply to ForeFlight.
 - AHRS, CO, temperature, barometric sensor and battery data are unavailable to apps in Compatibility Mode.
+  Sentry Bridge reads battery, CO and temperature from the Sentry's statistics page while forwarding and
+  shows them on its own screen (Windows, macOS, Linux and Android), with a warning at the Sentry's CO alarm
+  level. EFBs do not receive them, and attitude is not forwarded. iOS does not show them yet.
 - Weather frames are relayed; actual EFB weather display still needs hardware verification.
 - Disable Power Savings in Sentry's web settings; ForeFlight is optional. Power Savings shuts Sentry down
   after 30 minutes without ForeFlight connected.

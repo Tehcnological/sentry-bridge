@@ -1,6 +1,8 @@
 """GUI-owned UDP transport. One socket owner for forwarding, mode checks and captures."""
+import base64
 from collections import deque
 from copy import deepcopy
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
@@ -469,8 +471,27 @@ class Simulator:
                     self.reply(200, '<a href="simulator.csv">simulator.csv</a>', "text/html")
                 elif self.path == "/data/simulator.csv":
                     self.reply(200, "time,battery\n0,100\n", "text/csv")
+                elif self.path == "/stats" and self.headers.get("Upgrade", "").lower() == "websocket":
+                    self.statistics()
                 else:
                     self.reply(404, {})
+
+            def statistics(self):
+                """The receiver's statistics WebSocket, twice a second, shaped like firmware 1.0.32."""
+                key = self.headers.get("Sec-WebSocket-Key", "")
+                accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
+                self.wfile.write(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                                 b"Sec-WebSocket-Accept: " + accept + b"\r\n\r\n")
+                self.close_connection = True
+                try:
+                    while not owner.stop_event.is_set():
+                        body = json.dumps({"CO_SENSOR_PPM": 0, "batteryCapacity_%": 80, "CO_SENSOR_STATE": 1,
+                                           "sensor": {"ats": {"temp_c": 21.5}, "baro": {"temp_c": 27.0}}}).encode()
+                        self.wfile.write(bytes([0x81, 126]) + len(body).to_bytes(2, "big") + body)
+                        self.wfile.flush()
+                        owner.stop_event.wait(.5)
+                except OSError:
+                    pass
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))

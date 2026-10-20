@@ -302,8 +302,16 @@ function renderLive(s) {
   $("traffic").textContent = s.running ? String(s.traffic) : "-";
   $("weather").textContent = s.monitoring ? String(s.weather) : "-";
   $("age").textContent = s.lastPacketSeconds === null ? "-" : Math.round(s.lastPacketSeconds*10)/10+"s";  // Android sends the raw float
+  // Read from the receiver's statistics WebSocket while forwarding; null when stale or not sent.
+  const sensors = s.sensors || {};
+  $("battery").textContent = sensors.batteryPercent == null ? "-" : sensors.batteryPercent+"%";
+  $("co").textContent = sensors.coPpm == null ? "-" : sensors.coPpm+" ppm";
+  $("temperature").textContent = sensors.temperatureC == null ? "-" : sensors.temperatureC.toFixed(1)+"°C";
+  const coLevel = s.device?.settings?.coAlarmLevel > 0 ? s.device.settings.coAlarmLevel : 50;
+  const co = sensors.coPpm >= coLevel ? "Carbon monoxide "+sensors.coPpm+" ppm, at or above the receiver's alarm level ("+coLevel+" ppm)." : "";
+  $("co").classList.toggle("alarm",!!co);
   const power = s.device?.settings?.Power?.powerSavings;
-  const problem = uiError || s.error || (s.job.state === "failed" ? s.job.action+": "+s.job.error : "") || (s.state === "lost" ? "No receiver data. Check Sentry power and WiFi." : s.state === "mode" ? "Compatibility Mode is off. Enable it in Settings." : power === true ? "Power Savings is on. Disable it in Sentry's web settings before flight." : "");
+  const problem = co || uiError || s.error || (s.job.state === "failed" ? s.job.action+": "+s.job.error : "") || (s.state === "lost" ? "No receiver data. Check Sentry power and WiFi." : s.state === "mode" ? "Compatibility Mode is off. Enable it in Settings." : power === true ? "Power Savings is on. Disable it in Sentry's web settings before flight." : "");
   $("warning").textContent = problem; $("warning").hidden = !problem;
   // The backend says whether this install may check (an F-Droid install updates through F-Droid).
   $("update-row").hidden = !s.updateSupported;

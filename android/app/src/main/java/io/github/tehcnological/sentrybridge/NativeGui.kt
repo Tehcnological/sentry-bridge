@@ -143,6 +143,12 @@ object NativeGui {
     val recording: Boolean get() = synchronized(files) { capture != null }
     val powerWarning: String? get() = if (device?.optJSONObject("settings")?.optJSONObject("Power")?.opt("powerSavings") == true)
         BridgeService.POWER_SAVINGS_WARNING else null
+    /** CO at or above the receiver's alarm level (50 ppm when unknown), from fresh /stats readings; the same text as the screen. */
+    val coWarning: String? get() {
+        val co = sensors?.takeIf { SystemClock.elapsedRealtime() - sensorsAt <= 5000 }?.optLong("coPpm", -1) ?: return null
+        val level = device?.optJSONObject("settings")?.optDouble("coAlarmLevel")?.takeIf { it > 0 }?.toLong() ?: 50
+        return if (co >= level) "Carbon monoxide $co ppm, at or above the receiver's alarm level ($level ppm)." else null
+    }
 
     @Synchronized fun start(ctx: Context) {
         if (server != null) return
@@ -398,6 +404,7 @@ object NativeGui {
     /** Called on the bridge thread: one read-only keepalive at a time, outside the tool job slot so it never
      *  blocks an operation. False while the previous one runs. Logs only when the result changes. */
     fun keepalive(): Boolean {
+        watchSensors()
         if (contacting) return false
         contacting = true
         Thread({
@@ -409,6 +416,29 @@ object NativeGui {
             }
         }, "sentry-keepalive").apply { isDaemon = true; start() }
         return true
+    }
+
+    @Volatile private var sensors: JSONObject? = null
+    @Volatile private var sensorsAt = 0L
+    private var sensorThread: Thread? = null
+    /** While forwarding, listen to the receiver's /stats WebSocket for battery, CO and temperature. Read-only, like its
+     *  own statistics page. The static simulator has no WebSocket, so it shows none. */
+    private fun watchSensors() {
+        if (simulator || sensorThread?.isAlive == true) return
+        sensorThread = Thread({
+            val forwarding = { BridgeService.status.running && !closing }
+            while (forwarding()) {
+                runCatching {
+                    val network = wifi() ?: throw IOException("Join Sentry WiFi first.")
+                    NativeDiagnostics.websocket(network, config, "/stats", 1e7, null, { if (!forwarding()) throw IOException("Stopped.") }) { text ->
+                        val values = NativeDiagnostics.sensorValues(text)
+                        if (values.length() > 0) { sensors = values; sensorsAt = SystemClock.elapsedRealtime() }
+                    }
+                }  // an older firmware without /stats, or the receiver is away: retry
+                if (forwarding()) Thread.sleep(5000)
+            }
+            sensors = null
+        }, "sentry-sensors").apply { isDaemon = true; start() }
     }
 
     /** Called on the bridge thread. False when another operation is running; the caller keeps the request. */
@@ -800,5 +830,6 @@ object NativeGui {
             .put("job", job).put("deviceLogs", receiverLogs).put("artifacts", artifacts).put("logs", JSONArray(BridgeService.logSnapshot().takeLast(120)))
             .put("error", st.error ?: captureError ?: JSONObject.NULL)
             .put("updateSupported", updateSupported).put("update", currentUpdate() ?: JSONObject.NULL)
+            .put("sensors", sensors?.takeIf { st.running && SystemClock.elapsedRealtime() - sensorsAt <= 5000 } ?: JSONObject.NULL)
     }
 }
