@@ -8,6 +8,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -147,6 +148,68 @@ class TestProbe(unittest.TestCase):
                 ws_probe.collect("127.0.0.1", srv.port, "/", seconds=5, out_path=str(out))
             self.assertLessEqual(out.stat().st_size, 300)
         srv.join(timeout=5)
+
+    def test_a_connect_slower_than_one_step_keeps_its_attempt(self):
+        # The connection reports complete only after 0.75 s, longer than one STEP_S wait: the same attempt
+        # must carry on to the handshake instead of starting over every step.
+        real, started, waits = ws_probe.select.select, time.monotonic(), []
+
+        def slow(read, write, failed, timeout):
+            waits.append(timeout)
+            if time.monotonic() - started < .75:
+                time.sleep(min(timeout, .75 - (time.monotonic() - started)))
+                return [], [], []
+            return real(read, write, failed, timeout)
+        srv = FakeSentry()
+        srv.start()
+        with patch.object(ws_probe.select, "select", slow):
+            summ = ws_probe.collect("127.0.0.1", srv.port, "/", seconds=5)
+        srv.join(timeout=5)
+        self.assertGreaterEqual(len(waits), 2)  # longer than one step, and still the same attempt
+        self.assertEqual(summ.messages, 2)
+
+    def test_a_refused_first_address_falls_back_to_the_next(self):
+        # A host name can resolve to an address that refuses (say ::1) before one that works.
+        with socket.socket() as closed:
+            closed.bind(("127.0.0.1", 0))
+            refused = closed.getsockname()  # nothing listens here once closed
+        srv = FakeSentry()
+        srv.start()
+        stream = (socket.AF_INET, socket.SOCK_STREAM, 6, "")
+        resolved = [(*stream, refused), (*stream, ("127.0.0.1", srv.port))]
+        with patch.object(ws_probe.socket, "getaddrinfo", return_value=resolved):
+            summ = ws_probe.collect("receiver.example", srv.port, "/", seconds=5)
+        srv.join(timeout=5)
+        self.assertEqual(summ.messages, 2)
+
+    def test_an_address_that_fails_at_once_falls_back_to_the_next(self):
+        # A multicast address cannot take a TCP connection: Linux fails connect_ex at once (ENETUNREACH,
+        # with SO_ERROR then 0), Windows through select. Either way the next address must be tried.
+        srv = FakeSentry()
+        srv.start()
+        stream = (socket.AF_INET, socket.SOCK_STREAM, 6, "")
+        resolved = [(*stream, ("224.0.0.1", srv.port)), (*stream, ("127.0.0.1", srv.port))]
+        with patch.object(ws_probe.socket, "getaddrinfo", return_value=resolved):
+            summ = ws_probe.collect("receiver.example", srv.port, "/", seconds=5)
+        srv.join(timeout=5)
+        self.assertEqual(summ.messages, 2)
+
+    def test_cancel_while_connecting_sends_nothing(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            with self.assertRaisesRegex(ws_probe.WSError, "cancelled"):
+                ws_probe.connect("127.0.0.1", listener.getsockname()[1], "/", cancelled=lambda: True)
+            conn, _ = listener.accept()
+            with conn:
+                conn.settimeout(.5)
+                self.assertEqual(conn.recv(1024), b"")  # closed without an upgrade request
+
+    def test_sensor_values_match_shared_cases(self):
+        # The same cases run on Android and iOS, so every platform shows the same readings.
+        cases = json.loads((Path(__file__).parent / "data" / "stats-cases.json").read_text(encoding="utf-8"))
+        for case in cases:
+            self.assertEqual(ws_probe.sensor_values(case["message"]), case["expected"], case["message"])
 
     def test_refused_handshake_reports_headers(self):
         srv = FakeSentry(refuse=True)

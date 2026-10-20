@@ -1,0 +1,18 @@
+[
+  {"message": {"uptime_s": 166, "deviceVersion": "1.0.32-SentryPlus", "CO_SENSOR_PPM": 3, "batteryCapacity_%": 65,
+               "batteryVoltage_mv": 3836, "CO_SENSOR_ADC_MV": 142, "CO_SENSOR_STATE": 1,
+               "UDP": {"packetRx": 0, "packetTx": 0}, "adc": {},
+               "sensor": {"als_Lux": 0, "ats": {"humidity_pRH": 46.70487213, "temp_c": 28.17768097},
+                          "baro": {"temp_c": 34.18114853, "pressure_mbar": 967.6012573, "altitude_m": 386.9562683},
+                          "imu": {"pitch": -27.52448273, "roll": 71.15113831}}},
+   "expected": {"batteryPercent": 65, "coPpm": 3, "temperatureC": 28.2}},
+  {"message": {"batteryCapacity_%": 99.6, "CO_SENSOR_PPM": 0.4, "sensor.baro.temp_c": -3.04},
+   "expected": {"batteryPercent": 100, "coPpm": 0, "temperatureC": -3.0}},
+  {"message": {"stats": {"batteryCapacity_%": 255, "CO_SENSOR_PPM": true,
+                         "sensor": {"ats": {"temp_c": 900}, "baro": {"temp_c": 19}}}},
+   "expected": {"temperatureC": 19.0}},
+  {"message": {"sensor": {"ats": {"temp_c": "21"}}, "other_co_sensor_ppm": 5, "list": [{"batteryCapacity_%": 50}]},
+   "expected": {"batteryPercent": 50}},
+  {"message": {"uptime_s": 5},
+   "expected": {}}
+]

@@ -22,9 +22,12 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import errno
 import json
+import math
 import os
 import re
+import select
 import socket
 import struct
 import sys
@@ -64,24 +67,80 @@ def _send_frame(sock: socket.socket, opcode: int, payload: bytes = b"") -> None:
     sock.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
 
-def connect(host: str, port: int = 80, path: str = "/", timeout: float = 5.0) -> tuple[socket.socket, bytes]:
-    """Open the WebSocket. Returns the socket and any frame bytes that arrived with the handshake."""
-    sock = socket.create_connection((host, port), timeout=timeout)
+HANDSHAKE_LIMIT_S = 10.0  # the whole handshake, however slowly its bytes arrive; the same limit as Android
+STEP_S = .5  # longest wait between cancellation checks while connecting or reading the handshake
+# Non-blocking connect results that mean "still connecting" (WSAEWOULDBLOCK on Windows).
+IN_PROGRESS = {errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EAGAIN, errno.EALREADY, getattr(errno, "WSAEWOULDBLOCK", -1)}
+
+
+def connect(host: str, port: int = 80, path: str = "/", timeout: float = 5.0,
+            cancelled=lambda: False) -> tuple[socket.socket, bytes]:
+    """Open the WebSocket. Returns the socket and any frame bytes that arrived with the handshake.
+    cancelled is checked at least every STEP_S; once it is true, nothing more is sent."""
+    deadline = time.monotonic() + timeout
+    failure = None
+    # Each resolved address in turn, as socket.create_connection does, within one overall deadline.
+    for family, kind, proto, _, address in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        try:
+            sock = _connect_one(family, kind, proto, address, deadline, cancelled)
+        except (socket.timeout, WSError):
+            raise
+        except OSError as error:
+            failure = error
+            continue
+        try:
+            sock.settimeout(STEP_S)
+            return sock, _handshake(sock, host, path, cancelled)
+        except BaseException:
+            sock.close()
+            raise
+    raise failure or OSError(f"{host} has no address")
+
+
+def _connect_one(family, kind, proto, address, deadline, cancelled) -> socket.socket:
+    """One connection attempt, polled in steps: a slow SYN-ACK still completes within the timeout."""
+    sock = socket.socket(family, kind, proto)
     try:
-        return sock, _handshake(sock, host, path)
+        sock.setblocking(False)
+        error = sock.connect_ex(address)
+        # An immediate failure (Linux reports ENETUNREACH here, then a clean SO_ERROR) is final for this address.
+        if error not in IN_PROGRESS and error not in (0, errno.EISCONN):
+            raise OSError(error, os.strerror(error))
+        while error not in (0, errno.EISCONN):
+            if cancelled():
+                raise WSError("cancelled")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise socket.timeout("timed out")
+            _, writable, failed = select.select([], [sock], [sock], min(STEP_S, remaining))
+            if writable or failed:
+                error = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                if error:
+                    raise OSError(error, os.strerror(error))
+        return sock
     except BaseException:
         sock.close()
         raise
 
 
-def _handshake(sock: socket.socket, host: str, path: str) -> bytes:
+def _handshake(sock: socket.socket, host: str, path: str, cancelled=lambda: False) -> bytes:
     key = base64.b64encode(os.urandom(16)).decode()
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
            f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nOrigin: http://{host}\r\n\r\n")
+    if cancelled():
+        raise WSError("cancelled")
     sock.sendall(req.encode())
     resp = b""
+    deadline = time.monotonic() + HANDSHAKE_LIMIT_S
     while b"\r\n\r\n" not in resp:
-        chunk = sock.recv(1024)
+        if cancelled():
+            raise WSError("cancelled")
+        if time.monotonic() > deadline:
+            raise WSError(f"handshake took longer than {HANDSHAKE_LIMIT_S:.0f} s")
+        try:
+            chunk = sock.recv(1024)
+        except socket.timeout:
+            continue
         if not chunk:
             raise WSError(f"closed during handshake, got: {resp[:300]!r}")
         resp += chunk
@@ -102,14 +161,17 @@ class Reader:
     """Frame reader. Only whole frames are consumed from the buffer, and fragment state
     lives on the object, so a socket timeout at any point loses nothing."""
 
-    def __init__(self, sock: socket.socket, pending: bytes = b""):
+    def __init__(self, sock: socket.socket, pending: bytes = b"", cancelled=lambda: False):
         self.sock = sock
         self.buf = pending
+        self.cancelled = cancelled  # checked per frame and per read: pings or a trickled frame never hold it
         self.parts: list[bytes] = []
         self.first_op: int | None = None
 
     def _fill(self, n: int) -> None:
         while len(self.buf) < n:
+            if self.cancelled():
+                raise WSError("cancelled")
             chunk = self.sock.recv(65536)
             if not chunk:
                 raise WSError("connection closed")
@@ -137,11 +199,15 @@ class Reader:
         return bool(b0 & 0x80), b0 & 0x0F, data
 
     def message(self) -> tuple[int, bytes] | None:
-        """Next complete data message as (opcode, payload); None when the server closes."""
+        """Next complete data message as (opcode, payload); None when the server closes or the
+        reader is cancelled."""
         while True:
+            if self.cancelled():
+                return None
             fin, op, data = self._frame()
             if op == 0x9:              # ping
-                _send_frame(self.sock, 0xA, data)
+                if not self.cancelled():
+                    _send_frame(self.sock, 0xA, data)
                 continue
             if op == 0xA:              # pong
                 continue
@@ -171,6 +237,30 @@ def flatten(obj, prefix: str = "") -> dict:
             out.update(flatten(v, f"{prefix}[{i}]"))
     else:
         out[prefix] = obj
+    return out
+
+
+# Sensor values the bridge shows from the Sentry's /stats WebSocket. Matched on the end of the flattened
+# path, so the nesting may change; the first listed suffix with a plausible number wins. Android applies
+# the same table (NativeDiagnostics.sensorValues; tests/data/stats-cases.json keeps them in step).
+SENSORS = (("batteryPercent", ("batterycapacity_%",), 0, 100, 0),
+           ("coPpm", ("co_sensor_ppm",), 0, 2000, 0),
+           ("temperatureC", ("ats.temp_c", "baro.temp_c"), -40, 85, 1))  # the baro sensor reads the warm board
+
+
+def sensor_values(obj) -> dict:
+    """Plausible battery, CO and temperature readings in a /stats message; absent ones are left out."""
+    flat = {key.lower(): value for key, value in flatten(obj).items()}
+    out = {}
+    for name, suffixes, low, high, digits in SENSORS:
+        for suffix in suffixes:
+            found = [v for k, v in flat.items() if (k == suffix or k.endswith("." + suffix))
+                     and isinstance(v, (int, float)) and not isinstance(v, bool) and low <= v <= high]
+            if found:
+                scale = 10 ** digits  # half up, as the Kotlin copy rounds
+                value = math.floor(found[0] * scale + .5)
+                out[name] = value / scale if digits else int(value)
+                break
     return out
 
 

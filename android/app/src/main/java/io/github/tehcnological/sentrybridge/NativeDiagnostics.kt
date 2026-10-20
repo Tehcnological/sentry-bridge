@@ -305,14 +305,50 @@ object NativeDiagnostics {
             .put("weatherDisplayVerified", false).toString(2)
     }
 
-    /** ensureOpen throws when the app is closing; it runs before connecting and at least once a second. */
-    fun websocket(network: Network, config: Settings, path: String, seconds: Double, output: File,
-                  ensureOpen: () -> Unit = {}): String {
+    // Sensor values shown from the receiver's /stats WebSocket: the same table as ws_probe.SENSORS
+    // (tests/data/stats-cases.json). Matched on the end of the flattened path; the first plausible number wins.
+    private class Sensor(val name: String, val suffixes: List<String>, val low: Double, val high: Double, val digits: Int)
+    private val sensors = listOf(Sensor("batteryPercent", listOf("batterycapacity_%"), 0.0, 100.0, 0),
+        Sensor("coPpm", listOf("co_sensor_ppm"), 0.0, 2000.0, 0),
+        Sensor("temperatureC", listOf("ats.temp_c", "baro.temp_c"), -40.0, 85.0, 1))  // the baro sensor reads the warm board
+
+    private fun flatten(value: Any?, prefix: String, out: MutableList<Pair<String, Any?>>) {
+        when (value) {
+            is JSONObject -> value.keys().forEach { flatten(value.opt(it), if (prefix.isEmpty()) it else "$prefix.$it", out) }
+            is JSONArray -> for (i in 0 until value.length()) flatten(value.opt(i), "$prefix[$i]", out)
+            else -> out.add(prefix.lowercase() to value)
+        }
+    }
+
+    /** Plausible battery, CO and temperature readings in a /stats message; absent ones are left out. */
+    fun sensorValues(text: String): JSONObject {
+        val flat = mutableListOf<Pair<String, Any?>>()
+        flatten(runCatching { JSONObject(text) }.getOrNull() ?: return JSONObject(), "", flat)
+        val out = JSONObject()
+        for (sensor in sensors) {
+            val found = sensor.suffixes.firstNotNullOfOrNull { suffix ->
+                flat.firstNotNullOfOrNull { (key, value) ->
+                    (value as? Number)?.toDouble()?.takeIf { (key == suffix || key.endsWith(".$suffix")) && it in sensor.low..sensor.high }
+                }
+            } ?: continue
+            val scale = Math.pow(10.0, sensor.digits.toDouble())
+            val rounded = Math.floor(found * scale + 0.5)  // half up, as ws_probe rounds
+            if (sensor.digits == 0) out.put(sensor.name, rounded.toLong()) else out.put(sensor.name, rounded / scale)
+        }
+        return out
+    }
+
+    /** With no output file nothing is recorded; onText receives each text message. ensureOpen throws when the
+     *  app is closing; it runs before connecting and at least once a second. Both callbacks are required and
+     *  ensureOpen comes last, so a trailing lambda is always the Exit check. */
+    fun websocket(network: Network, config: Settings, path: String, seconds: Double, output: File?,
+                  onText: (String) -> Unit, ensureOpen: () -> Unit): String {
         val random = SecureRandom()
         ensureOpen()
         Socket().use { socket ->
             network.bindSocket(socket)
             socket.connect(InetSocketAddress(config.sentryIp, config.httpPort), 3000)
+            ensureOpen()  // the connect can take 3 s: no upgrade request after Exit
             socket.soTimeout = 1000
             val input = socket.getInputStream().buffered()
             val out = socket.getOutputStream()
@@ -351,7 +387,8 @@ object NativeDiagnostics {
             var fragmentOp = 0
             val fragment = ByteArrayOutputStream()
             val fields = LinkedHashSet<String>()
-            output.bufferedWriter().use { writer ->
+            val writer = output?.bufferedWriter()
+            try {
                 try {
                     while (System.nanoTime() < deadline) {
                         val first = byte(); val second = byte()
@@ -373,12 +410,15 @@ object NativeDiagnostics {
                                 if (first and 128 != 0) {
                                     val value = fragment.toByteArray(); fragment.reset(); messages++
                                     val text = value.toString(Charsets.UTF_8)
-                                    runCatching { JSONObject(text).keys().forEach { fields.add(it) } }
-                                    val row = JSONObject().put("t", System.currentTimeMillis() / 1000.0).put("opcode", fragmentOp)
-                                        .put("text", if (fragmentOp == 1) text else JSONObject.NULL).put("hex", if (fragmentOp == 2) hex(value) else JSONObject.NULL).toString() + "\n"
-                                    val size = row.toByteArray().size
-                                    require(size <= 32 * 1024 * 1024 - recordedBytes) { "WebSocket recording reached 32 MiB." }
-                                    writer.write(row); recordedBytes += size
+                                    if (fragmentOp == 1) onText(text)
+                                    if (writer != null) {
+                                        runCatching { JSONObject(text).keys().forEach { fields.add(it) } }
+                                        val row = JSONObject().put("t", System.currentTimeMillis() / 1000.0).put("opcode", fragmentOp)
+                                            .put("text", if (fragmentOp == 1) text else JSONObject.NULL).put("hex", if (fragmentOp == 2) hex(value) else JSONObject.NULL).toString() + "\n"
+                                        val size = row.toByteArray().size
+                                        require(size <= 32 * 1024 * 1024 - recordedBytes) { "WebSocket recording reached 32 MiB." }
+                                        writer.write(row); recordedBytes += size
+                                    }
                                     fragmentOp = 0
                                 }
                             }
@@ -386,7 +426,7 @@ object NativeDiagnostics {
                         }
                     }
                 } catch (_: SocketTimeoutException) { }
-            }
+            } finally { writer?.close() }
             runCatching { send(8, byteArrayOf(3, -24)) }
             return "Messages: $messages\nFields: ${fields.joinToString(", ")}\nSensor support remains unverified.\n"
         }

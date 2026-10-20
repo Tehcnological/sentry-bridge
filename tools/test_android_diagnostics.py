@@ -56,6 +56,10 @@ def main():
         assert run("lognames", *links).stdout.splitlines() == expected
         # A malformed escape rejects that link only (URLDecoder threw for the whole list before).
         assert run("lognames", "%zz.csv", "log.csv").stdout.splitlines() == ["-", "log.csv"]
+        # Receiver sensors: the same readings as ws_probe.sensor_values for the shared cases.
+        cases = json.loads((ROOT / "tests/data/stats-cases.json").read_text(encoding="utf-8"))
+        shown = [json.loads(line) for line in run("sensors", *(json.dumps(case["message"]) for case in cases)).stdout.splitlines()]
+        assert shown == [case["expected"] for case in cases], shown
         assert "passed" in run("power").stdout
         assert "passed" in run("gps").stdout
         # GPS freshness refreshes only on complete CRC-valid heartbeats, valid or invalid GPS bit.
@@ -88,6 +92,7 @@ def main():
         assert "passed" in run("recovery", folder).stdout
         assert "passed" in run("closing", folder).stdout
         assert "passed" in run("handshake", folder).stdout
+        assert "passed" in run("handshake", folder, "quiet").stdout
         assert "passed" in run("discovery").stdout
         assert "passed" in run("late-body").stdout
         for index in range(100):
@@ -127,7 +132,7 @@ def main():
         assert json.loads(run("weather", pcapng, pcapng, 4000, 4001).stdout) == compare(pcapng, pcapng)
         pcapng.write_bytes(body[:-5])
         assert run("analyze", pcapng, 4000, okay=False).returncode != 0
-        print("Android Kotlin diagnostics: receiver log names as sentry_ctl, GPS-only mode parity, notification warning, heartbeat GPS freshness, complete-heartbeat detection, Exit during jobs and a slow WebSocket handshake, and contained disk failure; 100 CRC/framing comparisons; JSONL/pcap/pcapng weather parity; truncated capture rejection passed.")
+        print("Android Kotlin diagnostics: receiver log names as sentry_ctl, GPS-only mode parity, notification warning, heartbeat GPS freshness, complete-heartbeat detection, Exit during jobs, a slow WebSocket handshake and a quiet WebSocket, shared receiver sensor cases, and contained disk failure; 100 CRC/framing comparisons; JSONL/pcap/pcapng weather parity; truncated capture rejection passed.")
 
 
 if __name__ == "__main__":

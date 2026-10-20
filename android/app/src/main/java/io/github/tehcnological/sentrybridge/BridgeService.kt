@@ -380,7 +380,7 @@ class BridgeService : Service() {
                         traffic = liveTraffic,
                         lastRxAgeS = if (lastRx < 0) -1.0 else now - lastRx,
                         heartbeatAgeS = if (lastHeartbeat < 0) -1.0 else now - lastHeartbeat,
-                        warning = NativeGui.powerWarning, destinations = dests, apps = 0, wifi = NativeGui.simulator || wifi != null,
+                        warning = NativeGui.coWarning ?: NativeGui.powerWarning, destinations = dests, apps = 0, wifi = NativeGui.simulator || wifi != null,
                     )
                     NativeGui.tick()
                     if (SystemClock.elapsedRealtime() - lastNotify > 5000) {

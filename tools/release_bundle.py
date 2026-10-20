@@ -21,7 +21,7 @@ SOURCE_DIRS = ("notices", "core", "cli", "firmware", "android", "tests", "tools"
 ROOT_FILES = (".gitignore", "Run-Gui.cmd", "CMakeLists.txt", "LICENSE", "NOTICE.txt", "README.md", "bridge.py", "capture.py",
               "gdl90.py", "sentry_ctl.py", "sim.py", "uat.py", "ws_probe.py",
               "requirements.txt", "requirements-dev.txt", "requirements-build.txt")
-PUBLIC_ASSETS = ("config/android-simulator.json", "web/app.html", "web/app.css", "web/app.js",
+PUBLIC_ASSETS = ("config/android-simulator.json", "tests/data/stats-cases.json", "web/app.html", "web/app.css", "web/app.js",
                  "web/favicon.svg", "web/privacy.html", "web/legal.html", "web/legal.js",
                  # Build inputs listed by name: a suffix rule would also pick up untracked local files
                  # such as android/local.properties.

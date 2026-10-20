@@ -37,12 +37,14 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 import sentry_ctl
+import ws_probe
 from tools.discovery import ANNOUNCE_TTL_S, parse_announce
 from tools.routes import check_endpoint, migrate, validate_route
 from tools.gui_runtime import CAPTURE_LIMIT, DEFAULTS, DISCOVERY_LIMIT, Runtime, Simulator, number, udp_listener, validate_settings
 from tools.preview_ui import Handler as PreviewHandler
 
 AUTO_BACKUP = "sentry-auto-backup.zip"
+SENSORS_STALE_S, SENSORS_RETRY_S = 5.0, 5.0  # /stats sends twice a second
 # Update check: GitHub's latest stable release, at most once a day, only while the bridge is stopped.
 RELEASES = "https://api.github.com/repos/Tehcnological/sentry-bridge/releases/latest"
 UPDATE_INTERVAL_S, UPDATE_RETRY_S = 24 * 3600, 3600
@@ -157,6 +159,8 @@ class Controller:
                                                                        "Choose it again on the Bridge tab."]))
         self.contacting = False
         self.contact_ok = None
+        self.sensors, self.sensors_at, self.sensor_thread = {}, None, None
+        self.sensor_session, self.sensor_cancel = None, threading.Event()
         self.runtime = Runtime(settings, self._auto_enable, self._stream, self._contact)
         if upgrade_note:
             self.runtime.log(upgrade_note)
@@ -207,6 +211,9 @@ class Controller:
     def close(self):
         with self.lock:  # after this, no job can start the receiver listener (see observe_mode)
             self.closing.set()
+        self.sensor_cancel.set()
+        if self.sensor_thread is not None:
+            self.sensor_thread.join(5)  # it checks every half second at most, after the reader it replaced
         try:
             self.runtime.stop()
         except ValueError as error:  # the UDP thread is a daemon; finish the rest of shutdown anyway
@@ -299,6 +306,15 @@ class Controller:
         never blocks a receiver operation. Returns False while the previous one is still running.
         Never takes self.lock: Stop holds it while joining this thread. Only this thread sets the
         flag and only the request thread clears it, so a plain attribute is enough."""
+        # One reader per forwarding session, with that session's receiver; a restart cancels the old one.
+        session = getattr(self.runtime, "started_at", None)
+        if session != self.sensor_session or self.sensor_thread is None or not self.sensor_thread.is_alive():
+            self.sensor_cancel.set()
+            s = self.runtime.settings
+            self.sensor_session, self.sensor_cancel = session, threading.Event()
+            self.sensor_thread = threading.Thread(target=self._read_sensors, name="gui-sensors", daemon=True,
+                                                  args=(self.sensor_cancel, s["sentryIp"], s["httpPort"], self.sensor_thread))
+            self.sensor_thread.start()
         if self.contacting:
             return False
         self.contacting = True
@@ -316,6 +332,53 @@ class Controller:
                 self.runtime.log(f"Keepalive: receiver status {info}")
         threading.Thread(target=run, name="gui-keepalive", daemon=True).start()
         return True
+
+    def _read_sensors(self, cancel, host, port, previous=None):
+        """While forwarding, listen to the receiver's /stats WebSocket for battery, CO and temperature.
+        Read-only, like its own statistics page: the handshake, pong replies and a close. Every wait
+        checks cancel at least every ws_probe.STEP_S, and a replacement starts after the reader it replaces."""
+        if previous is not None:
+            previous.join()
+        forwarding = lambda: (not cancel.is_set() and self.runtime.forwarding and self.runtime.active()
+                              and not self.closing.is_set())
+        while forwarding():
+            sock = None
+            try:
+                sock, pending = ws_probe.connect(host, port, "/stats", cancelled=lambda: not forwarding())
+                sock.settimeout(ws_probe.STEP_S)
+                reader = ws_probe.Reader(sock, pending, lambda: not forwarding())
+                while forwarding():
+                    try:
+                        message = reader.message()
+                    except socket.timeout:
+                        continue
+                    if message is None:
+                        break
+                    try:
+                        values = ws_probe.sensor_values(json.loads(message[1].decode("utf-8")))
+                    except (UnicodeDecodeError, ValueError):
+                        continue
+                    if values and not cancel.is_set():
+                        self.sensors, self.sensors_at = values, time.monotonic()
+            except (OSError, ws_probe.WSError):
+                pass  # an older firmware without /stats, or the receiver is away: retry
+            finally:
+                if sock is not None:
+                    try:
+                        if not self.closing.is_set():  # nothing goes to the receiver after Exit
+                            ws_probe._send_frame(sock, 0x8, b"\x03\xe8")
+                    except OSError:
+                        pass
+                    sock.close()
+            if forwarding():
+                cancel.wait(SENSORS_RETRY_S)  # set by Exit and by the next session
+        if not cancel.is_set():
+            self.sensors, self.sensors_at = {}, None
+
+    def current_sensors(self):
+        at = self.sensors_at
+        fresh = self.runtime.forwarding and at is not None and time.monotonic() - at <= SENSORS_STALE_S
+        return dict(self.sensors) if fresh else None
 
     def input_shared(self):
         """Whether the saved route shares the receiver port with an EFB on this device, so receiver
@@ -517,7 +580,7 @@ class Controller:
                      simulator=self.simulator is not None, settings=deepcopy(self.runtime.settings),
                      routesRequest=deepcopy(self.routes_request), device=deepcopy(self.device),
                      modeObservation=deepcopy(self.mode_observation), modeRequested=self.mode_requested,
-                     update=self.current_update(), updateSupported=True,
+                     update=self.current_update(), updateSupported=True, sensors=self.current_sensors(),
                      deviceLogs=list(self.device_logs), job=deepcopy(self.job),
                      artifacts=[dict(id=token, name=item["name"], kind=item["kind"],
                                      ready=item.get("complete", False) and item["path"].is_file() and not (token == self.capture_id and v["recording"]))
