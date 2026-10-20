@@ -434,11 +434,17 @@ object NativeGui {
             while (forwarding()) {
                 runCatching {
                     val network = wifi() ?: throw IOException("Join Sentry WiFi first.")
+                    // A receiver that restarts leaves the old connection open and silent: reconnect after 10 s without a message.
+                    var heard = SystemClock.elapsedRealtime()
                     NativeDiagnostics.websocket(network, config, "/stats", 1e7, null, onText = { text ->
+                        heard = SystemClock.elapsedRealtime()
                         val values = NativeDiagnostics.sensorValues(text)
-                        if (values.length() > 0) { sensors = values; sensorsAt = SystemClock.elapsedRealtime() }
-                    }) { if (!forwarding()) throw IOException("Stopped.") }
-                }  // an older firmware without /stats, or the receiver is away: retry
+                        if (values.length() > 0) { sensors = values; sensorsAt = heard }
+                    }) {
+                        if (!forwarding()) throw IOException("Stopped.")
+                        if (SystemClock.elapsedRealtime() - heard > 10_000) throw IOException("No statistics for 10 s.")
+                    }
+                }  // an older firmware without /stats, the receiver is away or restarted: retry
                 if (forwarding()) Thread.sleep(5000)
             }
             sensors = null
