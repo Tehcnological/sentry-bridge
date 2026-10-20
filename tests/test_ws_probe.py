@@ -182,6 +182,18 @@ class TestProbe(unittest.TestCase):
         srv.join(timeout=5)
         self.assertEqual(summ.messages, 2)
 
+    def test_an_address_that_fails_at_once_falls_back_to_the_next(self):
+        # A multicast address cannot take a TCP connection: Linux fails connect_ex at once (ENETUNREACH,
+        # with SO_ERROR then 0), Windows through select. Either way the next address must be tried.
+        srv = FakeSentry()
+        srv.start()
+        stream = (socket.AF_INET, socket.SOCK_STREAM, 6, "")
+        resolved = [(*stream, ("224.0.0.1", srv.port)), (*stream, ("127.0.0.1", srv.port))]
+        with patch.object(ws_probe.socket, "getaddrinfo", return_value=resolved):
+            summ = ws_probe.collect("receiver.example", srv.port, "/", seconds=5)
+        srv.join(timeout=5)
+        self.assertEqual(summ.messages, 2)
+
     def test_cancel_while_connecting_sends_nothing(self):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))

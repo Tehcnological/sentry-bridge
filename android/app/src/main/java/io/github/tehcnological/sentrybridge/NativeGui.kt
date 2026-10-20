@@ -143,11 +143,15 @@ object NativeGui {
     val recording: Boolean get() = synchronized(files) { capture != null }
     val powerWarning: String? get() = if (device?.optJSONObject("settings")?.optJSONObject("Power")?.opt("powerSavings") == true)
         BridgeService.POWER_SAVINGS_WARNING else null
-    /** CO at or above the receiver's alarm level (50 ppm when unknown), from fresh /stats readings; the same text as the screen. */
+    /** CO at or above the receiver's reported alarm level (50 ppm when it reported none), from fresh /stats readings;
+     *  the same text as the screen. */
     val coWarning: String? get() {
         val co = sensors?.takeIf { SystemClock.elapsedRealtime() - sensorsAt <= 5000 }?.optLong("coPpm", -1) ?: return null
-        val level = device?.optJSONObject("settings")?.optDouble("coAlarmLevel")?.takeIf { it > 0 }?.toLong() ?: 50
-        return if (co >= level) "Carbon monoxide $co ppm, at or above the receiver's alarm level ($level ppm)." else null
+        val reported = device?.optJSONObject("settings")?.optDouble("coAlarmLevel")?.takeIf { it > 0 }?.toLong()
+        val level = reported ?: 50L
+        if (co < level) return null
+        // Only a level the receiver reported is called the receiver's.
+        return "Carbon monoxide $co ppm, at or above " + if (reported != null) "the receiver's alarm level ($level ppm)." else "50 ppm."
     }
 
     @Synchronized fun start(ctx: Context) {

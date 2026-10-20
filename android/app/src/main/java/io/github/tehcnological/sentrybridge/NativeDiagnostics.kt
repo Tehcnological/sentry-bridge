@@ -332,7 +332,7 @@ object NativeDiagnostics {
                 }
             } ?: continue
             val scale = Math.pow(10.0, sensor.digits.toDouble())
-            val rounded = Math.floor(found * scale + 0.5)  // half up, as ws_probe and iOS round
+            val rounded = Math.floor(found * scale + 0.5)  // half up, as ws_probe rounds
             if (sensor.digits == 0) out.put(sensor.name, rounded.toLong()) else out.put(sensor.name, rounded / scale)
         }
         return out

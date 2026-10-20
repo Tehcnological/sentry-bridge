@@ -69,6 +69,8 @@ def _send_frame(sock: socket.socket, opcode: int, payload: bytes = b"") -> None:
 
 HANDSHAKE_LIMIT_S = 10.0  # the whole handshake, however slowly its bytes arrive; the same limit as Android
 STEP_S = .5  # longest wait between cancellation checks while connecting or reading the handshake
+# Non-blocking connect results that mean "still connecting" (WSAEWOULDBLOCK on Windows).
+IN_PROGRESS = {errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EAGAIN, errno.EALREADY, getattr(errno, "WSAEWOULDBLOCK", -1)}
 
 
 def connect(host: str, port: int = 80, path: str = "/", timeout: float = 5.0,
@@ -101,6 +103,9 @@ def _connect_one(family, kind, proto, address, deadline, cancelled) -> socket.so
     try:
         sock.setblocking(False)
         error = sock.connect_ex(address)
+        # An immediate failure (Linux reports ENETUNREACH here, then a clean SO_ERROR) is final for this address.
+        if error not in IN_PROGRESS and error not in (0, errno.EISCONN):
+            raise OSError(error, os.strerror(error))
         while error not in (0, errno.EISCONN):
             if cancelled():
                 raise WSError("cancelled")
@@ -236,8 +241,8 @@ def flatten(obj, prefix: str = "") -> dict:
 
 
 # Sensor values the bridge shows from the Sentry's /stats WebSocket. Matched on the end of the flattened
-# path, so the nesting may change; the first listed suffix with a plausible number wins. Android and iOS
-# apply the same table (tests/data/stats-cases.json keeps them in step).
+# path, so the nesting may change; the first listed suffix with a plausible number wins. Android applies
+# the same table (NativeDiagnostics.sensorValues; tests/data/stats-cases.json keeps them in step).
 SENSORS = (("batteryPercent", ("batterycapacity_%",), 0, 100, 0),
            ("coPpm", ("co_sensor_ppm",), 0, 2000, 0),
            ("temperatureC", ("ats.temp_c", "baro.temp_c"), -40, 85, 1))  # the baro sensor reads the warm board
@@ -252,7 +257,7 @@ def sensor_values(obj) -> dict:
             found = [v for k, v in flat.items() if (k == suffix or k.endswith("." + suffix))
                      and isinstance(v, (int, float)) and not isinstance(v, bool) and low <= v <= high]
             if found:
-                scale = 10 ** digits  # half up, as Kotlin and Swift round
+                scale = 10 ** digits  # half up, as the Kotlin copy rounds
                 value = math.floor(found[0] * scale + .5)
                 out[name] = value / scale if digits else int(value)
                 break
