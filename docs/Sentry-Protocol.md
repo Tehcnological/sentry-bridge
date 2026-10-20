@@ -103,6 +103,13 @@ this is the likeliest live source of what Compatibility Mode drops:
 
 `/stats?action=get` is not a JSON getter; use the WebSocket.
 
+Checked on a Sentry Plus (WiFi firmware 1.0.32), mode not recorded: 40 messages in 20 s. The battery and
+CO keys are at the top level of the JSON and the others under `sensor`, as written above. Other groups:
+`uptime_s`, `heapAvailable`, `heapLowWaterFree`, `deviceVersion`, `UDP`, `gdl90`, `host` (including
+`host.GPS`), `NMEA`, `uart` and `traffic` counters. `sensor.baro.temp_c` read about 6 °C above
+`sensor.ats.temp_c`, so the `ats` sensor is the better cabin reading. Roll and pitch moved between
+about −40° and 70° during the recording.
+
 ### Stored logs (`/data/`)
 - A telemetry CSV starts when logging starts after the clock is set, named `L<YYMMDDhhmmss>.csv`.
   After a GPS fix it can be renamed to add two signed coordinates (likely degrees × 10⁷) separated
