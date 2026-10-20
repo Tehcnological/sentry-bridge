@@ -1,6 +1,8 @@
 """Exercise GUI actions against real UDP sockets and the offline HTTP/UDP receiver."""
 import base64
 import gzip
+import hashlib
+import re
 from http.server import ThreadingHTTPServer
 import json
 import os
@@ -26,6 +28,7 @@ import zipfile
 import gdl90
 import sim
 import bridge
+import ws_probe
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, when run on their own
 from tools.native_core import decoder
 from tools.gui_runtime import DEFAULTS, Runtime, validate_settings
@@ -134,6 +137,77 @@ class TestGUI(unittest.TestCase):
         self.c.action("stop", {})
         wait_for(lambda: not self.c.sensor_thread.is_alive())
         self.assertIsNone(self.c.status()["sensors"])
+
+    def stats_peer(self, pings=False):
+        """A /stats peer that records each connection's client frames. With pings it sends nothing but
+        pings; without, it refuses the handshake, so the reader waits to retry."""
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(4)
+        self.addCleanup(server.close)
+        peer = dict(port=server.getsockname()[1], connections=0, pongs=0)
+
+        def serve():
+            while True:
+                try:
+                    conn, _ = server.accept()
+                except OSError:
+                    return
+                peer["connections"] += 1
+                with conn:
+                    request = b""
+                    while b"\r\n\r\n" not in request:
+                        request += conn.recv(1024)
+                    if not pings:
+                        conn.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+                        continue
+                    key = re.search(rb"Sec-WebSocket-Key: (\S+)", request).group(1)
+                    accept = base64.b64encode(hashlib.sha1(key + ws_probe.GUID.encode()).digest())
+                    conn.sendall(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                                 b"Sec-WebSocket-Accept: " + accept + b"\r\n\r\n")
+                    conn.settimeout(.01)
+                    try:
+                        while True:
+                            conn.sendall(b"\x89\x00")  # ping, never a data message
+                            try:
+                                peer["pongs"] += conn.recv(4096).count(b"\x8a")
+                            except socket.timeout:
+                                pass
+                    except OSError:
+                        pass
+        threading.Thread(target=serve, daemon=True).start()
+        return peer
+
+    def forward_to(self, peer):
+        """Forwarding as far as the sensor reader can tell, without a UDP listener."""
+        self.c.http = lambda *args, **kwargs: {}
+        self.c.runtime.settings.update(sentryIp="127.0.0.1", httpPort=peer["port"])
+        self.c.runtime.forwarding = True
+        self.c.runtime.active = lambda: True
+        self.c.runtime.started_at = time.monotonic()
+        self.c._contact()
+
+    def test_exit_stops_a_sensor_reader_that_only_receives_pings(self):
+        peer = self.stats_peer(pings=True)
+        self.forward_to(peer)
+        wait_for(lambda: peer["pongs"] > 0)
+        self.c.close()
+        self.assertFalse(self.c.sensor_thread.is_alive())
+        pongs = peer["pongs"]
+        time.sleep(.5)
+        self.assertEqual(peer["pongs"], pongs)  # nothing sent after Exit returned
+
+    def test_restart_cancels_the_waiting_reader_and_uses_the_new_receiver(self):
+        old, new = self.stats_peer(), self.stats_peer(pings=True)
+        self.forward_to(old)
+        wait_for(lambda: old["connections"] == 1)
+        first = self.c.sensor_thread
+        self.forward_to(new)  # Stop, new receiver, Start while the first reader waits to retry
+        wait_for(lambda: new["connections"] == 1)
+        first.join(2)
+        self.assertFalse(first.is_alive())
+        time.sleep(.2)
+        self.assertEqual(old["connections"], 1)
 
     def send_simulator_packets(self):
         receiver = self.c.simulator

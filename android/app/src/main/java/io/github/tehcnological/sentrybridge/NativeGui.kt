@@ -430,10 +430,10 @@ object NativeGui {
             while (forwarding()) {
                 runCatching {
                     val network = wifi() ?: throw IOException("Join Sentry WiFi first.")
-                    NativeDiagnostics.websocket(network, config, "/stats", 1e7, null, { if (!forwarding()) throw IOException("Stopped.") }) { text ->
+                    NativeDiagnostics.websocket(network, config, "/stats", 1e7, null, onText = { text ->
                         val values = NativeDiagnostics.sensorValues(text)
                         if (values.length() > 0) { sensors = values; sensorsAt = SystemClock.elapsedRealtime() }
-                    }
+                    }) { if (!forwarding()) throw IOException("Stopped.") }
                 }  // an older firmware without /stats, or the receiver is away: retry
                 if (forwarding()) Thread.sleep(5000)
             }
@@ -735,7 +735,7 @@ object NativeGui {
                     require(!simulator) { "The Android static simulator does not provide a WebSocket endpoint." }
                     ensureOpen()  // before any WiFi or network access
                     val id = artifact("websocket.jsonl", "websocket")
-                    val result = report("websocket-report.txt", NativeDiagnostics.websocket(wifi() ?: throw IOException("Join Sentry WiFi first."), config, path, seconds, file(id)) { ensureOpen() })
+                    val result = report("websocket-report.txt", NativeDiagnostics.websocket(wifi() ?: throw IOException("Join Sentry WiFi first."), config, path, seconds, file(id), onText = {}) { ensureOpen() })
                     completeFile(id)
                     result.put("recording", id)
                 }

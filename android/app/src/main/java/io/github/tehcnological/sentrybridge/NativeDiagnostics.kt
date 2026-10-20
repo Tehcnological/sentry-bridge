@@ -338,10 +338,11 @@ object NativeDiagnostics {
         return out
     }
 
-    /** ensureOpen throws when the app is closing; it runs before connecting and at least once a second.
-     *  With no output file nothing is recorded; onText receives each text message. */
+    /** With no output file nothing is recorded; onText receives each text message. ensureOpen throws when the
+     *  app is closing; it runs before connecting and at least once a second. Both callbacks are required and
+     *  ensureOpen comes last, so a trailing lambda is always the Exit check. */
     fun websocket(network: Network, config: Settings, path: String, seconds: Double, output: File?,
-                  ensureOpen: () -> Unit = {}, onText: (String) -> Unit = {}): String {
+                  onText: (String) -> Unit, ensureOpen: () -> Unit): String {
         val random = SecureRandom()
         ensureOpen()
         Socket().use { socket ->

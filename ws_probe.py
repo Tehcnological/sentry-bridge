@@ -103,9 +103,10 @@ class Reader:
     """Frame reader. Only whole frames are consumed from the buffer, and fragment state
     lives on the object, so a socket timeout at any point loses nothing."""
 
-    def __init__(self, sock: socket.socket, pending: bytes = b""):
+    def __init__(self, sock: socket.socket, pending: bytes = b"", cancelled=lambda: False):
         self.sock = sock
         self.buf = pending
+        self.cancelled = cancelled  # checked per frame: a stream of pings alone never ends message()
         self.parts: list[bytes] = []
         self.first_op: int | None = None
 
@@ -138,11 +139,15 @@ class Reader:
         return bool(b0 & 0x80), b0 & 0x0F, data
 
     def message(self) -> tuple[int, bytes] | None:
-        """Next complete data message as (opcode, payload); None when the server closes."""
+        """Next complete data message as (opcode, payload); None when the server closes or the
+        reader is cancelled."""
         while True:
+            if self.cancelled():
+                return None
             fin, op, data = self._frame()
             if op == 0x9:              # ping
-                _send_frame(self.sock, 0xA, data)
+                if not self.cancelled():
+                    _send_frame(self.sock, 0xA, data)
                 continue
             if op == 0xA:              # pong
                 continue

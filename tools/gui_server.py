@@ -160,6 +160,7 @@ class Controller:
         self.contacting = False
         self.contact_ok = None
         self.sensors, self.sensors_at, self.sensor_thread = {}, None, None
+        self.sensor_session, self.sensor_cancel = None, threading.Event()
         self.runtime = Runtime(settings, self._auto_enable, self._stream, self._contact)
         if upgrade_note:
             self.runtime.log(upgrade_note)
@@ -210,6 +211,9 @@ class Controller:
     def close(self):
         with self.lock:  # after this, no job can start the receiver listener (see observe_mode)
             self.closing.set()
+        self.sensor_cancel.set()
+        if self.sensor_thread is not None:
+            self.sensor_thread.join(3)  # it checks every frame and at least once a second
         try:
             self.runtime.stop()
         except ValueError as error:  # the UDP thread is a daemon; finish the rest of shutdown anyway
@@ -302,8 +306,14 @@ class Controller:
         never blocks a receiver operation. Returns False while the previous one is still running.
         Never takes self.lock: Stop holds it while joining this thread. Only this thread sets the
         flag and only the request thread clears it, so a plain attribute is enough."""
-        if self.sensor_thread is None or not self.sensor_thread.is_alive():
-            self.sensor_thread = threading.Thread(target=self._read_sensors, name="gui-sensors", daemon=True)
+        # One reader per forwarding session, with that session's receiver; a restart cancels the old one.
+        session = getattr(self.runtime, "started_at", None)
+        if session != self.sensor_session or self.sensor_thread is None or not self.sensor_thread.is_alive():
+            self.sensor_cancel.set()
+            s = self.runtime.settings
+            self.sensor_session, self.sensor_cancel = session, threading.Event()
+            self.sensor_thread = threading.Thread(target=self._read_sensors, name="gui-sensors", daemon=True,
+                                                  args=(self.sensor_cancel, s["sentryIp"], s["httpPort"]))
             self.sensor_thread.start()
         if self.contacting:
             return False
@@ -323,17 +333,17 @@ class Controller:
         threading.Thread(target=run, name="gui-keepalive", daemon=True).start()
         return True
 
-    def _read_sensors(self):
+    def _read_sensors(self, cancel, host, port):
         """While forwarding, listen to the receiver's /stats WebSocket for battery, CO and temperature.
         Read-only, like its own statistics page: the handshake, pong replies and a close."""
-        s = self.runtime.settings
-        forwarding = lambda: self.runtime.forwarding and self.runtime.active() and not self.closing.is_set()
+        forwarding = lambda: (not cancel.is_set() and self.runtime.forwarding and self.runtime.active()
+                              and not self.closing.is_set())
         while forwarding():
             sock = None
             try:
-                sock, pending = ws_probe.connect(s["sentryIp"], s["httpPort"], "/stats")
+                sock, pending = ws_probe.connect(host, port, "/stats")
                 sock.settimeout(1.0)
-                reader = ws_probe.Reader(sock, pending)
+                reader = ws_probe.Reader(sock, pending, lambda: not forwarding())
                 while forwarding():
                     try:
                         message = reader.message()
@@ -345,20 +355,22 @@ class Controller:
                         values = ws_probe.sensor_values(json.loads(message[1].decode("utf-8")))
                     except (UnicodeDecodeError, ValueError):
                         continue
-                    if values:
+                    if values and not cancel.is_set():
                         self.sensors, self.sensors_at = values, time.monotonic()
             except (OSError, ws_probe.WSError):
                 pass  # an older firmware without /stats, or the receiver is away: retry
             finally:
                 if sock is not None:
                     try:
-                        ws_probe._send_frame(sock, 0x8, b"\x03\xe8")
+                        if not self.closing.is_set():  # nothing goes to the receiver after Exit
+                            ws_probe._send_frame(sock, 0x8, b"\x03\xe8")
                     except OSError:
                         pass
                     sock.close()
             if forwarding():
-                self.closing.wait(SENSORS_RETRY_S)
-        self.sensors, self.sensors_at = {}, None
+                cancel.wait(SENSORS_RETRY_S)  # set by Exit and by the next session
+        if not cancel.is_set():
+            self.sensors, self.sensors_at = {}, None
 
     def current_sensors(self):
         at = self.sensors_at

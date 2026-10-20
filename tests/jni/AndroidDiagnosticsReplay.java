@@ -234,8 +234,10 @@ public class AndroidDiagnosticsReplay {
             System.out.flush();
             System.exit(0);  // NativeGui's job executor thread is not a daemon
         } else if (args[0].equals("handshake")) {
-            // Exit while a slow peer sends an incomplete WebSocket handshake one byte every 200 ms:
-            // the probe must stop as closed and close its connection.
+            // Exit while a slow peer sends an incomplete WebSocket handshake one byte every 200 ms, or ("quiet")
+            // after a complete handshake from a peer that then sends nothing: the probe must stop as closed and
+            // close its connection.
+            boolean quiet = args.length > 2 && args[2].equals("quiet");
             var server = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress());
             var closing = new java.util.concurrent.atomic.AtomicBoolean(false);
             var sending = new java.util.concurrent.CountDownLatch(1);
@@ -243,8 +245,19 @@ public class AndroidDiagnosticsReplay {
             Thread peer = new Thread(() -> {
                 try (var socket = server.accept()) {
                     var request = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream()));
-                    while (!request.readLine().isEmpty()) {}
+                    String key = "";
+                    for (String line; !(line = request.readLine()).isEmpty(); )
+                        if (line.toLowerCase().startsWith("sec-websocket-key:")) key = line.substring(18).trim();
                     var out = socket.getOutputStream();
+                    if (quiet) {
+                        var accept = java.util.Base64.getEncoder().encodeToString(java.security.MessageDigest.getInstance("SHA-1")
+                            .digest((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").getBytes()));
+                        out.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
+                            + accept + "\r\n\r\n").getBytes()); out.flush();
+                        sending.countDown();
+                        while (socket.getInputStream().read() >= 0) {}  // until the probe closes its connection
+                        throw new java.io.EOFException();
+                    }
                     out.write("HTTP/1.1 101 Switching Protocols\r\nX-Slow: ".getBytes()); out.flush();
                     sending.countDown();
                     for (int i = 0; i < 100; i++) { out.write('x'); out.flush(); Thread.sleep(200); }
@@ -256,10 +269,10 @@ public class AndroidDiagnosticsReplay {
             var result = new java.util.concurrent.atomic.AtomicReference<Throwable>();
             Thread worker = new Thread(() -> {
                 try {
-                    d.websocket(new android.net.Network(), settings, "/", 30.0, new File(args[1], "handshake.jsonl"), () -> {
+                    d.websocket(new android.net.Network(), settings, "/", 30.0, new File(args[1], "handshake.jsonl"), text -> kotlin.Unit.INSTANCE, () -> {
                         if (closing.get()) throw new IllegalStateException("Sentry Bridge was closed.");
                         return kotlin.Unit.INSTANCE;
-                    }, text -> kotlin.Unit.INSTANCE);
+                    });
                 } catch (Throwable error) { result.set(error); }
             });
             worker.setDaemon(true); worker.start();
@@ -269,11 +282,11 @@ public class AndroidDiagnosticsReplay {
             worker.join(2000);
             var error = result.get();
             if (worker.isAlive() || error == null || !"Sentry Bridge was closed.".equals(error.getMessage())) {
-                System.err.println("Probe did not stop on Exit during the handshake: alive=" + worker.isAlive() + " result=" + error);
+                System.err.println("Probe did not stop on Exit (" + (quiet ? "quiet peer" : "handshake") + "): alive=" + worker.isAlive() + " result=" + error);
                 System.exit(1);
             }
             if (!peerSawClose.await(3, java.util.concurrent.TimeUnit.SECONDS)) { System.err.println("Probe left its connection open"); System.exit(1); }
-            System.out.println("Exit during a slow WebSocket handshake passed");
+            System.out.println(quiet ? "Exit during a quiet WebSocket passed" : "Exit during a slow WebSocket handshake passed");
             System.exit(0);
         } else if (args[0].equals("discovery")) {
             // Find EFB: real UDP announcements into the compiled listener; repeats listed once.
