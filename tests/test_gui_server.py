@@ -244,13 +244,12 @@ class TestGUI(unittest.TestCase):
     def test_exit_during_a_slow_connect_sends_no_upgrade_request(self):
         peer = self.stats_peer("pings")
         connecting = threading.Event()
-        real = socket.create_connection
 
-        def slow(address, timeout=None):
-            connecting.set()
-            time.sleep(timeout)  # the connection completes at the end of the slice, after Exit
-            return real(address, timeout)
-        with patch.object(ws_probe.socket, "create_connection", slow):
+        def slow(read, write, failed, timeout):
+            connecting.set()  # the connection is reported complete only after Exit
+            time.sleep(timeout)
+            return [], [], []
+        with patch.object(ws_probe.select, "select", slow):
             self.forward_to(peer)
             connecting.wait(2)
             self.c.close()

@@ -22,10 +22,12 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import errno
 import json
 import math
 import os
 import re
+import select
 import socket
 import struct
 import sys
@@ -74,16 +76,23 @@ def connect(host: str, port: int = 80, path: str = "/", timeout: float = 5.0,
     """Open the WebSocket. Returns the socket and any frame bytes that arrived with the handshake.
     cancelled is checked at least every STEP_S; once it is true, nothing more is sent."""
     deadline = time.monotonic() + timeout
-    while True:
-        if cancelled():
-            raise WSError("cancelled")
-        try:
-            sock = socket.create_connection((host, port), timeout=max(.05, min(STEP_S, deadline - time.monotonic())))
-            break
-        except socket.timeout:
-            if time.monotonic() >= deadline:
-                raise
+    family, kind, proto, _, address = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)[0]
+    sock = socket.socket(family, kind, proto)
     try:
+        # One connection attempt, polled in steps: a slow SYN-ACK still completes within the timeout.
+        sock.setblocking(False)
+        error = sock.connect_ex(address)
+        while error not in (0, errno.EISCONN):
+            if cancelled():
+                raise WSError("cancelled")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise socket.timeout("timed out")
+            _, writable, failed = select.select([], [sock], [sock], min(STEP_S, remaining))
+            if writable or failed:
+                error = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                if error:
+                    raise OSError(error, os.strerror(error))
         sock.settimeout(STEP_S)
         return sock, _handshake(sock, host, path, cancelled)
     except BaseException:

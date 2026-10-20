@@ -8,6 +8,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -147,6 +148,36 @@ class TestProbe(unittest.TestCase):
                 ws_probe.collect("127.0.0.1", srv.port, "/", seconds=5, out_path=str(out))
             self.assertLessEqual(out.stat().st_size, 300)
         srv.join(timeout=5)
+
+    def test_a_connect_slower_than_one_step_keeps_its_attempt(self):
+        # The connection reports complete only after 0.75 s, longer than one STEP_S wait: the same attempt
+        # must carry on to the handshake instead of starting over every step.
+        real, started, waits = ws_probe.select.select, time.monotonic(), []
+
+        def slow(read, write, failed, timeout):
+            waits.append(timeout)
+            if time.monotonic() - started < .75:
+                time.sleep(min(timeout, .75 - (time.monotonic() - started)))
+                return [], [], []
+            return real(read, write, failed, timeout)
+        srv = FakeSentry()
+        srv.start()
+        with patch.object(ws_probe.select, "select", slow):
+            summ = ws_probe.collect("127.0.0.1", srv.port, "/", seconds=5)
+        srv.join(timeout=5)
+        self.assertGreaterEqual(len(waits), 2)  # longer than one step, and still the same attempt
+        self.assertEqual(summ.messages, 2)
+
+    def test_cancel_while_connecting_sends_nothing(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            with self.assertRaisesRegex(ws_probe.WSError, "cancelled"):
+                ws_probe.connect("127.0.0.1", listener.getsockname()[1], "/", cancelled=lambda: True)
+            conn, _ = listener.accept()
+            with conn:
+                conn.settimeout(.5)
+                self.assertEqual(conn.recv(1024), b"")  # closed without an upgrade request
 
     def test_sensor_values_match_shared_cases(self):
         # The same cases run on Android and iOS, so every platform shows the same readings.
