@@ -17,8 +17,8 @@ A native iOS/iPadOS 26+ app installs outside the App Store; see
 ## Setup
 
 1. Join the Sentry's WiFi and open Sentry Bridge.
-2. Choose **This device** for an EFB on the bridge device, or **Other device** and
-   enter the EFB device's IPv4 address. **Find EFB** lists apps that announce themselves.
+2. Choose **This device** for an EFB on the bridge device (not on Android), or **Other
+   device** and enter the EFB device's IPv4 address. **Find EFB** lists apps that announce themselves.
 3. In the EFB, choose its Stratux or GDL90 input, normally UDP 4000. Read the
    compatibility dialog, then press **Start**.
 4. In **Settings → Open Sentry web settings**, disable **Power Savings**. ForeFlight

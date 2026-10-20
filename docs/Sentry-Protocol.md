@@ -5,7 +5,13 @@ firmware versions are untested; captures from them are welcome (see [Command-lin
 
 ## Network
 - The Sentry runs its own WiFi access point at `192.168.4.1` and hands out `192.168.4.x` addresses.
-- It sends GDL90 over UDP to port 4000 of each WiFi client.
+- It sends GDL90 as unicast UDP to port 4000 of each WiFi client, never broadcast. The port is
+  fixed: no setting or announcement changes it.
+- Recipients are the WiFi clients that have an address from its DHCP server, plus EFBs it
+  recognizes from an announcement (see [EFB discovery](#efb-discovery)), up to 5 at a time. A
+  client drops off when it leaves the WiFi, when sending to it fails, or when it answers with ICMP
+  port unreachable (nothing listening on 4000); the list is rechecked about every 5 s. Not yet confirmed with a capture.
+- Compatibility Mode changes what is sent, not where it is sent.
 - Its web interface on port 80 has no authentication, and the WiFi is open by default. Anyone who
   joins can change settings, so consider setting a WiFi password.
 
@@ -73,6 +79,27 @@ EFBs, including ForeFlight, announce themselves with a UDP broadcast to port 630
 `{"App":"ForeFlight","GDL90":{"port":4000}}`. Find EFB lists them. The bridge does not send
 traffic to an address that only announced. In testing, DHCP clients received the Sentry's stream
 without announcing.
+
+The Sentry also listens on 63093, but it recognizes only a few exact announcements (ForeFlight and
+FliteDeck Pro, both on port 4000) rather than parsing the JSON. Other app names, ports, spacing or
+field order are ignored, and the announced port is never used: an announcement can add a recipient
+on 4000 but cannot move the stream to another port. A unicast announcement to the Sentry should work
+as well as a broadcast.
+
+## Listening ports
+| Port | Use |
+|---|---|
+| TCP 80 | Web pages, settings API, WebSocket status and firmware updates |
+| UDP 4000 | Also accepts incoming data from clients |
+| UDP 63093 | EFB announcements |
+| UDP 67 | DHCP server for its WiFi |
+| UDP 68 | DHCP client, only when joined to another WiFi network |
+
+No HTTPS, mDNS, SSH or Telnet service is known. Port 80 also serves `/stats`, `/networkInfo`,
+`/calibration`, `/coredump`, `/espUpdate` and `/pingUpdate`; their contents are not documented here.
+
+The recipient rules, announcement matching and port list above are not yet confirmed with a capture
+on hardware.
 
 ## Open questions
 - **FIS-B weather**: no `0x07` uplink frames have been seen, because no ground station was in range.

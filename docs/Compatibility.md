@@ -21,19 +21,15 @@ devices and EFBs.
 
 ## Android
 
-- **Use Android as a bridge for another device (Other device).** An EFB on the same Android phone
-  usually cannot receive from the bridge: Android lets two apps share UDP 4000 only if both allow it,
-  and EFBs tested so far (FltPlan Go, Garmin Pilot) do not. iPhone and iPad do not have this limit.
+- **Android bridges for an EFB on another device only.** An EFB on the same Android phone cannot
+  receive from the bridge: the Sentry always sends to UDP 4000, Android lets two apps share a port only
+  if both allow it, and EFBs tested so far (FltPlan Go, Garmin Pilot) do not. The app therefore offers
+  no This device destination. iPhone and iPad do not have this limit.
 - Garmin Pilot for Android does not accept GDL90 input, from the bridge or from the receiver directly.
   Garmin Pilot works on iPhone and iPad. On Android, use an EFB with GDL90 input such as FltPlan Go,
   or run the bridge for a Garmin Pilot iPad (**Other device**).
-- With the EFB on the same device, the bridge shares UDP 4000 with it, and one EFB at a time receives the
-  output. Android allows two apps on one port only when both allow it; if the EFB does not, the bridge
-  reports the port in use. Then set **EFB UDP port** in Settings (for example 4001) and the same port in
-  the EFB.
-- The bridge attempts to rebind a quiet shared input after WiFi address changes. Host regression
-  checks cover this; physical-device recovery remains unverified. If data does not resume, Stop/Start
-  and check the receiver/EFB network addresses.
+- After a WiFi reconnect the EFB device's address can change. If data does not resume, Stop/Start and
+  check the receiver and EFB addresses.
 - Keep the bridge's notification visible; battery savers that stop background apps also stop the bridge.
 
 ## Windows, macOS and Linux

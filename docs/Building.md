@@ -43,7 +43,7 @@ directly; it is not published in Google Play, which requires newer targets. Befo
 - Raise `compileSdk`/`targetSdk` in `android/app/build.gradle.kts`, add the platform and build
   tools to `$setupPackages` and the required files in `tools\Setup-Android.ps1`, and the host-test
   `android.jar` path in `tools/test_android_diagnostics.py`. Then recheck receiving,
-  background operation and same-device output on hardware.
+  background operation and output to another device on hardware.
 
 ### Signing
 Direct Gradle release builds without signing secrets produce an unsigned APK, as F-Droid needs (see
