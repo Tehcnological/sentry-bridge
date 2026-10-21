@@ -301,7 +301,10 @@ function updateFiles(files) {
 }
 function renderLive(s) {
   status = s;
-  $("adapter-label").textContent = s.simulator ? "Simulator · local traffic only" : "Local bridge";
+  // Android shows the bar only for the simulator, so simulated traffic is never mistaken for real.
+  const adapterLabel = s.simulator ? "Simulator · local traffic only" : s.host === "android" ? "" : "Local bridge";
+  $("adapter-label").textContent = adapterLabel;
+  $("adapter-label").parentElement.hidden = !adapterLabel;
   $("receiver-heading").textContent = s.recording && !s.running ? "Recording" : {stopped:"Stopped",waiting:"Waiting for Sentry",running:"Receiving",lost:"Disconnected",mode:"Mode off"}[s.state];
   $("start").textContent = s.running ? "Stop" : "Start"; $("start").classList.toggle("stop",!!s.running);
   $("start").disabled = pending || s.job.state === "running" && !s.running || s.monitoring && !s.running;
