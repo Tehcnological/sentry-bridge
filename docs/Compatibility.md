@@ -34,17 +34,21 @@ Sentry restarts. Not yet tested: other EFB versions and other devices.
 - If the EFB device rejoins the WiFi with a new address, the bridge switches to it when it is the only
   other device on the WiFi. Otherwise the bridge log says so; choose the EFB with **Find EFB**.
 
-## Windows, macOS and Linux
+## Windows
 
 - Enter the EFB's address and port (Custom GDL90).
 - Allow Sentry Bridge through the firewall on the Sentry's WiFi network. Windows usually treats that
   network as Public.
-- An EFB on the same computer shares UDP port 4000 with the bridge. On Linux this works only if the EFB
-  allows port sharing; otherwise use another port in both apps.
+- An EFB on the same computer shares UDP port 4000 with the bridge.
+
+## macOS and Linux
+
+Unmaintained: there is no download, and the desktop app is not tested there. It may still run from
+source. If you would use it on macOS or Linux, [open an issue](https://github.com/Tehcnological/sentry-bridge/issues).
 
 ## iPhone and iPad
 
-- Not in the App Store: build the app and install it with your own Apple ID; see
+- Not in the App Store: download `sentry-bridge.ipa` from the release and sideload it; see
   [Install on iPhone or iPad](iOS-Sideload.md). Requires iOS or iPadOS 26.
 - The bridge runs while the app is open. The **Bridge Session** option keeps it running in the
   background for up to 4 hours; this is experimental, and iOS can end it sooner.

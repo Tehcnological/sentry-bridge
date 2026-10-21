@@ -31,6 +31,5 @@ Settings and saved files are in `%LOCALAPPDATA%\SentryBridge`. Recordings contai
 
 ## Command-line tools
 
-The release also includes `sentry-bridge.exe`, a bridge without a window, and `sentry-ctl.exe`, which
-reads and changes the Sentry's settings. Most people do not need them; see
-[Command-line tools](Command-Line.md).
+The release also includes `sentry-ctl.exe`, which reads and changes the Sentry's settings. Most people
+do not need it; see [Command-line tools](Command-Line.md).

@@ -88,7 +88,7 @@ function shared() { return topology() === "same" && efbPort() === (status?.setti
 // Compatibility and limitations: one section per platform in docs/Compatibility.md, linked from the bottom of
 // Settings and from a dialog before each Start until "Don't show again" is saved with Start.
 const LIMITS_DOC = "https://github.com/Tehcnological/sentry-bridge/blob/master/docs/Compatibility.md";
-const LIMITS_SECTION = {android:"android",windows:"windows-macos-and-linux",macos:"windows-macos-and-linux",linux:"windows-macos-and-linux",esp32:"small-boards-esp32-c3-pico-w-pico-2-w"};
+const LIMITS_SECTION = {android:"android",windows:"windows",macos:"macos-and-linux",linux:"macos-and-linux",esp32:"small-boards-esp32-c3-pico-w-pico-2-w"};
 const LIMITS_KEY = "sentrybridge-hide-limits";
 function confirmLimits() {
   try { if (localStorage.getItem(LIMITS_KEY) === "1") return Promise.resolve(true); } catch { /* Storage is optional. */ }

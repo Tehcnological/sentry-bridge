@@ -1,37 +1,51 @@
 # Install on iPhone or iPad
 
-Sentry Bridge for iPhone and iPad is not in the App Store, and the releases do not include a ready-made
-app file yet. You build it on a Mac and install it with your own Apple ID, at no cost. Read
+Sentry Bridge for iPhone and iPad is not in the App Store. Each release includes `sentry-bridge.ipa`, an
+unsigned app file: it gets a signature when you install it, with one of the options below. Read
 [Compatibility](Compatibility.md#iphone-and-ipad) first.
 
 ## What you need
 
 - An iPhone or iPad with iOS or iPadOS 26 or later.
-- A Mac with Xcode 26 or later.
-- A free Apple ID. A paid Apple Developer membership is not needed.
+- `sentry-bridge.ipa` from the [Releases page](https://github.com/Tehcnological/sentry-bridge/releases).
+- One way to sign it:
+  - **SideStore or AltStore** with a free Apple ID: no cost, but the app must be refreshed every 7 days.
+  - **A paid Apple Developer account**: the app keeps working for up to a year between installs.
+  - **Feather** with a developer certificate you already have: signs and installs on the device itself.
 
-## Install from Xcode
+## Install with SideStore or AltStore (free Apple ID)
 
-1. Open `ios/SentryBridge.xcodeproj` in Xcode.
-2. Under **Signing & Capabilities**, choose your Apple ID's Personal Team.
-3. Connect the iPhone or iPad and run the app on it.
-4. If iOS asks, turn on **Settings → Privacy & Security → Developer Mode** and restart.
-5. Open Sentry Bridge and allow **Local Network** access when asked.
+1. Set up [SideStore](https://sidestore.io) or [AltStore](https://altstore.io) with their own guides.
+2. Open `sentry-bridge.ipa` in it, or share the file to it.
+3. If iOS asks, turn on **Settings → Privacy & Security → Developer Mode** and restart.
+4. Open Sentry Bridge and allow **Local Network** access when asked.
 
-## Or install with SideStore or AltStore
+With a free Apple ID the app works for **7 days** at a time. Refresh it in SideStore or AltStore before
+then, and before a flight. A free Apple ID allows 3 sideloaded apps at a time.
 
-`python3 tools/build_ios_ipa.py` on the Mac writes an unsigned `.ipa` to `dist/`. Copy it to the device
-and open it in [SideStore](https://sidestore.io) or [AltStore](https://altstore.io), set up with their
-own guides.
+## Install with a paid Apple Developer account
 
-## Keep it working
+Sign in to SideStore, AltStore or another signing tool with the paid account, then install the IPA as
+above. The app works for up to a year before it needs reinstalling, and the 3-app limit does not apply.
 
-- With a free Apple ID the app works for **7 days** at a time. Refresh it (from Xcode, SideStore or
-  AltStore) before then, and before a flight.
-- A free Apple ID allows 3 sideloaded apps at a time.
-- To update, install the newer build the same way; settings are kept.
+## Install with Feather
+
+[Feather](https://github.com/khcrysalis/Feather) signs and installs apps on the iPhone or iPad with a
+developer certificate and provisioning profile you import. Import `sentry-bridge.ipa`, sign it with your
+certificate and install it. The app works for as long as the certificate is valid; if Apple revokes
+the certificate, the app stops opening.
+
+## Updating
+
+Install the IPA from the newer release the same way; settings are kept.
 
 ## Try it without a receiver
 
 **Diagnostics → Demo with sample data** plays simulated traffic in the app only. Nothing is sent to an
 EFB. Stop ends the demo.
+
+## For developers
+
+To build the app yourself, open `ios/SentryBridge.xcodeproj` in Xcode 26 or later on a Mac, choose your
+team under **Signing & Capabilities**, and run it on the device. `python3 tools/build_ios_ipa.py`
+builds the same unsigned `dist/sentry-bridge.ipa` the release uses.

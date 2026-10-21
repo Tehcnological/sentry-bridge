@@ -1,10 +1,12 @@
 """Release gates reject stale sources, missing downloads, and altered artifacts."""
 import hashlib
 import json
+import plistlib
 import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
@@ -57,10 +59,10 @@ class TestReleaseBundle(unittest.TestCase):
         self.dist.mkdir()
         for name in rb.ASSETS:
             (self.dist / name).write_bytes(name.encode())
+        self.write_ipa()
         self.tests = {"passed": True, "testsRun": 94, "skipped": [], "failures": 0, "errors": 0,
                       "smokePassed": True, "controlSmokePassed": True, "fuzzIterations": 100000,
                       "sanitizer": "MSVC AddressSanitizer", "sources": rb.source_snapshot(self.root),
-                      "nativeSha256": rb.sha256(self.dist / "sentry-bridge.exe"),
                       "controlSha256": rb.sha256(self.dist / "sentry-ctl.exe"),
                       "guiSmokePassed": True, "guiSha256": rb.sha256(self.dist / "sentry-bridge-gui.exe")}
         self.apk = {"versionName": "0.1.3", "versionCode": 35, "signerSha256": rb.CERTIFICATE,
@@ -92,6 +94,38 @@ class TestReleaseBundle(unittest.TestCase):
         header.write_bytes(b'#define SB_VERSION "0.1.3" /* edited */\r\n')
         self.assertEqual(rb.converted_sources(self.root), [])
 
+    def write_ipa(self, version="0.1.3", extra=()):
+        """An IPA as tools/build_ios_ipa.py writes it, with its report."""
+        ipa = self.dist / "sentry-bridge.ipa"
+        with zipfile.ZipFile(ipa, "w") as archive:
+            archive.writestr("Payload/SentryBridge.app/Info.plist", plistlib.dumps({"CFBundleShortVersionString": version}))
+            for name in extra:
+                archive.writestr(name, b"")
+        report = {"versionName": version, "ipaSha256": rb.sha256(ipa), "sources": rb.ipa_sources(rb.source_snapshot(self.root))}
+        (self.dist / "ios-build-report.json").write_text(json.dumps(report))
+
+    def test_ipa_must_match_its_report_sources_version_and_be_unsigned(self):
+        (self.dist / "sentry-bridge.ipa").write_bytes(b"different")
+        with self.assertRaisesRegex(ValueError, "IPA changed"):
+            rb.prepare(self.root, "v0.1.3")
+        self.write_ipa()
+        (self.root / "core/sbcore.h").write_text('#define SB_VERSION "0.1.3"\n/* edited after the IPA build */\n')
+        self.tests["sources"] = self.apk["sources"] = rb.source_snapshot(self.root)
+        self.write_reports()
+        with self.assertRaisesRegex(ValueError, "other iOS or core sources"):
+            rb.prepare(self.root, "v0.1.3")
+        self.write_ipa(version="0.1.2")
+        with self.assertRaisesRegex(ValueError, "IPA version"):
+            rb.prepare(self.root, "v0.1.3")
+        for signature in ("Payload/SentryBridge.app/_CodeSignature/CodeResources", "Payload/SentryBridge.app/embedded.mobileprovision"):
+            self.write_ipa(extra=[signature])
+            with self.assertRaisesRegex(ValueError, "unsigned"):
+                rb.prepare(self.root, "v0.1.3")
+        self.write_ipa()
+        bundle = rb.prepare(self.root, "v0.1.3")
+        self.assertIn("sentry-bridge.ipa", (bundle / "SHA256SUMS").read_text())
+        self.assertNotIn("sentry-bridge.exe", rb.DISTRIBUTION_ASSETS)  # the console bridge is not released
+
     def write_reports(self):
         (self.dist / "test-report.json").write_text(json.dumps(self.tests))
         (self.dist / "android-build-report.json").write_text(json.dumps(self.apk))
@@ -113,6 +147,7 @@ class TestReleaseBundle(unittest.TestCase):
         self.tests["sources"] = rb.source_snapshot(self.root)
         self.apk["sources"] = rb.source_snapshot(self.root)
         self.write_reports()
+        self.write_ipa()  # built from the same sources
 
     def remote_tree(self):
         return {"tree": [{"path": p, "sha": s, "type": "blob",
@@ -225,7 +260,7 @@ class TestReleaseBundle(unittest.TestCase):
         bundle = rb.prepare(self.root, "v0.1.3")
         with self.assertRaisesRegex(ValueError, "target GitHub commit"):
             rb.verify(bundle, {"tree": []})
-        (bundle / "sentry-bridge.exe").write_bytes(b"different")
+        (bundle / "sentry-bridge-gui.exe").write_bytes(b"different")
         with self.assertRaisesRegex(ValueError, "asset changed"):
             rb.verify(bundle)
 

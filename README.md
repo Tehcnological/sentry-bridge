@@ -20,8 +20,8 @@ Get the latest version from the [Releases page](https://github.com/Tehcnological
 |---|---|---|
 | Android 8+ | `sentry-bridge.apk` | [Android](docs/Android.md) |
 | Windows 10/11 | `sentry-bridge-gui.exe` | [Windows](docs/Windows.md) |
-| iPhone, iPad (iOS 26+) | build it yourself and sideload | [iPhone and iPad](docs/iOS-Sideload.md) |
-| macOS, Linux | run from source | [Building from source](docs/Building.md) |
+| iPhone, iPad (iOS 26+) | `sentry-bridge.ipa`, installed by sideloading | [iPhone and iPad](docs/iOS-Sideload.md) |
+| macOS, Linux | no download; unmaintained ([open an issue](https://github.com/Tehcnological/sentry-bridge/issues) if you would use it) | |
 | Small WiFi boards (ESP32-C3, Pico W, Pico 2 W) | build from source; experimental | [Small-board firmware](docs/Firmware.md) |
 
 ## Quick start
