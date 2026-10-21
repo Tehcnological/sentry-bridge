@@ -1,81 +1,70 @@
 # Sentry Bridge
 
-Sentry Bridge converts traffic from a uAvionix Sentry or Sentry Plus in Compatibility
-Mode into GDL90 for compatible EFBs. It decodes 1090ES and 978 MHz UAT traffic and
-relays available standard GPS, heartbeat and weather frames.
+Sentry Bridge lets you see traffic from a uAvionix **Sentry** or **Sentry Plus** ADS-B receiver in
+EFB apps other than ForeFlight, such as Garmin Pilot, FltPlan Go or AvareX.
 
-## Project status
+Normally the Sentry talks only to ForeFlight, over an encrypted link. In its **Compatibility Mode**
+it also sends GPS in the standard GDL90 format that other apps understand, but it still sends
+traffic in a raw form those apps cannot use. Sentry Bridge reads that raw traffic, decodes it, and
+sends it on to your EFB as standard GDL90 traffic reports.
 
-Version **0.2.1**. Android and Windows apps share Bridge, Settings and Diagnostics screens and a C decoder.
-Linux/macOS desktop operation is from source. [Firmware for small boards](docs/Firmware.md)
-(ESP32-C3, Raspberry Pi Pico W and Pico 2 W) bridges for EFBs on any device, including Android; it
-builds but is not yet tested with a receiver.
+```
+Sentry (Compatibility Mode)  ──WiFi──▶  Sentry Bridge  ──WiFi──▶  your EFB app
+```
 
-A native iOS/iPadOS 26+ app installs outside the App Store; see
-[iPhone and iPad](docs/iOS-Sideload.md). Its background Bridge Session is experimental.
+## Download
 
-## Setup
+Get the latest version from the [Releases page](https://github.com/Tehcnological/sentry-bridge/releases).
 
-1. Join the Sentry's WiFi and open Sentry Bridge.
-2. Choose **This device** for an EFB on the bridge device (not on Android), or **Other
-   device** and enter the EFB device's IPv4 address. **Find EFB** lists apps that announce themselves.
-3. In the EFB, choose its Stratux or GDL90 input, normally UDP 4000. Read the
-   compatibility dialog, then press **Start**.
-4. In **Settings → Open Sentry web settings**, disable **Power Savings**. ForeFlight
-   is optional. Leave **Automatic restoration** enabled to request Compatibility
-   Mode again after receiver power cycles.
+| Platform | What to download | Guide |
+|---|---|---|
+| Android 8+ | `sentry-bridge.apk` | [Android](docs/Android.md) |
+| Windows 10/11 | `sentry-bridge-gui.exe` | [Windows](docs/Windows.md) |
+| iPhone, iPad (iOS 26+) | build it yourself and sideload | [iPhone and iPad](docs/iOS-Sideload.md) |
+| macOS, Linux | run from source | [Building from source](docs/Building.md) |
+| Small WiFi boards (ESP32-C3, Pico W, Pico 2 W) | build from source; experimental | [Small-board firmware](docs/Firmware.md) |
 
-On iPhone, iPad, Windows and macOS the bridge shares UDP 4000 with one EFB on the same
-device. On Android, use the bridge for an EFB on another device: Android EFBs do not
-share UDP 4000. Linux needs the EFB to allow port sharing, or another EFB port.
-For another device, output goes to its configured address. An announcement does not
-add a destination. Desktop targets are Custom GDL90. Ports remain editable in Settings.
+## Quick start
 
-Use [Android](docs/Android.md) or [Windows](docs/Windows.md) for platform setup and
-download/source instructions.
-Use **Stop** to end forwarding. Desktop browser fallback can keep the bridge
-running after a tab closes; **Settings → Exit Sentry Bridge** ends the controller.
+1. Connect the device running Sentry Bridge to the Sentry's WiFi (named like `SentryPlus_XXXX`).
+2. Open Sentry Bridge and choose where your EFB runs:
+   - **This device**: the EFB is on the same phone, tablet or computer (not available on Android).
+   - **Other device**: the EFB is on another device on the Sentry's WiFi. Enter its IP address,
+     or tap **Find EFB** to look it up.
+3. Press **Start**.
+4. In your EFB, select a **Stratux** or **GDL90** device as the traffic source (UDP port 4000).
+5. Once, in **Settings → Open Sentry web settings**, turn off the Sentry's **Power Savings**.
+   Otherwise the Sentry switches itself off after 30 minutes without ForeFlight connected.
 
-## Compatibility and safety
+The Sentry returns to ForeFlight mode every time it powers up. With **Automatic restoration** on
+(the default), Sentry Bridge switches it back to Compatibility Mode by itself.
 
-Hardware coverage is limited: Sentry Plus WiFi firmware 1.0.32 with ForeFlight, Garmin
-Pilot, AvareX and FltPlan Go on one iPad. EFB output from the Android app has not been
-verified on a device yet. That is not a promise for every version, device or flight. See [Compatibility](docs/Compatibility.md).
+## What to expect
 
-- AHRS, CO, temperature, barometric sensor and battery data are unavailable to EFBs
-  in Compatibility Mode, including ForeFlight. The bridge does not invent them.
-- Weather-frame transport is tested with synthetic inputs; actual EFB weather
-  display remains unverified. Receipt counts do not prove a usable weather picture.
-- Receiver restarts, WiFi recovery, sustained background operation and older-device
-  performance are not yet verified on hardware.
-- Advisory information only. Not certified for navigation or collision avoidance.
-  Do not use it as a substitute for see-and-avoid, required equipment or a weather briefing.
+- Traffic and GPS reach your EFB, and weather data is passed on (weather display in EFBs is not yet
+  confirmed). The Sentry's attitude (AHRS), carbon monoxide, temperature, barometric and battery
+  data do not reach the EFB, because Compatibility Mode does not include them.
+- Sentry Bridge shows the Sentry's **battery, CO level and temperature** on its own screen and warns
+  when CO reaches the Sentry's alarm level (not yet on iPhone and iPad).
+- Testing so far covers the Sentry Plus with ForeFlight, Garmin Pilot, AvareX and FltPlan Go on an
+  iPad, and the Windows app with a Sentry Plus. Details and known limits are in
+  [Compatibility](docs/Compatibility.md).
 
-## Controls and privacy
+**Safety:** Sentry Bridge gives advisory information only. It is not certified for navigation or
+collision avoidance and does not replace see-and-avoid, required equipment or a weather briefing.
 
-Settings contains receiver controls, routing, automatic restoration and appearance.
-Diagnostics contains backups, logs, captures, analysis, weather comparison,
-WebSocket tools and a loopback simulator. See [GUI controls](docs/GUI-Controls.md).
-Dark appearance is the default; Android Expressive styling defaults on. Saved
-appearance choices survive updates.
+## More
 
-Traffic is processed locally. Optional GitHub update checks are enabled by default
-on Windows and disabled on Android; they only notify. Captures and backups can
-contain flight tracks and identifiers. Review [Privacy](docs/Privacy.md) before
-recording or sharing data. Privacy and license texts are also available offline in Settings.
-
-## Development
-
-[Documentation](docs/Home.md) · [Building from source](docs/Building.md) ·
-[Reproducible Android builds](docs/Reproducible-Builds.md)
+- [Documentation index](docs/Home.md)
+- [Privacy](docs/Privacy.md): traffic is processed on your device; nothing is sent to the project.
+- [Building from source](docs/Building.md)
 
 ## License
 
 Sentry Bridge is **GPL-3.0-only**, with an additional permission for app stores; see
-[LICENSE](LICENSE) and [NOTICE](NOTICE.txt). Third-party components retain their
-licenses; [Credits and legal](docs/Credits-and-Legal.md) lists them.
+[LICENSE](LICENSE) and [NOTICE](NOTICE.txt). Third-party components keep their own licenses; see
+[Credits and legal](docs/Credits-and-Legal.md).
 
-Not affiliated with or endorsed by uAvionix, ForeFlight or the named EFB vendors.
-Product names identify compatibility targets and remain their owners' trademarks.
-The bridge uses Compatibility Mode; it does not decrypt the encrypted stream or
-install receiver firmware.
+Not affiliated with or endorsed by uAvionix, ForeFlight or any EFB vendor; product names belong to
+their owners. Sentry Bridge uses the Sentry's own Compatibility Mode. It does not decrypt the
+ForeFlight link or change the Sentry's firmware.
