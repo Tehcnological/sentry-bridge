@@ -140,7 +140,7 @@ function renderDiscovered(efbs) {
     row.append(element("span",`${efb.app} · ${efb.address} · port ${efb.port}`),use);
     return row;
   });
-  if (!rows.length) rows.push(element("li","No EFB announced itself. Enter the address from the EFB device's WiFi details.","note"));
+  if (!rows.length) rows.push(element("li","No EFB or other device found on the receiver's WiFi. Enter the address from the EFB device's WiFi details.","note"));
   $("discovered").replaceChildren(...rows);
 }
 async function checkSetup() {

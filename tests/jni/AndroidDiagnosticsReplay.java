@@ -24,6 +24,18 @@ public class AndroidDiagnosticsReplay {
         } else if (args[0].equals("lognames")) {
             // One line per receiver link: the decoded file name, or "-" when it is rejected.
             for (int i = 1; i < args.length; i++) { String name = d.logName(args[i]); System.out.println(name == null ? "-" : name); }
+        } else if (args[0].equals("follow")) {
+            // The follow rule and the network check, as tools/discovery.py follow_choice and on_network.
+            String ipad = "192.168.4.19", other = "192.168.4.6";
+            check(other.equals(d.followChoice(java.util.List.of(other), ipad)), "moves to the single other device");
+            check(d.followChoice(java.util.List.of(), ipad) == null, "stays with none");
+            check(d.followChoice(java.util.List.of(other, "192.168.4.7"), ipad) == null, "stays with several");
+            check(ipad.equals(d.followChoice(java.util.List.of(other, ipad), ipad)), "keeps an EFB that answers again");
+            var local = (java.net.Inet4Address) java.net.InetAddress.getByName("192.168.4.4");
+            check(d.onNetwork(local, "192.168.4.1"), "same network");
+            check(!d.onNetwork((java.net.Inet4Address) java.net.InetAddress.getByName("10.0.0.7"), "192.168.4.1"), "other network");
+            check(d.sweep(local, java.util.Set.of(), () -> true, address -> true).isEmpty(), "a cancelled sweep finds nothing");
+            System.out.println("follow rule passed");
         } else if (args[0].equals("sensors")) {
             // One line per /stats message: the readings the app shows.
             for (int i = 1; i < args.length; i++) System.out.println(d.sensorValues(args[i]));
@@ -369,5 +381,9 @@ public class AndroidDiagnosticsReplay {
         } else if (args[0].equals("analyze")) {
             System.out.print(d.analyze(new File(args[1]), Integer.parseInt(args[2]), 2));
         } else throw new IllegalArgumentException("Unknown test operation");
+    }
+
+    private static void check(boolean ok, String what) {
+        if (!ok) { System.err.println("Failed: " + what); System.exit(1); }
     }
 }

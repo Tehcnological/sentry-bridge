@@ -2,6 +2,7 @@
 import base64
 import gzip
 import hashlib
+import ipaddress
 import re
 from http.server import ThreadingHTTPServer
 import json
@@ -33,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules
 from tools.native_core import decoder
 from tools.gui_runtime import DEFAULTS, Runtime, validate_settings
 from tools import gui_server
+from tools.discovery import sweep as real_sweep
 from tools.gui_server import Controller, Handler
 from tools.routes import validate_route
 
@@ -63,6 +65,20 @@ def wait_for(predicate, seconds=8):
 
 class TestGUI(unittest.TestCase):
     def setUp(self):
+        # Tests never probe the real network: no devices found, and every EFB answers (nothing to follow).
+        for name, value in (("sweep", []), ("answers", True)):
+            patcher = patch.object(gui_server.discovery, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        real_connect = ws_probe.connect
+
+        def loopback_only(host, *args, **kwargs):
+            if not ipaddress.IPv4Address(host).is_loopback:
+                raise AssertionError(f"a test tried to reach {host}")
+            return real_connect(host, *args, **kwargs)
+        patcher = patch.object(ws_probe, "connect", loopback_only)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.c = Controller(self.tmp.name)
 
@@ -219,7 +235,7 @@ class TestGUI(unittest.TestCase):
         self.c.runtime.settings.update(sentryIp="127.0.0.1", httpPort=peer["port"])
         self.c.runtime.forwarding = True
         self.c.runtime.active = lambda: True
-        self.c.runtime.started_at = time.monotonic()
+        self.c.runtime.started_at = getattr(self.c.runtime, "started_at", 0) + 1  # a new session (monotonic ticks are 16 ms on Windows)
         self.c._contact()
 
     def test_exit_stops_a_sensor_reader_that_only_receives_pings(self):
@@ -276,6 +292,115 @@ class TestGUI(unittest.TestCase):
                 with patch.object(gui_server, "SENSORS_SILENT_S", .5), patch.object(gui_server, "SENSORS_RETRY_S", .2):
                     self.forward_to(peer)
                     wait_for(lambda: peer["connections"] >= 2)
+
+    def follow(self, answering, swept):
+        """Forwarding to 192.168.4.19 with fast checks; answering() says whether the EFB answers each time."""
+        self.c.http = lambda *args, **kwargs: {}
+        self.c._read_sensors = lambda *args: None  # no sensor connection to the default receiver
+        self.c.local_address = lambda: "192.168.4.4"
+        self.c.routes_request = dict(host="windows", topology="network", address="192.168.4.19")
+        self.c.runtime.routes = [("192.168.4.19", 4000)]
+        self.c.runtime.forwarding = True
+        self.c.runtime.active = lambda: True
+        self.c.runtime.last_rx = time.monotonic() + 3600  # receiver data keeps arriving
+        self.c.runtime.started_at = getattr(self.c.runtime, "started_at", 0) + 1  # a new session (monotonic ticks are 16 ms on Windows)
+        return (patch.object(gui_server, "EFB_CHECK_S", .05), patch.object(gui_server, "EFB_MISSES", 2),
+                patch.object(gui_server.discovery, "answers", side_effect=lambda address: answering(address)),
+                patch.object(gui_server.discovery, "sweep", return_value=swept))
+
+    def test_an_efb_that_moved_is_followed_to_the_only_other_device(self):
+        calls = []
+        patches = self.follow(lambda address: calls.append(address) or len(calls) <= 2, ["192.168.4.6"])
+        with patches[0], patches[1], patches[2], patches[3]:
+            self.c._contact()
+            wait_for(lambda: "now sending to 192.168.4.6" in "\n".join(self.c.runtime.logs))  # logged last
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.6", 4000)])
+        self.assertEqual(self.c.routes_request["address"], "192.168.4.6")  # the screen and the next Start
+
+    def test_an_efb_is_not_moved_when_several_devices_answer_or_it_never_answered(self):
+        for answered_before, swept in ((True, ["192.168.4.6", "192.168.4.7"]), (False, ["192.168.4.6"])):
+            with self.subTest(answered_before=answered_before, swept=swept):
+                self.c.close()
+                self.c = Controller(Path(self.tmp.name) / str(len(swept)))
+                calls = []
+                patches = self.follow(lambda address: calls.append(address) or (answered_before and len(calls) == 1), swept)
+                with patches[0], patches[1], patches[2], patches[3]:
+                    self.c._contact()
+                    wait_for(lambda: len(calls) >= 6)
+                self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
+                self.assertEqual("stopped answering" in "\n".join(self.c.runtime.logs), answered_before)
+
+    def test_an_efb_that_answers_the_sweep_again_is_kept(self):
+        calls = []
+        patches = self.follow(lambda address: calls.append(address) or len(calls) == 1, ["192.168.4.6", "192.168.4.19"])
+        with patches[0], patches[1], patches[2], patches[3] as sweep:
+            self.c._contact()
+            wait_for(lambda: sweep.call_count >= 2)
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
+        self.assertNotIn("stopped answering", "\n".join(self.c.runtime.logs))
+
+    def test_exit_during_a_probe_starts_no_sweep_and_waits_for_the_follower(self):
+        calls, probing = [], threading.Event()
+
+        def slow(address):
+            calls.append(address)
+            if len(calls) == 3:
+                probing.set()
+                time.sleep(.5)  # Exit arrives while this probe runs
+            return len(calls) == 1
+        patches = self.follow(slow, ["192.168.4.6"])
+        with patches[0], patches[1], patches[2], patches[3] as sweep:
+            self.c._contact()
+            probing.wait(5)
+            self.c.close()
+            self.assertFalse(self.c.follow_thread.is_alive())
+            self.assertEqual(sweep.call_count, 0)
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
+
+    def test_no_follow_while_no_receiver_data_arrives(self):
+        # Without receiver data the computer may be on another network: nothing is probed or moved.
+        calls = []
+        patches = self.follow(lambda address: calls.append(address) or False, ["192.168.4.6"])
+        self.c.runtime.last_rx = None
+        with patches[0], patches[1], patches[2], patches[3] as sweep:
+            self.c._contact()
+            time.sleep(.5)
+        self.assertEqual((calls, sweep.call_count), ([], 0))
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
+
+    def test_find_efb_adds_devices_found_by_the_sweep(self):
+        self.c.local_address = lambda: "192.168.4.4"
+        self.c.runtime.settings.update(announcePort=free_port())
+        with patch.object(gui_server.discovery, "sweep", return_value=["192.168.4.6"]):
+            found = self.c.discover(.3)
+        self.assertEqual(found["efbs"], [dict(app="Device", address="192.168.4.6", port=4000)])
+
+    def test_exit_during_find_efb_cancels_and_waits_for_the_sweep(self):
+        self.c.local_address = lambda: "192.168.4.4"
+        self.c.runtime.settings.update(announcePort=free_port())
+        started, outcome = [], []
+
+        def probe(address):
+            started.append(time.monotonic())
+            time.sleep(.5)  # Exit arrives while the probes run
+            return True
+
+        def find():
+            try:
+                outcome.append(self.c.discover(5))
+            except gui_server.Closing as error:
+                outcome.append(error)
+        job = threading.Thread(target=find)
+        with patch.object(gui_server.discovery, "sweep", side_effect=lambda local, **kwargs: real_sweep(local, probe=probe, **kwargs)):
+            job.start()
+            wait_for(lambda: started)
+            self.c.close()
+            job.join(10)
+            done = time.monotonic()
+            self.assertFalse(any(t.name == "gui-sweep" and t.is_alive() for t in threading.enumerate()))
+            time.sleep(.3)
+        self.assertIsInstance(outcome[0], gui_server.Closing)
+        self.assertFalse([t for t in started if t > done])
 
     def test_restart_cancels_the_waiting_reader_and_uses_the_new_receiver(self):
         old, new = self.stats_peer(), self.stats_peer("pings")

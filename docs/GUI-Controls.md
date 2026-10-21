@@ -9,7 +9,7 @@ The Windows, Linux, macOS and Android apps share the same three screens: **Bridg
 |---|---|
 | Start / Stop | Starts or stops forwarding traffic to the EFB |
 | This device / Other device | Where the EFB runs: on this device, or on another device at an IP address you enter. Android offers Other device only |
-| Find EFB | Lists EFBs that announce themselves on the WiFi; **Use** fills in the address |
+| Find EFB | Lists EFBs that announce themselves on the WiFi, and the other devices that answer on it ("Device"); **Use** fills in the address |
 | Check setup | Checks the chosen address and port before you start |
 | Status | Receiver state, GPS, traffic count, weather frames and time since the last packet |
 | Battery, CO, Temperature | The Sentry's own readings, while forwarding. CO turns red at the Sentry's alarm level |
@@ -27,7 +27,7 @@ The Windows, Linux, macOS and Android apps share the same three screens: **Bridg
 | Check for updates | Once a day, while stopped, asks GitHub whether a new version exists and shows a link. Never downloads anything. On by default on Windows, off on Android |
 | Appearance | Light or dark theme and motion; on Android, the Material style |
 | Privacy, Licenses | The privacy policy and license texts, available offline |
-| Exit Sentry Bridge | Stops the bridge and closes the app |
+| Exit Sentry Bridge | Stops the bridge and closes the app (Windows, macOS, Linux) |
 
 ## Diagnostics
 

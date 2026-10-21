@@ -4,7 +4,10 @@
 
 - Check that Sentry Bridge is running and its status shows aircraft.
 - If the bridge shows aircraft but the EFB does not, check that the EFB's GDL90 port matches the
-  bridge's **EFB UDP port** (Settings, default 4000) and that the EFB's address is right.
+  bridge's **EFB UDP port** (Settings, default 4000) and that the EFB's address is right. The EFB
+  device's address can change after the Sentry restarts; **Find EFB** lists the devices on the WiFi.
+- On Android, if the Sentry was off, the phone may have switched to another saved WiFi network. Switch
+  it back to the Sentry's WiFi.
 - On Linux, an EFB on the same computer must allow sharing port 4000; otherwise use another port in
   both apps. On Android the EFB must be on another device.
 

@@ -409,6 +409,7 @@ object NativeGui {
      *  blocks an operation. False while the previous one runs. Logs only when the result changes. */
     fun keepalive(): Boolean {
         watchSensors()
+        watchEfb()
         if (contacting) return false
         contacting = true
         Thread({
@@ -449,6 +450,54 @@ object NativeGui {
             }
             sensors = null
         }, "sentry-sensors").apply { isDaemon = true; start() }
+    }
+
+    private var followThread: Thread? = null
+    private var followGeneration = -1
+    /** While forwarding to an EFB on another device, check it still answers (tools/gui_server.py _follow_efb). When an
+     *  EFB that answered before stops answering twice in a row, sweep the receiver's WiFi and switch to the one other
+     *  device that answers; with none or several, only log. One follower per Start (BridgeService.generation): an older
+     *  one stops at its next check and can never change a later run's destination. It acts only while receiver data
+     *  arrives, so the phone is on the receiver's network. */
+    private fun watchEfb() {
+        val generation = BridgeService.generation
+        if (simulator || followThread?.isAlive == true && followGeneration == generation) return
+        followGeneration = generation
+        followThread = Thread({
+            val forwarding = { BridgeService.status.running && !closing && BridgeService.generation == generation }
+            var seen = false; var misses = 0; var reported: String? = null
+            while (forwarding()) {
+                for (i in 0 until 30) { if (!forwarding()) return@Thread; Thread.sleep(1000) }
+                if (BridgeService.status.lastRxAgeS !in 0.0..10.0) continue
+                val current = BridgeService.followed ?: BridgeService.destination ?: continue
+                val network = wifi() ?: continue
+                if (NativeDiagnostics.answers(network, current.address)) { seen = true; misses = 0; reported = null; continue }
+                misses++
+                if (!seen || misses < 2 || !forwarding()) continue  // never answered (a firewall, perhaps) or only once
+                val found = runCatching { sweepDevices(network, current.port) { !forwarding() } }.getOrNull() ?: continue
+                val old = current.address.hostAddress!!
+                val target = NativeDiagnostics.followChoice(found, old)
+                if (target == old) { seen = true; misses = 0; reported = null; continue }  // it answered again
+                if (target == null) {
+                    if (reported != old && forwarding()) {
+                        reported = old
+                        BridgeService.log("The EFB at $old stopped answering. Devices on the receiver's WiFi: " +
+                            "${found.joinToString(", ").ifEmpty { "none" }}. Choose one with Find EFB.")
+                    }
+                    continue
+                }
+                synchronized(BridgeService.routeLock) {  // the run and destination this decision was made for, or nothing
+                    if (!forwarding() || (BridgeService.followed ?: BridgeService.destination) != current) return@Thread
+                    BridgeService.followed = InetSocketAddress(target, current.port)
+                    config.routes?.let { routes ->
+                        val route = JSONObject(routes)
+                        if (route.optString("address") == old) { config = config.copy(routes = route.put("address", target).toString()); save() }
+                    }
+                }
+                BridgeService.log("The EFB at $old stopped answering; now sending to $target, the only other device on the receiver's WiFi.")
+                misses = 0; reported = null
+            }
+        }, "sentry-follow").apply { isDaemon = true; start() }
     }
 
     /** Called on the bridge thread. False when another operation is running; the caller keeps the request. */
@@ -772,7 +821,35 @@ object NativeGui {
     }
 
     /** Find EFB: uses the running bridge's list when it holds the discovery port, else listens briefly. */
+    /** This phone's address on the receiver's WiFi (the route to the receiver). Sends nothing. */
+    private fun localAddress(network: Network): java.net.Inet4Address = DatagramSocket().use { socket ->
+        network.bindSocket(socket)
+        socket.connect(InetSocketAddress(config.sentryIp, config.listenPort))
+        val local = socket.localAddress as? java.net.Inet4Address ?: throw IOException("Join the Sentry WiFi first.")
+        if (!NativeDiagnostics.onNetwork(local, config.sentryIp)) throw IOException("This phone is not on the receiver's network.")
+        local
+    }
+
+    /** Other devices on the receiver's WiFi that can be an EFB destination (Find EFB, and following a moved EFB). */
+    private fun sweepDevices(network: Network, efbPort: Int, cancelled: () -> Boolean = { false }): List<String> =
+        NativeDiagnostics.sweep(localAddress(network), setOf(config.sentryIp), cancelled) { NativeDiagnostics.answers(network, it) }
+            .filter { NativeDiagnostics.efbCandidate(InetAddress.getByName(it), efbPort, config.sentryIp, config.listenPort) }
+
     private fun discoverEfbs(seconds: Double): JSONObject {
+        val swept = mutableListOf<String>()
+        val sweeper = if (simulator) null else Thread({
+            // Not on the receiver's WiFi: announcements only.
+            runCatching { wifi()?.let { network -> sweepDevices(network, config.efbPort) { closing }.also { synchronized(swept) { swept += it } } } }
+        }, "gui-sweep").apply { isDaemon = true; start() }
+        val result = try { announcedEfbs(seconds) } finally { sweeper?.join(4000) }  // Exit too: no sweep outlives the job
+        val efbs = result.getJSONArray("efbs")
+        val announced = (0 until efbs.length()).map { efbs.getJSONObject(it).getString("address") }.toSet()
+        synchronized(swept) { swept.toList() }.filter { it !in announced }
+            .forEach { efbs.put(JSONObject().put("app", "Device").put("address", it).put("port", config.efbPort)) }
+        return result
+    }
+
+    private fun announcedEfbs(seconds: Double): JSONObject {
         val port = config.announcePort
         require(port > 0) { "EFB discovery is off. Set the EFB discovery port in Settings." }
         ensureOpen()
