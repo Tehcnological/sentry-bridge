@@ -40,6 +40,12 @@ def min_os(root=ROOT):
                      (root / "ios/SentryBridge.xcodeproj/project.pbxproj").read_text())[1]
 
 
+def version_key(version):
+    """0.3.0 above 0.3.0-beta.1 above 0.2.9; numbers compare as numbers."""
+    main, _, suffix = version.partition("-")
+    return tuple(int(part) for part in main.split(".")), not suffix, suffix
+
+
 def download_url(tag):
     return f"{REPOSITORY}/releases/download/{tag}/sentry-bridge.ipa"
 
@@ -79,7 +85,9 @@ def update(bundle, tag, date=None, path=SOURCE):
     source = json.loads(path.read_text(encoding="utf-8")) if path.exists() else base()
     app = source["apps"][0]
     entry = version_entry(bundle, tag, date or datetime.date.today().isoformat())
-    app["versions"] = [entry] + [v for v in app["versions"] if v["version"] != entry["version"]]
+    # Newest first by version number: rebuilding an older release must not make it the latest.
+    app["versions"] = sorted([entry] + [v for v in app["versions"] if v["version"] != entry["version"]],
+                             key=lambda v: version_key(v["version"]), reverse=True)
     app["appPermissions"] = app_permissions()
     with_legacy(app)
     check(source)
@@ -97,6 +105,9 @@ def check(source, root=ROOT):
     for version in app["versions"]:
         if version["downloadURL"] != download_url("v" + version["version"]) or not re.fullmatch(r"[0-9a-f]{64}", version["sha256"]):
             raise ValueError(f"Version {version['version']} does not point at its release IPA")
+    keys = [version_key(v["version"]) for v in app["versions"]]
+    if keys != sorted(keys, reverse=True) or len(set(keys)) != len(keys):
+        raise ValueError("Versions must be listed once each, newest first")
     newest = app["versions"][0]
     if (app.get("version"), app.get("downloadURL"), app.get("size")) != (newest["version"], newest["downloadURL"], newest["size"]):
         raise ValueError("The single-version fields do not name the newest version")

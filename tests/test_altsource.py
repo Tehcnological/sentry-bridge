@@ -49,6 +49,17 @@ class TestAltSource(unittest.TestCase):
             "sentry-bridge.ipa": hashlib.sha256(b"rebuilt").hexdigest()}}))
         source = altsource.update(bundle, "v0.3.0", "2026-10-22", self.path)
         self.assertEqual([v["size"] for v in source["apps"][0]["versions"]], [7])
+        # Rebuilding an older release keeps the newest version first, for the apps and the older fields.
+        altsource.update(self.bundle("v0.10.0", b"newest"), "v0.10.0", "2026-11-01", self.path)
+        (Path(self.tmp.name) / "older").mkdir()
+        older = self.bundle("older/v0.3.0", b"rebuilt again")
+        (older / "release-manifest.json").write_text(json.dumps({"tag": "v0.3.0", "assets": {
+            "sentry-bridge.ipa": hashlib.sha256(b"rebuilt again").hexdigest()}}))
+        app = altsource.update(older, "v0.3.0", "2026-11-02", self.path)["apps"][0]
+        self.assertEqual([v["version"] for v in app["versions"]], ["0.10.0", "0.3.0"])
+        self.assertEqual(app["version"], "0.10.0")
+        self.assertEqual(sorted(["0.3.0-beta.1", "0.3.0", "0.2.9"], key=altsource.version_key, reverse=True),
+                         ["0.3.0", "0.3.0-beta.1", "0.2.9"])
 
     def test_wrong_bundle_or_changed_permissions_are_rejected(self):
         bundle = self.bundle("v0.3.0", b"first")
@@ -60,6 +71,10 @@ class TestAltSource(unittest.TestCase):
         source = altsource.update(self.bundle("v0.3.3", b"ok"), "v0.3.3", "2026-10-21", self.path)
         source["apps"][0]["appPermissions"]["privacy"]["NSLocalNetworkUsageDescription"] = "older wording"
         with self.assertRaisesRegex(ValueError, "Info.plist permissions"):
+            altsource.check(source)
+        source = altsource.update(self.bundle("v0.3.4", b"next"), "v0.3.4", "2026-10-22", self.path)
+        source["apps"][0]["versions"].reverse()
+        with self.assertRaisesRegex(ValueError, "newest first"):
             altsource.check(source)
 
     def test_published_source_matches_the_app(self):
