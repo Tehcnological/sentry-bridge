@@ -64,9 +64,7 @@ No dates, and plans can change. To ask for something or to help,
 - **Small WiFi boards.** Firmware for the ESP32-C3, Pico W and Pico 2 W is in the source but not yet
   tested with a Sentry. Once it is, it becomes a release download. A board with a screen and a case,
   the LilyGO T-Dongle, is the next target.
-- **Weather in EFBs.** Weather data is already passed on; confirm that EFBs display it.
 - **CO alarm level on iPhone and iPad.** Use the Sentry's own alarm level instead of a fixed 50 ppm.
-- **macOS and Linux** are unmaintained. Open an issue if you would use them.
 
 ## More
 
