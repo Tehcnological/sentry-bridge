@@ -39,7 +39,7 @@ import Foundation
         session.age = 8.6
         guard session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")) == "Receiver silent 8 s • 2/60 min" else { print("FAIL: silent subtitle \(session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")))"); exit(1) }
         if mode == "rules" { ruleChecks(fixtures: CommandLine.arguments[4]); return }
-        if mode == "follow" { followChecks(settings); return }
+        if mode == "follow" { followChecks(settings); followChecks(settings, refused: true); return }
         if mode == "sweep" { sweepChecks(settings); discoveryListChecks(); return }
         if mode == "follow-end" { followEndChecks(settings); return }
         if mode == "readings" { readingsChecks(settings, httpPort: UInt16(CommandLine.arguments[4])!); return }
@@ -264,14 +264,17 @@ import Foundation
     /// and nothing is forwarded (the input is not GDL90, so the destination receives no datagram). The EFB at
     /// .10 answers once, then moves to .20: the run switches, reports the new address and keeps sending there.
     /// A stopped run's follower has ended before finish and never probes again.
-    static func followChecks(_ original: BridgeSettings) {
+    /// refused: the adapter refuses the new address. The run then keeps the old route, checks and settings, and
+    /// only its message says so.
+    static func followChecks(_ original: BridgeSettings, refused: Bool = false) {
         var settings = original
         settings.destination = "192.0.2.10"; settings.outputPort = "4000"; settings.discoveryPort = "0"
         let lock = NSLock()
-        var devices: Set<String> = ["192.0.2.10"], checks = 0, probes = 0
-        let worker = BridgeWorker(followCheckS: 0.2, local: "192.0.2.5") { addresses in
+        var devices: Set<String> = ["192.0.2.10"], checks = 0, probes = 0, checked: [String] = []
+        let worker = BridgeWorker(followCheckS: 0.2, local: "192.0.2.5", refusesSwitch: refused) { addresses, _ in
             lock.lock(); defer { lock.unlock() }
             probes += 1
+            if addresses.count == 1 { checked.append(addresses[0]) }
             let answers = addresses.map { devices.contains($0) }
             if addresses.count == 1 { checks += 1; if checks == 1 { devices = ["192.0.2.20"] } }  // answered once, then moved
             return answers
@@ -288,17 +291,24 @@ import Foundation
         feed.resume()
         let switched = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
         var reported = false
+        let refusal = "The EFB at 192.0.2.10 stopped answering, but 192.0.2.20 cannot be used; still sending to 192.0.2.10."
         worker.run(settings, duration: nil, update: { status in
             check(status.forwarded == 0 && status.sendErrors == 0, "follow test forwarded a datagram")
-            if !reported, status.followedDestination == "192.0.2.20",
-               status.followMessage == EFBFollower.followMessage(from: "192.0.2.10", to: "192.0.2.20") { reported = true; switched.signal() }
-            check(status.followMessage?.hasPrefix("Could not") != true, "destination change refused")
+            if refused {
+                check(status.followedDestination == nil, "a refused switch was reported as followed")
+                if !reported, status.followMessage == refusal { reported = true; switched.signal() }
+            } else {
+                if !reported, status.followedDestination == "192.0.2.20",
+                   status.followMessage == EFBFollower.followMessage(from: "192.0.2.10", to: "192.0.2.20") { reported = true; switched.signal() }
+                check(status.followMessage == nil || status.followMessage == EFBFollower.followMessage(from: "192.0.2.10", to: "192.0.2.20"), "unexpected follow message \(status.followMessage ?? "")")
+            }
         }, finish: { error, _ in check(error == nil, "follow run: \(error ?? "")"); finished.signal() })
-        check(switched.wait(timeout: .now() + 5) == .success, "the run did not follow the EFB to its new address")
-        // It now checks the new address, which answers: no further switch.
+        check(switched.wait(timeout: .now() + 5) == .success, refused ? "no message for a refused switch" : "the run did not follow the EFB to its new address")
+        // Switched: it checks the new address, which answers. Refused: it keeps checking the old one.
         Thread.sleep(forTimeInterval: 0.5)
-        lock.lock(); let checked = checks; lock.unlock()
-        check(checked >= 3, "the follower stopped checking after the switch")
+        lock.lock(); let checkCount = checks, lastChecked = checked.last; lock.unlock()
+        check(checkCount >= 4, "the follower stopped checking after the switch")
+        check(lastChecked == (refused ? "192.0.2.10" : "192.0.2.20"), "checked \(lastChecked ?? "nothing") after the switch")
         worker.stop()
         check(finished.wait(timeout: .now() + 1) == .success, "Stop timeout with a follower")
         lock.lock(); let after = probes; lock.unlock()
@@ -306,7 +316,8 @@ import Foundation
         lock.lock(); let later = probes; lock.unlock()
         check(after == later, "a stopped run's follower probed again")
         feed.cancel(); close(sender)
-        print("PASS: follower switched 192.0.2.10 -> 192.0.2.20 after two misses, kept checking, ended before finish")
+        print(refused ? "PASS: refused switch kept 192.0.2.10 for sending and checks; only the message changed"
+              : "PASS: follower switched 192.0.2.10 -> 192.0.2.20 after two misses, kept checking, ended before finish")
     }
     /// A run that ends without Stop (its length completed) still cancels a follower probe in progress: the real
     /// C probe, given the worker's token, aimed at 127.0.0.2 (loopback, silent until its 3 s timeout).

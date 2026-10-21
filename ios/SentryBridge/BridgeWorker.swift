@@ -94,15 +94,17 @@ final class BridgeWorker: @unchecked Sendable {
     // A replaced probe still receives this worker's cancel token.
     private let followCheckS: Double, sweepProbe: (([String], OpaquePointer?) -> [Bool]?)?, localAddress: (String) -> String?
     private let readsLoopbackStats: Bool
+    // Host tests can refuse the switch to check that a refused one changes nothing but its message.
+    private let refusesSwitch: Bool
     init() {
-        receiverHTTPPort = 80; loopbackReceiver = false; readsLoopbackStats = false
+        receiverHTTPPort = 80; loopbackReceiver = false; readsLoopbackStats = false; refusesSwitch = false
         followCheckS = EFBFollower.checkS; sweepProbe = nil; localAddress = EFBSweep.localAddress(receiver:)
     }
     #if SBIO_TESTING
     /// Host tests only: an unprivileged receiver web port and, optionally, a loopback fake receiver.
     init(receiverHTTPPort: UInt16, loopbackReceiver: Bool = false, readsLoopbackStats: Bool = false) {
         self.receiverHTTPPort = receiverHTTPPort; self.loopbackReceiver = loopbackReceiver
-        self.readsLoopbackStats = readsLoopbackStats
+        self.readsLoopbackStats = readsLoopbackStats; refusesSwitch = false
         followCheckS = EFBFollower.checkS; sweepProbe = nil; localAddress = EFBSweep.localAddress(receiver:)
     }
     /// Host tests only: a stubbed probe (no real network) and local address, and a short check interval.
@@ -110,9 +112,10 @@ final class BridgeWorker: @unchecked Sendable {
         self.init(followCheckS: followCheckS, local: local, cancellableProbe: { addresses, _ in probe(addresses) })
     }
     /// Host tests only: a probe given this worker's cancel token, as the real one is.
-    init(followCheckS: Double, local: String?, cancellableProbe: @escaping ([String], OpaquePointer?) -> [Bool]?) {
+    init(followCheckS: Double, local: String?, refusesSwitch: Bool = false, cancellableProbe: @escaping ([String], OpaquePointer?) -> [Bool]?) {
         receiverHTTPPort = 80; loopbackReceiver = false; readsLoopbackStats = false
         self.followCheckS = followCheckS; sweepProbe = cancellableProbe; localAddress = { _ in local }
+        self.refusesSwitch = refusesSwitch
     }
     #endif
     private var probe: ([String]) -> [Bool]? {
@@ -131,7 +134,10 @@ final class BridgeWorker: @unchecked Sendable {
     private var readings: ReceiverReadings?, readingsAt = -Double.infinity
     private var lastReceive: Double?
     // The destination this run sends to; the follower changes it only under the lock, for this run.
-    private var destination = "", pendingDestination: String?, followedDestination: String?, followMessage: String?
+    // The destination this run sends to. The follower only requests a switch; the UDP loop changes it after
+    // the adapter accepted the new address, so a refused switch leaves the route, checks and settings as they were.
+    private var destination = "", pendingDestination: (from: String, to: String)?
+    private var followedDestination: String?, followMessage: String?
     private var compatibilityResult: String?
     private var contactResult: String?
     private var contactInFlight = false
@@ -275,8 +281,16 @@ final class BridgeWorker: @unchecked Sendable {
             guard sbio_step(io, 50) == 0 else { return ("UDP reception failed. Check WiFi and Local Network access.", false) }
             guard !shouldStop else { return (nil, false) }
             lock.lock(); let next = pendingDestination; pendingDestination = nil; lock.unlock()
-            if let next, sbio_set_destination(io, next) != 0 {
-                lock.lock(); followMessage = "Could not send to \(next); still sending to the previous address."; lock.unlock()
+            if let next {
+                let accepted = !refusesSwitch && sbio_set_destination(io, next.to) == 0
+                lock.lock()
+                if accepted {
+                    destination = next.to; followedDestination = next.to
+                    followMessage = EFBFollower.followMessage(from: next.from, to: next.to)
+                } else {
+                    followMessage = "The EFB at \(next.from) stopped answering, but \(next.to) cannot be used; still sending to \(next.from)."
+                }
+                lock.unlock()
             }
             do { try listener?.step(cache) }
             catch { discoveryError = error.localizedDescription; listener?.close(); listener = nil }
@@ -334,9 +348,8 @@ final class BridgeWorker: @unchecked Sendable {
                 lock.lock(); followMessage = message; lock.unlock()
             case .follow(let target):
                 lock.lock()
-                guard !stopped, !ended, destination == current else { lock.unlock(); continue }
-                destination = target; pendingDestination = target; followedDestination = target
-                followMessage = EFBFollower.followMessage(from: current, to: target)
+                guard !stopped, !ended, destination == current, pendingDestination == nil else { lock.unlock(); continue }
+                pendingDestination = (current, target)
                 lock.unlock()
                 rule.followed()
             }
