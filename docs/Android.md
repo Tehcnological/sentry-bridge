@@ -1,7 +1,7 @@
 # Android
 
 Requires Android 8 or newer. The app runs in the background with a notification and sends traffic to
-an EFB on **another device**, such as an iPad. An EFB on the same phone cannot receive from it; see
+one EFB on **another device**, such as an iPad. It feeds one device at a time. An EFB on the same phone cannot receive from it; see
 [Compatibility](Compatibility.md#android).
 
 ## Install

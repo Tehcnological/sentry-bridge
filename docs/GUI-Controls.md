@@ -1,6 +1,6 @@
 # Controls
 
-The Windows, Linux, macOS and Android apps share the same three screens: **Bridge**, **Settings** and
+The Windows and Android apps share the same three screens: **Bridge**, **Settings** and
 **Diagnostics**. The iPhone and iPad app has its own design with the main controls.
 
 ## Bridge
@@ -8,7 +8,7 @@ The Windows, Linux, macOS and Android apps share the same three screens: **Bridg
 | Control | What it does |
 |---|---|
 | Start / Stop | Starts or stops forwarding traffic to the EFB |
-| This device / Other device | Where the EFB runs: on this device, or on another device at an IP address you enter. Android offers Other device only |
+| This device / Other device | Where the one EFB runs: on this device, or on one other device at an IP address you enter. The bridge feeds one EFB at a time. Android offers Other device only |
 | Find EFB | Lists EFBs that announce themselves on the WiFi, and the other devices that answer on it ("Device"); **Use** fills in the address |
 | Check setup | Checks the chosen address and port before you start |
 | Status | Receiver state, GPS, traffic count, weather frames and time since the last packet |
@@ -27,7 +27,7 @@ The Windows, Linux, macOS and Android apps share the same three screens: **Bridg
 | Check for updates | Once a day, while stopped, asks GitHub whether a new version exists and shows a link. Never downloads anything. On by default on Windows, off on Android |
 | Appearance | Light or dark theme and motion; on Android, the Material style |
 | Privacy, Licenses | The privacy policy and license texts, available offline |
-| Exit Sentry Bridge | Stops the bridge and closes the app (Windows, macOS, Linux) |
+| Exit Sentry Bridge | Stops the bridge and closes the app (Windows) |
 
 ## Diagnostics
 
@@ -45,8 +45,8 @@ Recordings and backups can contain positions and aircraft identifiers; see [Priv
 
 ## For developers
 
-- **Run from source:** on Windows, double-click `Run-Gui.cmd`; on Linux or macOS, run
-  `python tools/gui_server.py --open`. The app is a local web server at `http://127.0.0.1:8766/`. It
+- **Run from source:** on Windows, double-click `Run-Gui.cmd`. On macOS or Linux (unmaintained and
+  untested; [open an issue](https://github.com/Tehcnological/sentry-bridge/issues) if you would use it), run `python tools/gui_server.py --open`. The app is a local web server at `http://127.0.0.1:8766/`. It
   uses the C decoder when the compiled library is present, otherwise the Python one.
 - **Access:** the server listens only on this computer. Every request needs a per-launch session
   token, handed to the browser through a one-time launch code. This does not protect against other

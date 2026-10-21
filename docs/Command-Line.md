@@ -5,8 +5,8 @@ and investigating the Sentry. The Python tools need the packages in `requirement
 
 ## sentry-bridge / bridge.py
 
-The bridge without a window. `sentry-bridge` is the native build (Windows release, or built from
-`cli/`); `bridge.py` is the Python version. Both take the same options and produce the same output.
+The bridge without a window, for developers. `sentry-bridge` is the native build (from `cli/`; it is
+not a release download); `bridge.py` is the Python version. Both take the same options and produce the same output.
 
 ```
 sentry-bridge [--listen-port N] [--sentry-ip IP] [--dest HOST:PORT ...] [--relay]

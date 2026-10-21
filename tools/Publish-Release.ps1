@@ -106,7 +106,7 @@ foreach ($publishRef in @('master', $Commit)) {
 $publishArguments = @('release','create',$Tag,'--repo',$Repository,'--target',$Commit,'--draft','--title',$Tag,'--notes-file',(Resolve-Path -LiteralPath $NotesFile).Path)
 if ($Prerelease -or $Tag.Contains('-')) { $publishArguments += '--prerelease' }
 # Keep in step with DISTRIBUTION_ASSETS in tools/release_bundle.py, plus SHA256SUMS and the manifest.
-$publishFiles = @('sentry-bridge.exe','sentry-ctl.exe','sentry-bridge-gui.exe','sentry-bridge.apk','sentry-bridge-source.zip','LICENSE','NOTICE.txt','SHA256SUMS','release-manifest.json')
+$publishFiles = @('sentry-bridge-gui.exe','sentry-ctl.exe','sentry-bridge.apk','sentry-bridge.ipa','sentry-bridge-source.zip','LICENSE','NOTICE.txt','SHA256SUMS','release-manifest.json')
 $publishArguments += $publishFiles | ForEach-Object { Join-Path $publishBundle $_ }
 & $publishGh @publishArguments
 if ($LASTEXITCODE -ne 0) { throw 'Draft release upload failed. Inspect the draft before retrying; no published release was changed.' }

@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import plistlib
 import re
 import shutil
 import subprocess
@@ -11,7 +12,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 # Firmware images (tools/build_firmware.py) are not release assets until they are tested on boards.
-ASSETS = ("sentry-bridge.exe", "sentry-ctl.exe", "sentry-bridge-gui.exe", "sentry-bridge.apk")
+# The console sentry-bridge.exe is built and tested but not released: the Windows app does its job.
+# The IPA is built on a Mac (tools/build_ios_ipa.py) and copied into dist/ with its report.
+ASSETS = ("sentry-bridge-gui.exe", "sentry-ctl.exe", "sentry-bridge.apk", "sentry-bridge.ipa")
+# What the IPA is built from (the Xcode project's inputs, including the license texts it bundles);
+# its report pins these blobs.
+IPA_SOURCES, IPA_FILES = ("ios/", "core/"), ("LICENSE", "NOTICE.txt")
 CERTIFICATE = "1afa17aec207256b2352089f9d4e0a1417d09c859e11fa349aef8d45d0a019c5"
 DISTRIBUTION_ASSETS = ASSETS + ("sentry-bridge-source.zip", "LICENSE", "NOTICE.txt")
 # Sources Git records as 100755. Listed because a release export (git archive) has no Git
@@ -141,10 +147,33 @@ def validate_reports(root, dist, tag):
         hashes[name] = sha256(path)
     if hashes["sentry-bridge.apk"] != apk.get("apkSha256"):
         raise ValueError("APK changed after signature verification")
-    if (hashes["sentry-bridge.exe"] != tests.get("nativeSha256") or hashes["sentry-ctl.exe"] != tests.get("controlSha256")
-            or hashes["sentry-bridge-gui.exe"] != tests.get("guiSha256")):
+    if hashes["sentry-ctl.exe"] != tests.get("controlSha256") or hashes["sentry-bridge-gui.exe"] != tests.get("guiSha256"):
         raise ValueError("Windows executables changed since their tests")
+    check_ipa(dist / "sentry-bridge.ipa", load(dist / "ios-build-report.json"), tag[1:], sources)
     return sources, hashes, tests, apk
+
+
+def ipa_sources(sources):
+    return {name: blob for name, blob in sources.items() if name.startswith(IPA_SOURCES) or name in IPA_FILES}
+
+
+def check_ipa(path, report, version, sources):
+    """The IPA from tools/build_ios_ipa.py: built from these iOS and core sources, this version, and
+    unsigned (users sign it when they install it)."""
+    if report.get("ipaSha256") != sha256(path):
+        raise ValueError("IPA changed after its build report")
+    if report.get("sources") != ipa_sources(sources):
+        raise ValueError("IPA was built from other iOS, core or license sources; build it from the release commit")
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            plist = archive.read("Payload/SentryBridge.app/Info.plist")
+    except (zipfile.BadZipFile, KeyError) as error:
+        raise ValueError("IPA has no Payload/SentryBridge.app") from error
+    if plistlib.loads(plist).get("CFBundleShortVersionString") != version:
+        raise ValueError("IPA version does not match the release tag")
+    if any("/_CodeSignature/" in name or name.endswith("embedded.mobileprovision") for name in names):
+        raise ValueError("IPA must be unsigned")
 
 
 def prepare(root, tag):

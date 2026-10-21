@@ -37,7 +37,7 @@ The traffic decoder is written once, in C (`core/`), and used by every app:
 
 | Part | Used by |
 |---|---|
-| `core/` | All apps: Windows, Linux, macOS, Android, iPhone and iPad, small boards |
+| `core/` | All apps: Windows, Android, iPhone and iPad, small boards |
 | `cli/` | The command-line bridge (`sentry-bridge`) |
 | `android/`, `ios/` | The phone and tablet apps |
 | `tools/gui_server.py`, `web/` | The desktop app; Android shares the same screens |

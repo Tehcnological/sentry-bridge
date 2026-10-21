@@ -8,8 +8,7 @@
   device's address can change after the Sentry restarts; **Find EFB** lists the devices on the WiFi.
 - On Android, if the Sentry was off, the phone may have switched to another saved WiFi network. Switch
   it back to the Sentry's WiFi.
-- On Linux, an EFB on the same computer must allow sharing port 4000; otherwise use another port in
-  both apps. On Android the EFB must be on another device.
+- On Android the EFB must be on another device.
 
 ## The bridge says the Sentry is in ForeFlight mode
 

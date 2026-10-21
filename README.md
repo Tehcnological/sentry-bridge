@@ -20,17 +20,20 @@ Get the latest version from the [Releases page](https://github.com/Tehcnological
 |---|---|---|
 | Android 8+ | `sentry-bridge.apk` | [Android](docs/Android.md) |
 | Windows 10/11 | `sentry-bridge-gui.exe` | [Windows](docs/Windows.md) |
-| iPhone, iPad (iOS 26+) | build it yourself and sideload | [iPhone and iPad](docs/iOS-Sideload.md) |
-| macOS, Linux | run from source | [Building from source](docs/Building.md) |
+| iPhone, iPad (iOS 26+) | `sentry-bridge.ipa`, installed by sideloading | [iPhone and iPad](docs/iOS-Sideload.md) |
+| macOS, Linux | no download; unmaintained ([open an issue](https://github.com/Tehcnological/sentry-bridge/issues) if you would use it) | |
 | Small WiFi boards (ESP32-C3, Pico W, Pico 2 W) | build from source; experimental | [Small-board firmware](docs/Firmware.md) |
 
 ## Quick start
 
 1. Connect the device running Sentry Bridge to the Sentry's WiFi (named like `SentryPlus_XXXX`).
-2. Open Sentry Bridge and choose where your EFB runs:
+2. Open Sentry Bridge and choose where your EFB runs. Sentry Bridge feeds **one EFB at a time**:
    - **This device**: the EFB is on the same phone, tablet or computer (not available on Android).
-   - **Other device**: the EFB is on another device on the Sentry's WiFi. Enter its IP address,
+     Only one EFB app on it receives the traffic; close the others.
+   - **Other device**: the EFB is on one other device on the Sentry's WiFi. Enter its IP address,
      or tap **Find EFB** to look it up.
+
+   Not both, and not several devices.
 3. Press **Start**.
 4. In your EFB, select a **Stratux** or **GDL90** device as the traffic source (UDP port 4000).
 5. Once, in **Settings → Open Sentry web settings**, turn off the Sentry's **Power Savings**.
