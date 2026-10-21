@@ -15,7 +15,7 @@ IOS_EXPORT = {
     "ios/SentryBridge/BridgeIO.c", "ios/SentryBridge/BridgeIO.h",
     "ios/SentryBridge/Bridge-Bridging-Header.h", "ios/SentryBridge/BridgeModel.swift",
     "ios/SentryBridge/BridgeView.swift", "ios/SentryBridge/BridgeWorker.swift",
-    "ios/SentryBridge/EFBDiscovery.swift", "ios/SentryBridge/BridgeIntents.swift",
+    "ios/SentryBridge/EFBDiscovery.swift", "ios/SentryBridge/ReceiverReadings.swift", "ios/SentryBridge/BridgeIntents.swift",
     "ios/SentryBridge/SentryBridgeApp.swift", "ios/SentryBridge/Info.plist",
     "ios/SentryBridge/PrivacyInfo.xcprivacy", "ios/SentryBridge/DemoReplayer.swift", "ios/SentryBridge/Licenses.swift", "ios/SentryBridge/DemoReceiver.bin", "ios/SentryBridge/AppIcon.icon/icon.json", "ios/SentryBridge/AppIcon.icon/Assets/2-rings.svg",
     "ios/SentryBridge/AppIcon.icon/Assets/3-signal.svg", "ios/SentryBridge/AppIcon.icon/Assets/4-aircraft.svg",

@@ -38,6 +38,10 @@ import Foundation
         guard session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")) == "GPS fix • 1,234 traffic • 4,310 sent • 2/60 min" else { print("FAIL: fix subtitle \(session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")))"); exit(1) }
         session.age = 8.6
         guard session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")) == "Receiver silent 8 s • 2/60 min" else { print("FAIL: silent subtitle \(session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")))"); exit(1) }
+        if mode == "rules" { ruleChecks(fixtures: CommandLine.arguments[4]); return }
+        if mode == "follow" { followChecks(settings); return }
+        if mode == "sweep" { sweepChecks(settings); return }
+        if mode == "readings" { readingsChecks(settings, httpPort: UInt16(CommandLine.arguments[4])!); return }
         if mode == "lifecycle" { lifecycleChecks(settings); return }
         if mode == "http-stop" { httpStopChecks(settings, httpPort: UInt16(CommandLine.arguments[4])!); return }
         let worker = BridgeWorker()
@@ -185,6 +189,182 @@ import Foundation
         replacement.stop()
         guard finished.wait(timeout: .now() + 1) == .success else { exit(1) }
         print(String(format: "PASS: http-stop: worker released %.0f ms after Stop; replacement answered within %.0f ms", releasedAfter * 1000, answeredAfter * 1000))
+    }
+    static func check(_ condition: Bool, _ message: @autoclosure () -> String) {
+        if !condition { print("FAIL: \(message())"); exit(1) }
+    }
+    /// Readings (tests/data/stats-cases.json, shared with desktop and Android), the /24 rule, the sweep with a
+    /// stubbed probe and its cancellation, and the follow rule. Nothing here touches the network.
+    static func ruleChecks(fixtures: String) {
+        guard let data = FileManager.default.contents(atPath: fixtures),
+              let cases = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { check(false, "stats-cases.json unreadable"); return }
+        for (index, item) in cases.enumerated() {
+            let message = try! JSONSerialization.data(withJSONObject: item["message"]!)
+            let expected = item["expected"] as! [String: Any]
+            let got = ReceiverReadings.parse(message)
+            let want = ReceiverReadings(batteryPercent: (expected["batteryPercent"] as? NSNumber)?.intValue,
+                                        coPpm: (expected["coPpm"] as? NSNumber)?.intValue,
+                                        temperatureC: (expected["temperatureC"] as? NSNumber)?.doubleValue)
+            check(got == want, "stats case \(index): \(String(describing: got)) != \(want)")
+        }
+        // Document order decides between two plausible values, as desktop and Android read them.
+        check(ReceiverReadings.parse(Data(#"{"b":{"batteryCapacity_%":40},"a":{"batteryCapacity_%":60}}"#.utf8))?.batteryPercent == 40, "first value in document order")
+        check(ReceiverReadings.parse(Data(#"{"x":{"CO_SENSOR_PPM":7},"x":{"CO_SENSOR_PPM":9}}"#.utf8))?.coPpm == 9, "repeated member keeps its last value")
+        check(ReceiverReadings.parse(Data(#"{"sensor":{"ats":{"temp_c":NaN},"baro":{"temp_c":20.04}},"batteryCapacity_%":49.5}"#.utf8))
+              == ReceiverReadings(batteryPercent: 50, temperatureC: 20.0), "NaN skipped, half up")
+        for invalid in [#"{"batteryCapacity_%":50,}"#, #"{"batteryCapacity_%":050}"#, "{\"a\":\"\u{1}\"}", #"[1] x"#, ""] {
+            check(ReceiverReadings.parse(Data(invalid.utf8)) == nil, "invalid JSON rejected: \(invalid)")
+        }
+        check(ReceiverReadings.parse(Data([0xff, 0x7b])) == nil, "non-UTF-8 rejected")
+        check(ReceiverReadings(coPpm: 49).coWarning == nil, "no CO warning below 50 ppm")
+        check(ReceiverReadings(coPpm: 50).coWarning == "Carbon monoxide 50 ppm, at or above 50 ppm.", "CO warning wording")
+        check(ReceiverReadings(batteryPercent: 65, coPpm: 3, temperatureC: 28.2).temperature == "28.2°C", "temperature text")
+        // The /24 rule.
+        check(EFBSweep.onNetwork("192.168.4.20", "192.168.4.1"), "same /24")
+        check(!EFBSweep.onNetwork("192.168.5.20", "192.168.4.1") && !EFBSweep.onNetwork("10.0.0.2", "192.168.4.1"), "another network")
+        check(!EFBSweep.onNetwork("invalid", "192.168.4.1"), "invalid local")
+        check(EFBSweep.localAddress(receiver: "127.0.0.1") == nil, "loopback is not the receiver's network")
+        // The sweep: other hosts of the /24, in address order, without this device and the receiver.
+        let hosts = EFBSweep.hosts(local: "192.0.2.5", exclude: ["192.0.2.1"])
+        check(hosts.count == 252 && hosts.first == "192.0.2.2" && hosts.last == "192.0.2.254" && !hosts.contains("192.0.2.5"), "sweep hosts")
+        var probed: [String] = []
+        let found = EFBSweep.sweep(local: "192.0.2.5", exclude: ["192.0.2.1"], probe: { addresses in
+            probed = addresses; return addresses.map { ["192.0.2.30", "192.0.2.7"].contains($0) }
+        }, cancelled: { false })
+        check(found == ["192.0.2.7", "192.0.2.30"] && probed == hosts, "sweep result \(found)")
+        var cancelled = false
+        check(EFBSweep.sweep(local: "192.0.2.5", exclude: [], probe: { addresses in cancelled = true; return addresses.map { _ in true } },
+                             cancelled: { cancelled }).isEmpty, "cancelled during the probes gives none")
+        check(EFBSweep.sweep(local: "192.0.2.5", exclude: [], probe: { _ in check(false, "probed after cancel"); return nil },
+                             cancelled: { true }).isEmpty, "cancelled before the probes gives none")
+        check(EFBSweep.sweep(local: "192.0.2.5", exclude: [], probe: { _ in nil }, cancelled: { false }).isEmpty, "a cancelled probe gives none")
+        // The follow rule.
+        check(EFBSweep.followChoice(["192.0.2.9", "192.0.2.10"], current: "192.0.2.10") == "192.0.2.10", "recovered EFB kept")
+        check(EFBSweep.followChoice(["192.0.2.9"], current: "192.0.2.10") == "192.0.2.9", "one other device")
+        check(EFBSweep.followChoice(["192.0.2.8", "192.0.2.9"], current: "192.0.2.10") == nil && EFBSweep.followChoice([], current: "192.0.2.10") == nil, "several or none")
+        var never = EFBFollower()
+        for _ in 0..<5 { check(!never.checked(answered: false), "an EFB that never answered is never followed") }
+        var rule = EFBFollower()
+        check(!rule.checked(answered: true) && !rule.checked(answered: false), "one miss is not enough")
+        check(rule.checked(answered: false), "two misses in a row sweep")
+        check(rule.swept(["192.0.2.10"], current: "192.0.2.10") == .keep, "recovered: keep")
+        check(!rule.checked(answered: false) && rule.checked(answered: false), "misses count again after recovery")
+        let none = "The EFB at 192.0.2.10 stopped answering. Devices on the receiver's WiFi: none. Choose one with Find EFB."
+        check(rule.swept([], current: "192.0.2.10") == .report(none), "none: reported")
+        check(rule.checked(answered: false) && rule.swept(["192.0.2.8", "192.0.2.9"], current: "192.0.2.10") == .keep, "reported once per address")
+        check(rule.checked(answered: false) && rule.swept(["192.0.2.9"], current: "192.0.2.10") == .follow("192.0.2.9"), "one other device: follow")
+        var answered = EFBFollower()
+        _ = answered.checked(answered: true); _ = answered.checked(answered: false); _ = answered.checked(answered: true)
+        check(!answered.checked(answered: false), "an answer between misses resets the count")
+        check(EFBFollower.followMessage(from: "192.0.2.10", to: "192.0.2.9") == "The EFB at 192.0.2.10 stopped answering; now sending to 192.0.2.9, the only other device on the receiver's WiFi.", "follow message")
+        print("PASS: readings for \(cases.count) shared stats cases, /24 rule, sweep and cancellation, follow rule")
+    }
+    /// The follower in a running worker with a stubbed probe and local address: no probe reaches the network,
+    /// and nothing is forwarded (the input is not GDL90, so the destination receives no datagram). The EFB at
+    /// .10 answers once, then moves to .20: the run switches, reports the new address and keeps sending there.
+    /// A stopped run's follower has ended before finish and never probes again.
+    static func followChecks(_ original: BridgeSettings) {
+        var settings = original
+        settings.destination = "192.0.2.10"; settings.outputPort = "4000"; settings.discoveryPort = "0"
+        let lock = NSLock()
+        var devices: Set<String> = ["192.0.2.10"], checks = 0, probes = 0
+        let worker = BridgeWorker(followCheckS: 0.2, local: "192.0.2.5") { addresses in
+            lock.lock(); defer { lock.unlock() }
+            probes += 1
+            let answers = addresses.map { devices.contains($0) }
+            if addresses.count == 1 { checks += 1; if checks == 1 { devices = ["192.0.2.20"] } }  // answered once, then moved
+            return answers
+        }
+        let sender = socket(AF_INET, SOCK_DGRAM, 0)
+        var target = sockaddr_in(); target.sin_family = sa_family_t(AF_INET); target.sin_port = UInt16(settings.inputPort)!.bigEndian
+        target.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let feed = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "feed"))
+        feed.schedule(deadline: .now(), repeating: 0.1)
+        feed.setEventHandler {
+            var copy = target; let bytes: [UInt8] = [1, 2, 3]
+            withUnsafePointer(to: &copy) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { _ = sendto(sender, bytes, bytes.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        }
+        feed.resume()
+        let switched = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
+        var reported = false
+        worker.run(settings, duration: nil, update: { status in
+            check(status.forwarded == 0 && status.sendErrors == 0, "follow test forwarded a datagram")
+            if !reported, status.followedDestination == "192.0.2.20",
+               status.followMessage == EFBFollower.followMessage(from: "192.0.2.10", to: "192.0.2.20") { reported = true; switched.signal() }
+            check(status.followMessage?.hasPrefix("Could not") != true, "destination change refused")
+        }, finish: { error, _ in check(error == nil, "follow run: \(error ?? "")"); finished.signal() })
+        check(switched.wait(timeout: .now() + 5) == .success, "the run did not follow the EFB to its new address")
+        // It now checks the new address, which answers: no further switch.
+        Thread.sleep(forTimeInterval: 0.5)
+        lock.lock(); let checked = checks; lock.unlock()
+        check(checked >= 3, "the follower stopped checking after the switch")
+        worker.stop()
+        check(finished.wait(timeout: .now() + 1) == .success, "Stop timeout with a follower")
+        lock.lock(); let after = probes; lock.unlock()
+        Thread.sleep(forTimeInterval: 0.5)
+        lock.lock(); let later = probes; lock.unlock()
+        check(after == later, "a stopped run's follower probed again")
+        feed.cancel(); close(sender)
+        print("PASS: follower switched 192.0.2.10 -> 192.0.2.20 after two misses, kept checking, ended before finish")
+    }
+    /// Find EFB's sweep with a stubbed probe (no network): devices are listed as "Device" on the EFB UDP port without
+    /// the receiver or unusable addresses; the job finishes only after the sweep has ended, after an error (the
+    /// listener cannot open) and after Exit; Exit drops the swept list.
+    static func sweepChecks(_ original: BridgeSettings) {
+        var settings = original
+        settings.source = "192.0.2.1"; settings.outputPort = "4000"
+        let lock = NSLock()
+        var sweepEnded = 0.0
+        func worker(delay: Double) -> BridgeWorker {
+            BridgeWorker(followCheckS: 30, local: "192.0.2.5") { addresses in
+                Thread.sleep(forTimeInterval: delay)
+                lock.lock(); sweepEnded = sbio_now(); lock.unlock()
+                return addresses.map { ["192.0.2.1", "192.0.2.9", "192.0.2.255"].contains($0) || $0 == "192.0.2.40" }
+            }
+        }
+        // Error path: discovery port 0 cannot listen; the sweep still finishes first and reports its devices.
+        settings.discoveryPort = "0"
+        let done = DispatchSemaphore(value: 0)
+        var swept: [DiscoveredEFB] = [], finishedAt = 0.0, failure: String?
+        worker(delay: 0.3).findEFBs(settings, update: { _ in }, swept: { swept = $0 }, finish: { error in
+            failure = error; finishedAt = sbio_now(); done.signal()
+        })
+        check(done.wait(timeout: .now() + 3) == .success, "sweep job did not finish")
+        lock.lock(); let ended = sweepEnded; lock.unlock()
+        check(failure != nil && ended > 0 && finishedAt >= ended, "finish before the sweep ended on the error path")
+        check(swept.map(\.address) == ["192.0.2.9", "192.0.2.40"] && swept.allSatisfy { $0.app == "Device" && $0.port == 4000 }, "swept devices \(swept)")
+        // Exit while sweeping: no list, and finish only after the sweep returned.
+        settings.discoveryPort = settings.inputPort
+        lock.lock(); sweepEnded = 0; lock.unlock()
+        let search = worker(delay: 0.4)
+        var exitedList = false
+        search.findEFBs(settings, update: { _ in }, swept: { _ in exitedList = true }, finish: { _ in finishedAt = sbio_now(); done.signal() })
+        Thread.sleep(forTimeInterval: 0.1); search.stop()
+        check(done.wait(timeout: .now() + 2) == .success, "Exit did not end the sweep job")
+        lock.lock(); let exited = sweepEnded; lock.unlock()
+        check(exited > 0 && finishedAt >= exited && !exitedList, "Exit: finish before the sweep ended, or a list after Exit")
+        // Not on the receiver's network: no sweep at all.
+        let away = BridgeWorker(followCheckS: 30, local: nil) { _ in check(false, "swept off the receiver's network"); return nil }
+        away.findEFBs(settings, listen: false, update: { _ in }, finish: { _ in done.signal() })
+        check(done.wait(timeout: .now() + 2) == .success, "sweep-only job did not finish")
+        print("PASS: Find EFB sweep lists devices, finishes after the sweep on error and Exit, skips other networks")
+    }
+    /// The statistics reader in a running worker against the harness's loopback WebSocket server: readings reach the
+    /// snapshot, and Stop ends the reader before finish.
+    static func readingsChecks(_ original: BridgeSettings, httpPort: UInt16) {
+        var settings = original
+        settings.discoveryPort = "0"
+        let worker = BridgeWorker(receiverHTTPPort: httpPort, readsLoopbackStats: true)
+        let read = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
+        var signalled = false
+        worker.run(settings, duration: nil, update: { status in
+            if !signalled, status.readings == ReceiverReadings(batteryPercent: 65, coPpm: 3, temperatureC: 28.2) { signalled = true; read.signal() }
+        }, finish: { error, _ in check(error == nil, "readings run: \(error ?? "")"); finished.signal() })
+        check(read.wait(timeout: .now() + 10) == .success, "no readings from the statistics stream")
+        let stopped = sbio_now()
+        worker.stop()
+        check(finished.wait(timeout: .now() + 1) == .success, "Stop timeout with a statistics reader")
+        print(String(format: "PASS: readings from the statistics stream; Stop ended the reader in %.0f ms", (sbio_now() - stopped) * 1000))
     }
     static func lifecycleChecks(_ original: BridgeSettings) {
         var settings = original
