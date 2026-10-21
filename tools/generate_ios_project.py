@@ -7,7 +7,7 @@ def quoted(s): return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
 def generate():
     objects = []
     def obj(name, body): objects.append(f'{ident(name)} = {{ {body} }};'); return ident(name)
-    sources = ['SentryBridgeApp.swift', 'BridgeView.swift', 'BridgeModel.swift', 'BridgeWorker.swift', 'EFBDiscovery.swift', 'BridgeIntents.swift', 'DemoReplayer.swift', 'Licenses.swift', 'BridgeIO.c']
+    sources = ['SentryBridgeApp.swift', 'BridgeView.swift', 'BridgeModel.swift', 'BridgeWorker.swift', 'EFBDiscovery.swift', 'ReceiverReadings.swift', 'BridgeIntents.swift', 'DemoReplayer.swift', 'Licenses.swift', 'BridgeIO.c']
     refs, builds = [], []
     for name in sources + ['BridgeIO.h', 'Bridge-Bridging-Header.h', 'Info.plist']:
         kind = 'sourcecode.swift' if name.endswith('.swift') else 'sourcecode.c.c' if name.endswith('.c') else 'sourcecode.c.h' if name.endswith('.h') else 'text.plist.xml'

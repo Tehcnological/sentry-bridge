@@ -42,6 +42,35 @@ def http_stop(binary,port,output):
     if 'POST' in seen or seen.count('GET')<2:raise RuntimeError(f'http-stop: receiver saw {seen}')
     print(f'PASS: http-stop: receiver saw {seen}; no Compatibility Mode POST after Stop')
 
+def readings(binary,port,output):
+    """The worker's statistics reader against a loopback server playing the receiver's /stats WebSocket."""
+    import base64,hashlib,json,threading
+    message=json.dumps(json.loads((ROOT/'tests/data/stats-cases.json').read_text())[0]['message']).encode()
+    server=socket.socket();server.bind(('127.0.0.1',0));server.listen(4);server.settimeout(.2)
+    stop=threading.Event();requests=[]
+    def serve():
+        while not stop.is_set():
+            try:connection,_=server.accept()
+            except OSError:continue
+            with connection:
+                try:
+                    request=b''
+                    while b'\r\n\r\n' not in request:
+                        chunk=connection.recv(4096)
+                        if not chunk:break
+                        request+=chunk
+                    requests.append(request.split(b'\r\n')[0])
+                    key=[l.split(b':',1)[1].strip() for l in request.split(b'\r\n') if l.lower().startswith(b'sec-websocket-key:')][0]
+                    accept=base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+                    connection.sendall(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+b'\r\n\r\n')
+                    while not stop.is_set():
+                        connection.sendall(bytes([0x81,126])+len(message).to_bytes(2,'big')+message);time.sleep(.5)
+                except OSError:pass
+    threading.Thread(target=serve,daemon=True).start()
+    try:subprocess.run([str(binary),str(port),str(output),'readings',str(server.getsockname()[1])],check=True,timeout=20)
+    finally:stop.set();server.close()
+    if not requests or requests[0]!=b'GET /stats HTTP/1.1':raise RuntimeError(f'readings: receiver saw {requests}')
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--thread-sanitizer',action='store_true',help='Instrument the C adapter/core and Swift worker for data races')
@@ -52,7 +81,7 @@ def main():
     for name,path in [('sbcore','core/sbcore.c'),('io','ios/SentryBridge/BridgeIO.c')]:
         subprocess.run(['clang',*cflags,'-O2','-Wall','-Wextra','-Werror','-I'+str(ROOT/'core'),'-c',str(ROOT/path),'-o',str(build/(name+'.o'))],check=True)
     binary=build/'worker-smoke'
-    subprocess.run(['swiftc',*swiftflags,'-D','SBIO_TESTING','-swift-version','5','-module-cache-path',str(build/'modules'),'-import-objc-header',str(ROOT/'ios/SentryBridge/Bridge-Bridging-Header.h'),'-I'+str(ROOT/'core'),str(ROOT/'ios/SentryBridge/BridgeWorker.swift'),str(ROOT/'ios/SentryBridge/EFBDiscovery.swift'),str(ROOT/'ios/tests/WorkerSmoke.swift'),str(build/'io.o'),str(build/'sbcore.o'),'-o',str(binary)],check=True)
+    subprocess.run(['swiftc',*swiftflags,'-D','SBIO_TESTING','-swift-version','5','-module-cache-path',str(build/'modules'),'-import-objc-header',str(ROOT/'ios/SentryBridge/Bridge-Bridging-Header.h'),'-I'+str(ROOT/'core'),str(ROOT/'ios/SentryBridge/BridgeWorker.swift'),str(ROOT/'ios/SentryBridge/EFBDiscovery.swift'),str(ROOT/'ios/SentryBridge/ReceiverReadings.swift'),str(ROOT/'ios/tests/WorkerSmoke.swift'),str(build/'io.o'),str(build/'sbcore.o'),'-o',str(binary)],check=True)
     with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as reservation, socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sink:
         reservation.bind(('127.0.0.1',0));port=reservation.getsockname()[1];reservation.close()
         sink.bind(('127.0.0.1',0));sink.settimeout(.05)
@@ -72,6 +101,11 @@ def main():
             if process.poll() is None:process.kill();process.wait()
         for mode in ['cancel','prestop','invalid','discovery','discovery-restart']:
             subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),mode],check=True,timeout=5)
+        subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'rules',str(ROOT/'tests/data/stats-cases.json')],check=True,timeout=10)
+        subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'follow'],check=True,timeout=20)
+        subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'sweep'],check=True,timeout=10)
+        subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'follow-end'],check=True,timeout=15)
+        readings(binary,port,sink.getsockname()[1])
         subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'lifecycle'],check=True,timeout=30)
         http_stop(binary,port,sink.getsockname()[1])
         with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sender:

@@ -93,7 +93,7 @@ struct BridgeView: View {
                                     .accessibilityIdentifier("bridge.useEFB")
                             }
                         }
-                        Text("Receive only, about 6 seconds. Requires Local Network access. Broadcast announcements also require approved multicast signing on physical devices. An empty list does not prove that access is allowed. Enter an address manually if discovery is unavailable.").font(.caption).foregroundStyle(secondary)
+                        Text("About 6 seconds. Listens for EFB announcements, and tries one TCP connection to each address on the receiver's network to find EFBs that do not announce; nothing is sent to them. Requires Local Network access. Broadcast announcements also require approved multicast signing on physical devices. An empty list does not prove that access is allowed. Enter an address manually if discovery is unavailable.").font(.caption).foregroundStyle(secondary)
                         if model.busy { Text("Stop Bridge to use an address.").font(.caption) }
                       }.listRowBackground(surface)
                     }
@@ -153,6 +153,19 @@ struct BridgeView: View {
                 metric("Sent", "\(model.snapshot.forwarded)")
                 metric("Traffic", "\(model.snapshot.traffic)")
             }
+            // Read from the receiver's statistics stream while forwarding, Compatibility Mode included.
+            if model.busy && !model.demo && model.settings.contactsReceiver {
+                let readings = model.snapshot.readings ?? ReceiverReadings()
+                (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout())) {
+                    metric("Battery", readings.battery)
+                    metric("CO", readings.co)
+                    metric("Temperature", readings.temperature)
+                }.accessibilityIdentifier("bridge.readings")
+                if let alert = readings.coWarning {
+                    Label(alert, systemImage: "exclamationmark.triangle.fill").foregroundStyle(warning)
+                        .accessibilityIdentifier("bridge.coWarning")
+                }
+            }
             DisclosureGroup("Transport details") {
                 Text("Sent counts indicate UDP transport, not EFB receipt. Weather frames: \(model.snapshot.weather); display remains unverified.").font(.caption)
             }
@@ -160,6 +173,7 @@ struct BridgeView: View {
             if let request = model.snapshot.compatibilityRequest { Text(request).font(.caption).accessibilityIdentifier("bridge.compatibilityRequest") }
             // Rebind results stay visible here; core log messages can replace the status detail.
             if let rebind = model.snapshot.inputRebind { Text(rebind).font(.caption).accessibilityIdentifier("bridge.inputRebind") }
+            if let follow = model.snapshot.followMessage { Text(follow).font(.caption).accessibilityIdentifier("bridge.followEFB") }
             if model.snapshot.sendErrors > 0 { Text("Output errors: \(model.snapshot.sendErrors). Check permission, WiFi and routing.").foregroundStyle(warning) }
         }.listRowBackground(surface)
     }

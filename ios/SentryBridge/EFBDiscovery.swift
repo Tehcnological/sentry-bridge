@@ -103,3 +103,109 @@ final class EFBListener {
     func close() { if fd >= 0 { Darwin.close(fd); fd = -1 } }
     deinit { close() }
 }
+
+/// Finds devices on the receiver's WiFi that do not announce (tools/discovery.py): one TCP connection
+/// attempt to port 7 per address of this device's /24 network. A device answers at once, accepting or
+/// refusing; an unused address stays silent until the timeout.
+enum EFBSweep {
+    static let probePort: UInt16 = 7, probeTimeoutMs: Int32 = 3000
+    /// Whether local is on the receiver's /24 network: a sweep never scans another network.
+    static func onNetwork(_ local: String, _ receiver: String) -> Bool {
+        var a: UInt32 = 0, b: UInt32 = 0
+        return sb_parse_ipv4(local, &a) == 1 && sb_parse_ipv4(receiver, &b) == 1 && a >> 8 == b >> 8
+    }
+    /// This device's address on the receiver's network (the route to it; nothing is sent), or nil when
+    /// it is not on that network.
+    static func localAddress(receiver: String) -> String? {
+        var buffer = [CChar](repeating: 0, count: 64)
+        guard sbio_route_local(receiver, 9, &buffer, buffer.count) == 0 else { return nil }
+        let local = String(cString: buffer)
+        guard local != "0.0.0.0", !BridgeSettings.isLoopback(local), onNetwork(local, receiver) else { return nil }
+        return local
+    }
+    /// The other addresses of local's /24 network, in address order.
+    static func hosts(local: String, exclude: Set<String>) -> [String] {
+        var ip: UInt32 = 0
+        guard sb_parse_ipv4(local, &ip) == 1 else { return [] }
+        let base = ip & 0xffff_ff00
+        return (1...254).map { address(base | UInt32($0)) }.filter { $0 != local && !exclude.contains($0) }
+    }
+    static func address(_ ip: UInt32) -> String { "\(ip >> 24).\((ip >> 16) & 255).\((ip >> 8) & 255).\(ip & 255)" }
+    /// Devices answering on local's /24 network, other than local and the excluded addresses, in address
+    /// order. probe answers per address, or nil when cancelled; cancelled before or after it gives none.
+    static func sweep(local: String, exclude: Set<String>, probe: ([String]) -> [Bool]?,
+                      cancelled: () -> Bool) -> [String] {
+        let candidates = hosts(local: local, exclude: exclude)
+        guard !cancelled(), let answers = probe(candidates), answers.count == candidates.count, !cancelled() else { return [] }
+        return zip(candidates, answers).filter { $0.1 }.map { $0.0 }
+    }
+    /// The real probe: every address at once (128 in flight), each bounded by the probe timeout.
+    static func probe(_ cancel: OpaquePointer?) -> ([String]) -> [Bool]? {
+        return { addresses in
+            var results = [UInt8](repeating: 0, count: addresses.count)
+            let strings = addresses.map { strdup($0) }
+            defer { strings.forEach { free($0) } }
+            let status = strings.map { UnsafePointer($0) }.withUnsafeBufferPointer { pointers in
+                sbio_probe(pointers.baseAddress, addresses.count, probePort, probeTimeoutMs, cancel, &results)
+            }
+            return status == 0 ? results.map { $0 != 0 } : nil
+        }
+    }
+    /// After the EFB at current missed its checks: current itself when it answers the sweep (it recovered),
+    /// else the one other device that answers, or nil for none or several (the user chooses then).
+    static func followChoice(_ candidates: [String], current: String) -> String? {
+        if candidates.contains(current) { return current }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+}
+
+/// The follow rule (tools/gui_server.py _follow_efb, Android NativeGui.watchEfb): while forwarding to one
+/// Other device address, check it every 30 s. Only an EFB that answered before and then missed two checks
+/// in a row leads to a sweep; one that never answered (a firewall, perhaps) keeps its route as configured.
+struct EFBFollower {
+    static let checkS = 30.0, misses = 2
+    enum Decision: Equatable { case keep, follow(String), report(String) }
+    private(set) var seen = false, misses = 0
+    private var reported: String?
+    /// After one check of the current address: whether to sweep now.
+    mutating func checked(answered: Bool) -> Bool {
+        if answered { seen = true; misses = 0; reported = nil; return false }
+        misses += 1
+        return seen && misses >= Self.misses
+    }
+    /// After the sweep: keep the route (it recovered, or nothing new to say), follow the one other
+    /// device, or report once per address that none or several answered.
+    mutating func swept(_ candidates: [String], current: String) -> Decision {
+        guard let target = EFBSweep.followChoice(candidates, current: current) else {
+            guard reported != current else { return .keep }
+            reported = current
+            return .report("The EFB at \(current) stopped answering. Devices on the receiver's WiFi: \(candidates.isEmpty ? "none" : candidates.joined(separator: ", ")). Choose one with Find EFB.")
+        }
+        if target == current { seen = true; misses = 0; reported = nil; return .keep }  // a short interruption
+        return .follow(target)
+    }
+    /// After the switch was committed.
+    mutating func followed() { misses = 0; reported = nil }
+    static func followMessage(from current: String, to target: String) -> String {
+        "The EFB at \(current) stopped answering; now sending to \(target), the only other device on the receiver's WiFi."
+    }
+}
+
+/// Find EFB's list: announcing EFBs first, then swept devices that do not announce, each kept 30 s. Results
+/// belong to the destination the search started with. A route change (the bridge following a moved EFB)
+/// clears the list, and results that search reports later are dropped (web/app.js discoveryRoute).
+struct DiscoveryList {
+    private var route: String?
+    private var announced: [DiscoveredEFB] = [], swept: [DiscoveredEFB] = []
+    mutating func start(route: String) { self.route = route; announced = []; swept = [] }
+    /// route is the destination when the results arrive; a different one means they may list the old address.
+    mutating func announce(_ entries: [DiscoveredEFB], route: String) { if route == self.route { announced = entries } }
+    mutating func sweep(_ entries: [DiscoveredEFB], route: String) { if route == self.route { swept = entries } }
+    mutating func routeChanged() { route = nil; announced = []; swept = [] }
+    func isCurrent(route: String) -> Bool { route == self.route }
+    mutating func entries(now: Double = sbio_now()) -> [DiscoveredEFB] {
+        announced = announced.filter { now - $0.seen < 30 }; swept = swept.filter { now - $0.seen < 30 }
+        let addresses = Set(announced.map(\.address))
+        return announced + swept.filter { !addresses.contains($0.address) }
+    }
+}

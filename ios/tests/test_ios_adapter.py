@@ -393,6 +393,187 @@ int main(void) {
         error=C.create_string_buffer(256)
         self.assertEqual(self.lib.sbio_request_compatibility(b'127.0.0.1',port,2000,cancel,error,256),-2)
         self.assertFalse(accepted.wait(.3))
+    # Find EFB and following: one TCP knock per address. Loopback only: 127.0.0.1 answers (refuses a closed
+    # port, accepts a listening one) and 127.0.0.2, which no interface holds, stays silent like an unused address.
+    def probe(self,addresses,port,timeout_ms=3000,cancel=None):
+        self.lib.sbio_probe.argtypes=[C.POINTER(C.c_char_p),C.c_size_t,C.c_uint16,C.c_int,C.c_void_p,C.POINTER(C.c_uint8)]
+        array=(C.c_char_p*len(addresses))(*addresses);results=(C.c_uint8*len(addresses))()
+        status=self.lib.sbio_probe(array,len(addresses),port,timeout_ms,cancel,results)
+        return status,list(results)
+    def test_probe_counts_refused_and_accepted_as_answers_and_silence_as_none(self):
+        with socket.socket() as closed:
+            closed.bind(('127.0.0.1',0));port=closed.getsockname()[1]  # bound, not listening: refused
+        started=time.monotonic()
+        self.assertEqual(self.probe([b'127.0.0.1',b'127.0.0.2',b'invalid',b'127.0.0.1'],port,300),(0,[1,0,0,1]))
+        self.assertLess(time.monotonic()-started,.6)  # all at once: one timeout, not one per address
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1',0));listener.listen(4)
+            self.assertEqual(self.probe([b'127.0.0.1'],listener.getsockname()[1],300),(0,[1]))
+            listener.settimeout(1);connection,_=listener.accept()
+            with connection:
+                connection.settimeout(1);self.assertEqual(connection.recv(16),b'')  # nothing sent, closed at once
+        # More addresses than the 128-connection window still finish within two timeouts.
+        started=time.monotonic()
+        status,results=self.probe([b'127.0.0.2']*200,port,300)
+        self.assertEqual((status,sum(results)),(0,0));self.assertLess(time.monotonic()-started,1.2)
+    def test_probe_cancellation(self):
+        import threading
+        cancel=self.lib.sbio_cancel_create();self.addCleanup(self.lib.sbio_cancel_destroy,cancel)
+        threading.Timer(.2,self.lib.sbio_cancel_set,[cancel]).start()
+        started=time.monotonic()
+        status,_=self.probe([b'127.0.0.2']*10,7,3000,cancel)
+        self.assertEqual(status,-2);self.assertLess(time.monotonic()-started,.5)
+        self.assertEqual(self.probe([b'127.0.0.1'],7,3000,cancel)[0],-2)  # already cancelled: no attempt
+    def test_route_local_and_followed_destination(self):
+        self.lib.sbio_route_local.argtypes=[C.c_char_p,C.c_uint16,C.c_char_p,C.c_size_t]
+        self.lib.sbio_set_destination.argtypes=[C.c_void_p,C.c_char_p]
+        out=C.create_string_buffer(64)
+        self.assertEqual(self.lib.sbio_route_local(b'127.0.0.1',9,out,64),0);self.assertEqual(out.value,b'127.0.0.1')
+        self.assertEqual(self.lib.sbio_route_local(b'invalid',9,out,64),-1)
+        h,e=self.open();self.assertTrue(h,e)
+        for refused in [b'invalid',b'0.0.0.0',b'224.0.0.1',b'255.255.255.255',b'127.0.0.1']:
+            self.assertEqual(self.lib.sbio_set_destination(h,refused),-1,refused)
+        # The address only; nothing is sent without receiver input. The output port is kept.
+        self.assertEqual(self.lib.sbio_set_destination(h,b'192.0.2.10'),0)
+        self.assertEqual((self.status(h).forwarded,self.status(h).send_errors),(0,0))
+        shared=self.lib.sbio_open_shared(b'127.0.0.1',self.port+1 if self.port<65535 else 1,b'127.0.0.1',self.port+1 if self.port<65535 else 1,1,C.create_string_buffer(512),512)
+        if shared:
+            self.handles.append(shared);self.assertEqual(self.lib.sbio_set_destination(shared,b'192.0.2.10'),-1)
+    # The receiver's /stats WebSocket, against a loopback server playing the receiver.
+    def ws_server(self,script,connections=1):
+        import base64,hashlib,threading
+        server=socket.socket();server.bind(('127.0.0.1',0));server.listen(4)
+        seen=[]
+        def handshake(connection,accept=None,status=b'101 Switching Protocols',extra=b''):
+            request=b''
+            while b'\r\n\r\n' not in request:
+                chunk=connection.recv(4096)
+                if not chunk:return None
+                request+=chunk
+            seen.append(request)
+            key=[l.split(b':',1)[1].strip() for l in request.split(b'\r\n') if l.lower().startswith(b'sec-websocket-key:')][0]
+            accept=accept or base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+            connection.sendall(b'HTTP/1.1 '+status+b'\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+b'\r\n\r\n'+extra)
+            return request
+        def serve():
+            for _ in range(connections):
+                try:connection,_=server.accept()
+                except OSError:return
+                with connection:
+                    try:script(connection,handshake)
+                    except OSError:pass
+        threading.Thread(target=serve,daemon=True).start()
+        self.addCleanup(server.close)
+        return server.getsockname()[1],seen
+    @staticmethod
+    def frame(op,payload,fin=True,mask=None):
+        import struct
+        n=len(payload);head=bytes([(0x80 if fin else 0)|op])
+        bit=0x80 if mask else 0
+        head+=bytes([bit|n]) if n<126 else bytes([bit|126])+struct.pack('!H',n) if n<65536 else bytes([bit|127])+struct.pack('!Q',n)
+        if mask:head+=mask;payload=bytes(b^mask[i%4] for i,b in enumerate(payload))
+        return head+payload
+    @staticmethod
+    def client_frame(connection):
+        import struct
+        def exact(n):
+            data=b''
+            while len(data)<n:
+                chunk=connection.recv(n-len(data))
+                if not chunk:raise OSError('closed')
+                data+=chunk
+            return data
+        b0,b1=exact(2);n=b1&0x7f
+        if n==126:n=struct.unpack('!H',exact(2))[0]
+        assert b1&0x80,'client frames must be masked'
+        mask=exact(4);data=exact(n)
+        return b0&0x0f,bytes(b^mask[i%4] for i,b in enumerate(data))
+    def ws_api(self):
+        self.lib.sbio_ws_open.restype=C.c_void_p
+        self.lib.sbio_ws_open.argtypes=[C.c_char_p,C.c_uint16,C.c_char_p,C.c_int,C.c_void_p,C.c_char_p,C.c_size_t]
+        self.lib.sbio_ws_message.argtypes=[C.c_void_p,C.c_double,C.c_void_p,C.POINTER(C.POINTER(C.c_uint8)),C.POINTER(C.c_size_t),C.c_char_p,C.c_size_t]
+        self.lib.sbio_ws_close.argtypes=[C.c_void_p,C.c_int]
+    def ws_open(self,port,cancel=None,connect_ms=2000,address=b'127.0.0.1'):
+        self.ws_api();error=C.create_string_buffer(256)
+        ws=self.lib.sbio_ws_open(address,port,b'/stats',connect_ms,cancel,error,256)
+        return ws,error.value.decode()
+    def ws_message(self,ws,silence=5.0,cancel=None):
+        data=C.POINTER(C.c_uint8)();length=C.c_size_t();error=C.create_string_buffer(256)
+        status=self.lib.sbio_ws_message(ws,silence,cancel,C.byref(data),C.byref(length),error,256)
+        return status,(C.string_at(data,length.value) if status==1 else error.value.decode())
+    def test_ws_messages_fragments_pings_masking_and_close(self):
+        import threading
+        replies=[];done=threading.Event()
+        def script(connection,handshake):
+            # The first message arrives with the handshake response, in the same segment.
+            handshake(connection,extra=self.frame(1,b'{"a":1}'))
+            connection.sendall(self.frame(9,b'hi'))
+            replies.append(self.client_frame(connection))
+            connection.sendall(self.frame(1,b'{"b":',fin=False)+self.frame(10,b'')+self.frame(0,b'2}'))
+            connection.sendall(self.frame(2,b'masked',mask=b'\x01\x02\x03\x04'))
+            connection.sendall(self.frame(1,b'x'*70000))
+            connection.sendall(self.frame(8,b'\x03\xe8bye'))
+            replies.append(self.client_frame(connection));done.set()
+        port,seen=self.ws_server(script)
+        ws,e=self.ws_open(port);self.assertTrue(ws,e)
+        try:
+            self.assertEqual(self.ws_message(ws),(1,b'{"a":1}'))
+            self.assertEqual(self.ws_message(ws),(1,b'{"b":2}'))
+            self.assertEqual(self.ws_message(ws),(1,b'masked'))
+            self.assertEqual(self.ws_message(ws),(1,b'x'*70000))
+            self.assertEqual(self.ws_message(ws)[0],0)
+        finally:self.lib.sbio_ws_close(ws,0)
+        self.assertTrue(done.wait(2))
+        self.assertEqual(replies,[(0xA,b'hi'),(0x8,b'\x03\xe8')])
+        request=seen[0].decode()
+        self.assertTrue(request.startswith('GET /stats HTTP/1.1\r\n'),request)
+        self.assertIn('Upgrade: websocket',request);self.assertIn('Sec-WebSocket-Version: 13',request)
+    def test_ws_refuses_a_bad_handshake_and_an_oversized_message(self):
+        port,_=self.ws_server(lambda connection,handshake:handshake(connection,accept=b'wrong'))
+        ws,e=self.ws_open(port);self.assertFalse(ws);self.assertIn('Sec-WebSocket-Accept',e)
+        port,_=self.ws_server(lambda connection,handshake:handshake(connection,status=b'404 Not Found'))
+        ws,e=self.ws_open(port);self.assertFalse(ws);self.assertIn('refused',e)
+        def big(connection,handshake):
+            handshake(connection)
+            connection.sendall(self.frame(1,b'x'*600000,fin=False)+self.frame(0,b'x'*600000));time.sleep(1)
+        port,_=self.ws_server(big)
+        ws,e=self.ws_open(port);self.assertTrue(ws,e)
+        try:
+            status,error=self.ws_message(ws);self.assertEqual(status,-1);self.assertIn('1 MiB',error)
+        finally:self.lib.sbio_ws_close(ws,0)
+    def test_ws_silence_ends_a_stream_that_only_pings(self):
+        def pings(connection,handshake):
+            handshake(connection)
+            for _ in range(30):
+                connection.sendall(self.frame(9,b''));self.client_frame(connection);time.sleep(.1)
+        port,_=self.ws_server(pings)
+        ws,e=self.ws_open(port);self.assertTrue(ws,e)
+        try:
+            started=time.monotonic();status,error=self.ws_message(ws,silence=.6)
+            self.assertEqual(status,-1);self.assertIn('No receiver statistics',error)
+            self.assertLess(time.monotonic()-started,1.0)
+        finally:self.lib.sbio_ws_close(ws,0)
+    def test_ws_cancellation_during_connect_handshake_and_reads(self):
+        import threading
+        def cancelled_after(seconds):
+            cancel=self.lib.sbio_cancel_create();self.addCleanup(self.lib.sbio_cancel_destroy,cancel)
+            threading.Timer(seconds,self.lib.sbio_cancel_set,[cancel]).start();return cancel
+        # Connect: 127.0.0.2 never answers.
+        started=time.monotonic();ws,e=self.ws_open(80,cancelled_after(.2),connect_ms=3000,address=b'127.0.0.2')
+        self.assertFalse(ws);self.assertEqual(e,'Cancelled');self.assertLess(time.monotonic()-started,.5)
+        # Handshake: the server accepts and never answers.
+        port,_=self.ws_server(lambda connection,handshake:time.sleep(3))
+        started=time.monotonic();ws,e=self.ws_open(port,cancelled_after(.2))
+        self.assertFalse(ws);self.assertEqual(e,'Cancelled');self.assertLess(time.monotonic()-started,.5)
+        # Frame reads: a frame that never completes.
+        def partial(connection,handshake):
+            handshake(connection);connection.sendall(self.frame(1,b'{"a":1}')[:4]);time.sleep(3)
+        port,_=self.ws_server(partial)
+        ws,e=self.ws_open(port);self.assertTrue(ws,e)
+        try:
+            cancel=cancelled_after(.2);started=time.monotonic()
+            self.assertEqual(self.ws_message(ws,cancel=cancel)[0],-2);self.assertLess(time.monotonic()-started,.5)
+        finally:self.lib.sbio_ws_close(ws,1)
 class IOSVersion(unittest.TestCase):
     def test_app_version_is_explicit_and_not_older_than_core(self):
         import plistlib,re

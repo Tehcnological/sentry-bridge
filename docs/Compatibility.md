@@ -10,8 +10,8 @@ section for your platform before relying on it in flight.
   been confirmed yet.
 - **No AHRS, CO, temperature, barometric or battery data in the EFB.** Compatibility Mode does not
   include them, for any app, ForeFlight included. Sentry Bridge reads battery, CO and temperature
-  separately and shows them on its own screen, with a warning at the Sentry's CO alarm level (not
-  yet on iPhone and iPad).
+  separately and shows them on its own screen, with a warning at the Sentry's CO alarm level (at
+  50 ppm on iPhone and iPad).
 - **Turn off Power Savings** in the Sentry's web settings. It switches the Sentry off after 30 minutes
   without ForeFlight connected. ForeFlight is not required.
 - **Compatibility Mode resets at every power-up.** Keep Automatic restoration on so the bridge switches
@@ -55,6 +55,9 @@ source. If you would use it on macOS or Linux, [open an issue](https://github.co
 - Allow **Local Network** access when asked; without it the bridge cannot reach the Sentry or the EFB.
 - An EFB on the same iPad works: select a Stratux or GDL90 device in it. Only one EFB at a time receives
   the traffic, so close other EFBs.
+- For an EFB on another device, **Find EFB** lists EFBs that announce themselves and other devices on the
+  Sentry's WiFi as "Device". If that EFB stops answering (it rejoined the WiFi with a new address) and
+  exactly one other device is on the WiFi, the bridge switches to it and saves the new address.
 
 ## Small boards (ESP32-C3, Pico W, Pico 2 W)
 
