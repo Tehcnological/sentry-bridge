@@ -1,5 +1,12 @@
 # Sentry Bridge
 
+[![Latest release](https://img.shields.io/github/v/release/Tehcnological/sentry-bridge?label=release)](https://github.com/Tehcnological/sentry-bridge/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Tehcnological/sentry-bridge/total)](https://github.com/Tehcnological/sentry-bridge/releases)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Android%20%7C%20iOS-informational)](#download)
+[![License](https://img.shields.io/github/license/Tehcnological/sentry-bridge)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/Tehcnological/sentry-bridge)](https://github.com/Tehcnological/sentry-bridge/commits/master)
+[![Open issues](https://img.shields.io/github/issues/Tehcnological/sentry-bridge)](https://github.com/Tehcnological/sentry-bridge/issues)
+
 Sentry Bridge lets you see traffic from a uAvionix **Sentry** or **Sentry Plus** ADS-B receiver in
 EFB apps other than ForeFlight, such as Garmin Pilot, FltPlan Go or AvareX.
 
