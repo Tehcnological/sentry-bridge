@@ -140,7 +140,8 @@ class TestGUI(unittest.TestCase):
 
     def stats_peer(self, mode="refuse"):
         """A /stats peer. refuse: answers 404, so the reader waits to retry. pings: sends nothing but
-        pings and counts pongs. slow-handshake: trickles an endless handshake. partial-frame: completes
+        pings and counts pongs. silent: completes the handshake, then sends nothing and keeps the
+        connection open. slow-handshake: trickles an endless handshake. partial-frame: completes
         the handshake, then trickles a frame that never ends. Counts connections, upgrade requests and
         connections still open."""
         server = socket.socket()
@@ -165,6 +166,11 @@ class TestGUI(unittest.TestCase):
                 accept = base64.b64encode(hashlib.sha1(key + ws_probe.GUID.encode()).digest())
                 head = (b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                         b"Sec-WebSocket-Accept: " + accept + b"\r\n\r\n")
+                if mode == "silent":  # like a receiver that restarted: open, never a message, never closed
+                    conn.sendall(head)
+                    while conn.recv(4096):
+                        pass
+                    return
                 if mode == "slow-handshake":
                     data, every = head[:-2] + b"X" * 100000, .1  # the blank line never comes
                 elif mode == "partial-frame":
@@ -256,6 +262,20 @@ class TestGUI(unittest.TestCase):
             self.assertFalse(self.c.sensor_thread.is_alive())
         time.sleep(.5)
         self.assertEqual(peer["requests"], 0)
+
+    def test_a_silent_stats_connection_is_replaced(self):
+        # A receiver that restarts never closes the old connection; it just goes quiet. The reader must notice
+        # and connect again instead of waiting on it for the rest of the session.
+        # Pings, or a frame trickled a byte at a time, keep bytes arriving but are no message either.
+        for mode in ("silent", "pings", "partial-frame"):
+            with self.subTest(mode):
+                if mode != "silent":  # the first run uses setUp's controller
+                    self.c.close()
+                    self.c = Controller(Path(self.tmp.name) / mode)
+                peer = self.stats_peer(mode)
+                with patch.object(gui_server, "SENSORS_SILENT_S", .5), patch.object(gui_server, "SENSORS_RETRY_S", .2):
+                    self.forward_to(peer)
+                    wait_for(lambda: peer["connections"] >= 2)
 
     def test_restart_cancels_the_waiting_reader_and_uses_the_new_receiver(self):
         old, new = self.stats_peer(), self.stats_peer("pings")

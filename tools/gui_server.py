@@ -45,6 +45,8 @@ from tools.preview_ui import Handler as PreviewHandler
 
 AUTO_BACKUP = "sentry-auto-backup.zip"
 SENSORS_STALE_S, SENSORS_RETRY_S = 5.0, 5.0  # /stats sends twice a second
+# A receiver that restarts leaves the old connection open and silent: reconnect after this long without a message.
+SENSORS_SILENT_S = 10.0
 # Update check: GitHub's latest stable release, at most once a day, only while the bridge is stopped.
 RELEASES = "https://api.github.com/repos/Tehcnological/sentry-bridge/releases/latest"
 UPDATE_INTERVAL_S, UPDATE_RETRY_S = 24 * 3600, 3600
@@ -346,7 +348,11 @@ class Controller:
             try:
                 sock, pending = ws_probe.connect(host, port, "/stats", cancelled=lambda: not forwarding())
                 sock.settimeout(ws_probe.STEP_S)
-                reader = ws_probe.Reader(sock, pending, lambda: not forwarding())
+                # Checked before every frame and every read, so pings or a frame that never completes cannot hold a
+                # connection that sends no messages: a dead or stuck connection ends and the reader connects again.
+                heard = [time.monotonic()]
+                reader = ws_probe.Reader(sock, pending, lambda: not forwarding()
+                                         or time.monotonic() - heard[0] > SENSORS_SILENT_S)
                 while forwarding():
                     try:
                         message = reader.message()
@@ -354,6 +360,7 @@ class Controller:
                         continue
                     if message is None:
                         break
+                    heard[0] = time.monotonic()
                     try:
                         values = ws_probe.sensor_values(json.loads(message[1].decode("utf-8")))
                     except (UnicodeDecodeError, ValueError):
