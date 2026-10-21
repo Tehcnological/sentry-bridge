@@ -1,6 +1,7 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let ready = false, checked = false, checking = false, revision = 0, shownRoute = "";
+let discoveryRoute;  // the route shown when Find EFB started; null after a route change
 let live = false, status = null, pending = false, uiError = "", filesRevision = "", jobRevision = "";
 const topology = () => document.querySelector('input[name="topology"]:checked').value;
 function element(tag, text, className) {
@@ -130,7 +131,7 @@ function updateDestination() {
 }
 for (const id of ["host","same","network"]) $(id).addEventListener("change",updateDestination);
 $("address").addEventListener("input",invalidate);
-$("find-efb").addEventListener("click",() => { $("discovered").replaceChildren(); act("discover",{seconds:6}); });
+$("find-efb").addEventListener("click",() => { $("discovered").replaceChildren(); discoveryRoute = shownRoute; act("discover",{seconds:6}); });
 function renderDiscovered(efbs) {
   const rows = efbs.map(efb => {
     const use = element("button","Use");
@@ -142,6 +143,13 @@ function renderDiscovered(efbs) {
   });
   if (!rows.length) rows.push(element("li","No EFB or other device found on the receiver's WiFi. Enter the address from the EFB device's WiFi details.","note"));
   $("discovered").replaceChildren(...rows);
+}
+// Results found before a route change may list the old address: show only those for the current route.
+// A job first seen running in the poll that changed the route may have started on the old one.
+function discoveryJob(job, routeChanged) {
+  if (job.action !== "Find EFB") return;
+  if (job.state === "running") discoveryRoute = routeChanged ? null : shownRoute;
+  if (job.state === "done" && (discoveryRoute === undefined || discoveryRoute === shownRoute)) renderDiscovered(job.result.efbs || []);
 }
 async function checkSetup() {
   if (checking || !ready) return false;
@@ -201,8 +209,9 @@ function pullForm(s) {
   const settings = s.settings;
   if (!settings) return;
   pullSettings(s, settings);
-  // Another browser changed the route: show its address field, helper and port, and drop stale validation.
-  if (routeState() !== shownRoute) updateDestination();
+  // Another browser, or the bridge following a moved EFB, changed the route: show it, and drop stale
+  // validation and Find EFB results (they may list the old address).
+  if (routeState() !== shownRoute) { $("discovered").replaceChildren(); discoveryRoute = null; updateDestination(); }
 }
 function routeState() {
   return [$("host").value, topology(), synced.address ?? "", efbPort(), status?.settings?.listenPort, status?.settings?.announcePort].join("|");
@@ -322,6 +331,7 @@ function renderLive(s) {
   $("diagnostic-input").textContent = "UDP "+s.settings.listenPort;
   $("engine").textContent = s.engine;
   // Before the running output and the route locks below: a refreshed route resets both.
+  const routeBefore = shownRoute;
   if (!pending) pullForm(s);
   if (s.running && s.routesRequest) $("output-summary").textContent = s.routesRequest.address+":"+s.settings.efbPort;
   const currentMode = s.monitoring && s.lastPacketSeconds !== null && s.lastPacketSeconds < 10 ? s.mode : null;
@@ -372,7 +382,7 @@ function renderLive(s) {
     $("operation").classList.toggle("error",s.job.state === "failed" || toolFailed);
     $("operation").replaceChildren(element("span",s.job.state === "running" ? s.job.action+"…" : s.job.state === "failed" ? s.job.error : s.job.state === "done" ? s.job.action+(toolFailed ? ": check report" : " complete") : ""));
     if (s.job.state === "running") $("tool-result").textContent = "";
-    if (s.job.action === "Find EFB" && s.job.state === "done") renderDiscovered(s.job.result.efbs || []);
+    discoveryJob(s.job, shownRoute !== routeBefore);
     if (s.job.result) {
       $("tool-result").textContent = s.job.result.text || JSON.stringify(s.job.result,null,2);
       if (s.job.result.warning) $("operation").append(element("p",s.job.result.warning));
