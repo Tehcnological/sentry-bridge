@@ -781,6 +781,9 @@ final class BridgeUITests: XCTestCase {
         try audit()
         let settings = app.buttons["Settings"]
         reveal(settings, in: app); settings.tap()
+        // Audit the open settings, scrolled clear of the large title: text half-hidden behind it is
+        // reported as "potentially inaccessible" with no element, depending only on the scroll position.
+        reveal(app.switches["bridge.restoreCompatibility"], in: app, upwards: false)
         screen = "Settings"
         try audit()
         let report = XCTAttachment(string: (["VoiceOver-relevant:"] + voiceOver + ["Visual, for review:"] + review).joined(separator: "\n"))

@@ -93,7 +93,7 @@ struct BridgeView: View {
                                     .accessibilityIdentifier("bridge.useEFB")
                             }
                         }
-                        Text("About 6 seconds. Listens for EFB announcements, and tries one TCP connection to each address on the receiver's network to find EFBs that do not announce; nothing is sent to them. Requires Local Network access. Broadcast announcements also require approved multicast signing on physical devices. An empty list does not prove that access is allowed. Enter an address manually if discovery is unavailable.").font(.caption).foregroundStyle(secondary)
+                        Text("Lists EFBs and other devices on the Sentry's WiFi. If yours is missing, enter the address from the EFB device's WiFi settings.").font(.caption).foregroundStyle(secondary)
                         if model.busy { Text("Stop Bridge to use an address.").font(.caption) }
                       }.listRowBackground(surface)
                     }
@@ -166,9 +166,6 @@ struct BridgeView: View {
                         .accessibilityIdentifier("bridge.coWarning")
                 }
             }
-            DisclosureGroup("Transport details") {
-                Text("Sent counts indicate UDP transport, not EFB receipt. Weather frames: \(model.snapshot.weather); display remains unverified.").font(.caption)
-            }
             if model.snapshot.mode == 2 { Label(model.settings.restoreCompatibility ?? true ? "Encrypted receiver stream. Compatibility Mode is requested automatically." : "Encrypted receiver stream. Turn on Restore Compatibility Mode in Settings.", systemImage: "lock.trianglebadge.exclamationmark") }
             if let request = model.snapshot.compatibilityRequest { Text(request).font(.caption).accessibilityIdentifier("bridge.compatibilityRequest") }
             // Rebind results stay visible here; core log messages can replace the status detail.
@@ -187,26 +184,26 @@ struct BridgeView: View {
                     .accessibilityIdentifier("bridge.findEFB")
             }
             DisclosureGroup("Setup instructions") {
-            Text("Join Sentry WiFi and disable Power Savings in the receiver settings. With Restore Compatibility Mode on, the bridge requests Compatibility Mode whenever the receiver stream starts encrypted.").font(.callout)
-            Text("In the EFB, choose a Stratux or GDL90 device. On this device the bridge shares UDP 4000 with the EFB and reaches one EFB at a time; close other EFBs. For an EFB on another device, enter its address or use Find EFB; it listens on UDP 4000.").font(.callout)
+            Text("1. Join the Sentry's WiFi.\n2. Turn off Power Savings in the Sentry's web settings.\n3. In the EFB, choose a Stratux or GDL90 device on UDP port 4000.").font(.callout)
+            Text("EFB on this device: close other EFBs; only one receives the data. EFB on another device: enter its address or use Find EFB.").font(.callout)
             }
         }.listRowBackground(surface)
         Section {
           DisclosureGroup("Settings", isExpanded: $showSettings) {
-            Text("Routing • apply with Start").font(.headline)
+            Text("Routing").font(.headline)
             field("Sentry IPv4", $model.settings.source)
             field("Input UDP port", $model.settings.inputPort)
             field("Destination IPv4", $model.settings.destination)
             field("Output UDP port", $model.settings.outputPort)
             field("EFB discovery UDP port", Binding(get: { model.settings.discoveryPort ?? "63093" }, set: { model.settings.discoveryPort = $0 }))
-            Text("127.0.0.1 routes to this device. Output on the input port shares that port with the EFB; any other local output port must be free. Unicast only. Input port edits only change this app, not Sentry. Broadcast reception requires an approved multicast entitlement on a physical device.")
+Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this device.")
                 .font(.caption).foregroundStyle(secondary)
             #if DEBUG
             Button("Use synthetic replay route") { model.syntheticSettings() }.foregroundStyle(linkInk).disabled(model.busy)
             #endif
             Toggle("Restore Compatibility Mode", isOn: Binding(get: { model.settings.restoreCompatibility ?? true }, set: { model.settings.restoreCompatibility = $0 }))
                 .disabled(model.busy).accessibilityIdentifier("bridge.restoreCompatibility")
-            Text("Sends the receiver's Compatibility Mode request when its stream starts encrypted: up to 3 tries, 20 s apart. Receiver HTTP port 80.").font(.caption).foregroundStyle(secondary)
+            Text("Switches the Sentry back to Compatibility Mode when it starts up in ForeFlight-only mode.").font(.caption).foregroundStyle(secondary)
             Text("Session options").font(.headline)
             Toggle("Bridge Session", isOn: $model.settings.experiment)
                 .disabled(model.busy)
@@ -214,9 +211,9 @@ struct BridgeView: View {
                 Picker("Session length", selection: $model.settings.sessionMinutes) {
                     ForEach(BridgeSettings.sessionLengths, id: \.self) { Text("\($0) minutes").tag($0) }
                 }.pickerStyle(.menu).disabled(model.busy).accessibilityIdentifier("bridge.sessionLength")
-                Text("Progress measures your selected monitoring period, including quiet intervals. The system can cancel or expire it.").font(.caption).foregroundStyle(secondary)
+                Text("Keeps forwarding with the app in the background, for the chosen time. iOS can end it early.").font(.caption).foregroundStyle(secondary)
             } else {
-                Text("Keep this app visible. Hiding it stops forwarding. iPad windowed use is a fallback to measure.").font(.caption).foregroundStyle(secondary)
+                Text("Forwarding stops when you leave the app.").font(.caption).foregroundStyle(secondary)
             }
             Toggle("Keep screen awake while visible", isOn: $model.settings.keepAwake).disabled(model.busy)
             NavigationLink("Licenses") { LicensesView() }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.licenses")
@@ -229,15 +226,16 @@ struct BridgeView: View {
                 if showDiagnostics {
                     Button("Demo with sample data") { model.startDemo() }.foregroundStyle(linkInk).disabled(model.busy)
                         .accessibilityIdentifier("bridge.demo")
-                    Text("Plays recorded sample data in this app only; nothing is sent to an EFB. Stop ends the demo.")
+                    Text("Plays recorded traffic in this app. Nothing is sent to the EFB.")
                         .font(.caption).foregroundStyle(secondary)
                     statusRow("Heartbeat frames", "\(model.snapshot.heartbeat)")
                     statusRow("CRC failures", "\(model.snapshot.crcBad)")
                     statusRow("Longest reception gap", String(format: "%.1f s", model.snapshot.maxGap))
                     Text(model.snapshot.detail).font(.caption).textSelection(.enabled)
-                    Text("Local Network: \(model.localNetworkDenied ? "Denied" : "Not proven by packet counts")").font(.caption)
+                    statusRow("Weather frames", "\(model.snapshot.weather)")
+                    if model.localNetworkDenied { Text("Local Network access is denied.").font(.caption).foregroundStyle(warning) }
                     ShareLink(item: model.diagnosticReport) { Label("Share session diagnostics", systemImage: "square.and.arrow.up") }.foregroundStyle(linkInk)
-                    Text("Latest 512 events and 30-second counter samples; no raw packets or positions retained.").font(.caption).foregroundStyle(secondary)
+                    Text("Events and counts from this session. No positions.").font(.caption).foregroundStyle(secondary)
                 }
             }
             if showDiagnostics { Text("App \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown") • core \(String(cString: sbVersion()))").font(.caption) }

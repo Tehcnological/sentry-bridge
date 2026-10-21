@@ -227,7 +227,7 @@ private final class SessionSubmission: @unchecked Sendable {
                 guard let self, self.token == id, self.busy, self.state != "Stopping" else { return }
                 if let error {
                     self.record("Submission failed: \(error.localizedDescription)")
-                    let reason = "Bridge Session unavailable: \(error.localizedDescription). Try foreground mode."
+                    let reason = "Bridge Session unavailable: \(error.localizedDescription). Turn off Bridge Session in Settings and Start again."
                     if self.worker != nil { self.stop(reason: reason) }
                     else {
                         self.busy = false; self.state = "Stopped"; self.message = reason
