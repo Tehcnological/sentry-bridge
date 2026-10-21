@@ -190,3 +190,22 @@ struct EFBFollower {
         "The EFB at \(current) stopped answering; now sending to \(target), the only other device on the receiver's WiFi."
     }
 }
+
+/// Find EFB's list: announcing EFBs first, then swept devices that do not announce, each kept 30 s. Results
+/// belong to the destination the search started with. A route change (the bridge following a moved EFB)
+/// clears the list, and results that search reports later are dropped (web/app.js discoveryRoute).
+struct DiscoveryList {
+    private var route: String?
+    private var announced: [DiscoveredEFB] = [], swept: [DiscoveredEFB] = []
+    mutating func start(route: String) { self.route = route; announced = []; swept = [] }
+    /// route is the destination when the results arrive; a different one means they may list the old address.
+    mutating func announce(_ entries: [DiscoveredEFB], route: String) { if route == self.route { announced = entries } }
+    mutating func sweep(_ entries: [DiscoveredEFB], route: String) { if route == self.route { swept = entries } }
+    mutating func routeChanged() { route = nil; announced = []; swept = [] }
+    func isCurrent(route: String) -> Bool { route == self.route }
+    mutating func entries(now: Double = sbio_now()) -> [DiscoveredEFB] {
+        announced = announced.filter { now - $0.seen < 30 }; swept = swept.filter { now - $0.seen < 30 }
+        let addresses = Set(announced.map(\.address))
+        return announced + swept.filter { !addresses.contains($0.address) }
+    }
+}

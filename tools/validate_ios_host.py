@@ -104,6 +104,7 @@ def main():
         subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'rules',str(ROOT/'tests/data/stats-cases.json')],check=True,timeout=10)
         subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'follow'],check=True,timeout=20)
         subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'sweep'],check=True,timeout=10)
+        subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'follow-end'],check=True,timeout=15)
         readings(binary,port,sink.getsockname()[1])
         subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'lifecycle'],check=True,timeout=30)
         http_stop(binary,port,sink.getsockname()[1])

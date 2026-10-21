@@ -40,7 +40,8 @@ import Foundation
         guard session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")) == "Receiver silent 8 s • 2/60 min" else { print("FAIL: silent subtitle \(session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")))"); exit(1) }
         if mode == "rules" { ruleChecks(fixtures: CommandLine.arguments[4]); return }
         if mode == "follow" { followChecks(settings); return }
-        if mode == "sweep" { sweepChecks(settings); return }
+        if mode == "sweep" { sweepChecks(settings); discoveryListChecks(); return }
+        if mode == "follow-end" { followEndChecks(settings); return }
         if mode == "readings" { readingsChecks(settings, httpPort: UInt16(CommandLine.arguments[4])!); return }
         if mode == "lifecycle" { lifecycleChecks(settings); return }
         if mode == "http-stop" { httpStopChecks(settings, httpPort: UInt16(CommandLine.arguments[4])!); return }
@@ -306,6 +307,66 @@ import Foundation
         check(after == later, "a stopped run's follower probed again")
         feed.cancel(); close(sender)
         print("PASS: follower switched 192.0.2.10 -> 192.0.2.20 after two misses, kept checking, ended before finish")
+    }
+    /// A run that ends without Stop (its length completed) still cancels a follower probe in progress: the real
+    /// C probe, given the worker's token, aimed at 127.0.0.2 (loopback, silent until its 3 s timeout).
+    static func followEndChecks(_ original: BridgeSettings) {
+        var settings = original
+        settings.destination = "192.0.2.10"; settings.outputPort = "4000"; settings.discoveryPort = "0"
+        let lock = NSLock()
+        var started: Double?, returned: Double?
+        let worker = BridgeWorker(followCheckS: 0.1, local: "192.0.2.5") { addresses, cancel in
+            lock.lock(); if started == nil { started = sbio_now() }; lock.unlock()
+            let answers = EFBSweep.probe(cancel)(addresses.map { _ in "127.0.0.2" })
+            lock.lock(); returned = sbio_now(); lock.unlock()
+            return answers
+        }
+        let sender = socket(AF_INET, SOCK_DGRAM, 0)
+        var target = sockaddr_in(); target.sin_family = sa_family_t(AF_INET); target.sin_port = UInt16(settings.inputPort)!.bigEndian
+        target.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let feed = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "feed"))
+        feed.schedule(deadline: .now(), repeating: 0.1)
+        feed.setEventHandler {
+            var copy = target; let bytes: [UInt8] = [1, 2, 3]
+            withUnsafePointer(to: &copy) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { _ = sendto(sender, bytes, bytes.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        }
+        feed.resume()
+        let finished = DispatchSemaphore(value: 0)
+        var completedAt = 0.0, completed = false
+        worker.run(settings, duration: 2, update: { status in
+            check(status.forwarded == 0 && status.sendErrors == 0, "follow-end test forwarded a datagram")
+        }, finish: { error, done in
+            check(error == nil, "follow-end run: \(error ?? "")"); completed = done; completedAt = sbio_now(); finished.signal()
+        })
+        check(finished.wait(timeout: .now() + 6) == .success, "follow-end run did not finish")
+        feed.cancel(); close(sender)
+        lock.lock(); let probeStarted = started, probeReturned = returned; lock.unlock()
+        guard let probeStarted, let probeReturned else { check(false, "the follower never probed"); return }
+        // The probe began before the run's length ended and would have lasted 3 s; it returned at the run's end.
+        check(completed && probeReturned - probeStarted < 2.5 && completedAt - probeReturned < 0.2,
+              String(format: "follow-end: probe %.2f s, finish %.2f s after it", probeReturned - probeStarted, completedAt - probeReturned))
+        print(String(format: "PASS: run end without Stop cancelled the follower probe after %.2f s of its 3 s; finish %.0f ms later",
+                     probeReturned - probeStarted, (completedAt - probeReturned) * 1000))
+    }
+    /// The Find EFB list: results shown, then the follower switches the destination; the list is cleared and the earlier
+    /// search's late results stay out. A new search on the new destination lists again.
+    static func discoveryListChecks() {
+        var list = DiscoveryList()
+        let efb = DiscoveredEFB(address: "192.0.2.10", port: 4000, app: "EFB", seen: 100)
+        let device = DiscoveredEFB(address: "192.0.2.20", port: 4000, app: "Device", seen: 100)
+        list.start(route: "192.0.2.10")
+        list.announce([efb], route: "192.0.2.10"); list.sweep([device, DiscoveredEFB(address: "192.0.2.10", port: 4000, app: "Device", seen: 100)], route: "192.0.2.10")
+        check(list.entries(now: 101).map(\.app) == ["EFB", "Device"], "announced first, swept without announced addresses")
+        list.routeChanged()  // the follower switched to 192.0.2.20
+        check(list.entries(now: 101).isEmpty && !list.isCurrent(route: "192.0.2.20"), "route change clears the list")
+        list.announce([efb], route: "192.0.2.20"); list.sweep([device], route: "192.0.2.20")
+        check(list.entries(now: 102).isEmpty, "the earlier search's results stay out after the route change")
+        list.start(route: "192.0.2.20"); list.sweep([device], route: "192.0.2.20")
+        check(list.entries(now: 102) == [device], "a new search lists again")
+        list.sweep([device], route: "192.0.2.10")
+        check(list.entries(now: 102) == [device], "results for another destination are dropped")
+        check(list.entries(now: 131).isEmpty, "entries expire after 30 s")
+        print("PASS: Find EFB list cleared on a route change; the earlier search's results stay out")
     }
     /// Find EFB's sweep with a stubbed probe (no network): devices are listed as "Device" on the EFB UDP port without
     /// the receiver or unusable addresses; the job finishes only after the sweep has ended, after an error (the

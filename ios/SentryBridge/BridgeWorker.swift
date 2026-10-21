@@ -91,7 +91,8 @@ final class BridgeWorker: @unchecked Sendable {
     private let cancel = sbio_cancel_create()
     private let receiverHTTPPort: UInt16, loopbackReceiver: Bool
     // Following a moved EFB; host tests replace the probe and the local address, never the rule.
-    private let followCheckS: Double, sweepProbe: (([String]) -> [Bool]?)?, localAddress: (String) -> String?
+    // A replaced probe still receives this worker's cancel token.
+    private let followCheckS: Double, sweepProbe: (([String], OpaquePointer?) -> [Bool]?)?, localAddress: (String) -> String?
     private let readsLoopbackStats: Bool
     init() {
         receiverHTTPPort = 80; loopbackReceiver = false; readsLoopbackStats = false
@@ -105,12 +106,19 @@ final class BridgeWorker: @unchecked Sendable {
         followCheckS = EFBFollower.checkS; sweepProbe = nil; localAddress = EFBSweep.localAddress(receiver:)
     }
     /// Host tests only: a stubbed probe (no real network) and local address, and a short check interval.
-    init(followCheckS: Double, local: String?, probe: @escaping ([String]) -> [Bool]?) {
+    convenience init(followCheckS: Double, local: String?, probe: @escaping ([String]) -> [Bool]?) {
+        self.init(followCheckS: followCheckS, local: local, cancellableProbe: { addresses, _ in probe(addresses) })
+    }
+    /// Host tests only: a probe given this worker's cancel token, as the real one is.
+    init(followCheckS: Double, local: String?, cancellableProbe: @escaping ([String], OpaquePointer?) -> [Bool]?) {
         receiverHTTPPort = 80; loopbackReceiver = false; readsLoopbackStats = false
-        self.followCheckS = followCheckS; sweepProbe = probe; localAddress = { _ in local }
+        self.followCheckS = followCheckS; sweepProbe = cancellableProbe; localAddress = { _ in local }
     }
     #endif
-    private var probe: ([String]) -> [Bool]? { sweepProbe ?? EFBSweep.probe(cancel) }
+    private var probe: ([String]) -> [Bool]? {
+        guard let sweepProbe else { return EFBSweep.probe(cancel) }
+        return { [cancel] in sweepProbe($0, cancel) }
+    }
     // Queued and active requests retain this worker, so the token outlives every request using it.
     deinit { sbio_cancel_destroy(cancel) }
     private let lock = NSLock()
@@ -201,7 +209,9 @@ final class BridgeWorker: @unchecked Sendable {
             // A finished run sends nothing more to the receiver, however it ended.
             lock.lock(); ended = true; lock.unlock()
             sbio_cancel_set(cancel)
-            // The reader and follower end within about 50 ms; a new Start comes only after this run.
+            // However the run ended (Stop, its length completed, a UDP failure), the cancel above also stops
+            // the reader's waits and the follower's probes, which watch the same token, so both end within
+            // about 50 ms, a sweep in progress included. A new Start comes only after this run.
             helpers.wait()
             // Socket close precedes completion; a restart cannot race the previous bind.
             finish(result.0, result.1)
