@@ -367,7 +367,7 @@ class Controller:
         seen, misses, reported = False, 0, None
         while forwarding():
             cancel.wait(EFB_CHECK_S)
-            routes = list(self.runtime.routes)
+            routes = list(getattr(self.runtime, "routes", ()))
             if not forwarding() or len(routes) != 1 or ipaddress.IPv4Address(routes[0][0]).is_loopback:
                 continue
             current, port = routes[0]

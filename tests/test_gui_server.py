@@ -63,6 +63,11 @@ def wait_for(predicate, seconds=8):
 
 class TestGUI(unittest.TestCase):
     def setUp(self):
+        # Tests never probe the real network: no devices found, and every EFB answers (nothing to follow).
+        for name, value in (("sweep", []), ("answers", True)):
+            patcher = patch.object(gui_server.discovery, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.c = Controller(self.tmp.name)
 
@@ -219,7 +224,7 @@ class TestGUI(unittest.TestCase):
         self.c.runtime.settings.update(sentryIp="127.0.0.1", httpPort=peer["port"])
         self.c.runtime.forwarding = True
         self.c.runtime.active = lambda: True
-        self.c.runtime.started_at = time.monotonic()
+        self.c.runtime.started_at = getattr(self.c.runtime, "started_at", 0) + 1  # a new session (monotonic ticks are 16 ms on Windows)
         self.c._contact()
 
     def test_exit_stops_a_sensor_reader_that_only_receives_pings(self):
@@ -285,7 +290,7 @@ class TestGUI(unittest.TestCase):
         self.c.runtime.routes = [("192.168.4.19", 4000)]
         self.c.runtime.forwarding = True
         self.c.runtime.active = lambda: True
-        self.c.runtime.started_at = time.monotonic()
+        self.c.runtime.started_at = getattr(self.c.runtime, "started_at", 0) + 1  # a new session (monotonic ticks are 16 ms on Windows)
         return (patch.object(gui_server, "EFB_CHECK_S", .05), patch.object(gui_server, "EFB_MISSES", 2),
                 patch.object(gui_server.discovery, "answers", side_effect=lambda address: answering(address)),
                 patch.object(gui_server.discovery, "sweep", return_value=swept))
@@ -295,9 +300,9 @@ class TestGUI(unittest.TestCase):
         patches = self.follow(lambda address: calls.append(address) or len(calls) <= 2, ["192.168.4.6"])
         with patches[0], patches[1], patches[2], patches[3]:
             self.c._contact()
-            wait_for(lambda: self.c.runtime.routes == [("192.168.4.6", 4000)])
+            wait_for(lambda: "now sending to 192.168.4.6" in "\n".join(self.c.runtime.logs))  # logged last
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.6", 4000)])
         self.assertEqual(self.c.routes_request["address"], "192.168.4.6")  # the screen and the next Start
-        self.assertIn("now sending to 192.168.4.6", "\n".join(self.c.runtime.logs))
 
     def test_an_efb_is_not_moved_when_several_devices_answer_or_it_never_answered(self):
         for answered_before, swept in ((True, ["192.168.4.6", "192.168.4.7"]), (False, ["192.168.4.6"])):
