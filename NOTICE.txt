@@ -55,11 +55,10 @@ The checked runtime is CPython 3.11.0; see notices/Python-3.11.0.txt, including
 PSF, historical Python, OpenSSL/SSLeay, bzip2, libffi and other component terms.
 This product includes software developed by the OpenSSL Project for use in the
 OpenSSL Toolkit (http://www.openssl.org/). This product includes cryptographic
-software written by Eric Young. Runtime version changes require a notice audit. Microsoft runtime DLLs supplied
-with the Python Windows distribution remain Microsoft components; their presence
-does not make them GPL-covered source or establish a right to redistribute them
-outside the original runtime terms. Windows runtime redistribution remains a
-release review item.
+software written by Eric Young. The packaged Windows tools also contain the
+Microsoft Visual C++ and Universal C runtime files (vcruntime140, ucrtbase,
+api-ms-win-*) as the Python Windows distribution ships them. They are Microsoft
+components under Microsoft's redistribution terms, not covered by the GPL.
 Android and the native command-line bridge do not include Python.
 
 The inline broadcast glyph in web/app.html is from Phosphor Icons (MIT).
