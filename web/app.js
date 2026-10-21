@@ -145,9 +145,10 @@ function renderDiscovered(efbs) {
   $("discovered").replaceChildren(...rows);
 }
 // Results found before a route change may list the old address: show only those for the current route.
-function discoveryJob(job) {
+// A job first seen running in the poll that changed the route may have started on the old one.
+function discoveryJob(job, routeChanged) {
   if (job.action !== "Find EFB") return;
-  if (job.state === "running") discoveryRoute = shownRoute;
+  if (job.state === "running") discoveryRoute = routeChanged ? null : shownRoute;
   if (job.state === "done" && (discoveryRoute === undefined || discoveryRoute === shownRoute)) renderDiscovered(job.result.efbs || []);
 }
 async function checkSetup() {
@@ -330,6 +331,7 @@ function renderLive(s) {
   $("diagnostic-input").textContent = "UDP "+s.settings.listenPort;
   $("engine").textContent = s.engine;
   // Before the running output and the route locks below: a refreshed route resets both.
+  const routeBefore = shownRoute;
   if (!pending) pullForm(s);
   if (s.running && s.routesRequest) $("output-summary").textContent = s.routesRequest.address+":"+s.settings.efbPort;
   const currentMode = s.monitoring && s.lastPacketSeconds !== null && s.lastPacketSeconds < 10 ? s.mode : null;
@@ -380,7 +382,7 @@ function renderLive(s) {
     $("operation").classList.toggle("error",s.job.state === "failed" || toolFailed);
     $("operation").replaceChildren(element("span",s.job.state === "running" ? s.job.action+"…" : s.job.state === "failed" ? s.job.error : s.job.state === "done" ? s.job.action+(toolFailed ? ": check report" : " complete") : ""));
     if (s.job.state === "running") $("tool-result").textContent = "";
-    discoveryJob(s.job);
+    discoveryJob(s.job, shownRoute !== routeBefore);
     if (s.job.result) {
       $("tool-result").textContent = s.job.result.text || JSON.stringify(s.job.result,null,2);
       if (s.job.result.warning) $("operation").append(element("p",s.job.result.warning));

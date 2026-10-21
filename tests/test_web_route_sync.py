@@ -64,12 +64,17 @@ const running = {action: "Find EFB", state: "running"};
 const moved = n => ({...saved, job: found, routesRequest: {topology: "network", address: "192.168.4.4" + n}});
 const same = {...saved, job: found};
 const results = {};
-status = same; discoveryRoute = undefined; discoveryJob(found); results.reload = $("discovered").children.length;  // a finished job on the first poll
-discoveryJob(running); poll(same); discoveryJob(found); results.unchanged = $("discovered").children.length;
-discoveryJob(running); poll(moved(1)); discoveryJob(found); results.samePoll = $("discovered").children.length;
-// renderLive passes a job on only when it changes, so the running job is seen once.
-discoveryJob(running); poll(moved(2)); poll(moved(2)); discoveryJob(found);
-results.laterPoll = $("discovered").children.length;
+const count = () => $("discovered").children.length;
+// renderLive: pullForm, then the job (passed on only when it changed) with whether this poll moved the route.
+function render(s, job) { const before = shownRoute; poll(s); if (job) discoveryJob(job, shownRoute !== before); }
+status = same; discoveryRoute = undefined; render(same, found); results.reload = count();  // a finished job on the first poll
+render(same, running); render(same, found); results.unchanged = count();
+render(same, running); render(moved(1), found); results.samePoll = count();
+render(same, running); render(moved(2)); render(moved(2), found); results.laterPoll = count();
+// Started elsewhere on one route, first seen running in the poll that moves the route.
+render(moved(3)); discoveryRoute = undefined; render(moved(4), running); render(moved(4), found);
+results.firstSeenRunning = count();
+render(moved(4), running); render(moved(4), found); results.nextFind = count();  // a later Find EFB shows again
 out.push(results);
 // Android: This device is hidden (EFBs there hold UDP 4000) unless the simulator runs.
 $("host").value = "android"; $("same").checked = true; status = {settings, simulator: false};
@@ -109,7 +114,8 @@ class TestWebRouteSync(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         same, network, port, reload, results, android = json.loads(result.stdout)
         # A Find EFB result from before a route change never comes back after the clear.
-        self.assertEqual(results, {"reload": 1, "unchanged": 1, "samePoll": 0, "laterPoll": 0})
+        self.assertEqual(results, {"reload": 1, "unchanged": 1, "samePoll": 0, "laterPoll": 0,
+                                   "firstSeenRunning": 0, "nextFind": 1})
         self.assertEqual(android, {"hidden": True, "network": True, "simulatorHidden": False})
         self.assertTrue(same["hidden"])
         self.assertTrue(same["checked"])  # an unchanged poll keeps the validation
@@ -128,7 +134,7 @@ class TestWebRouteSync(unittest.TestCase):
         render = function_source(script, "renderLive")
         self.assertLess(render.index("pullForm(s)"), render.index('$("output-summary")'))
         self.assertLess(render.index("pullForm(s)"), render.index('$("same").disabled'))
-        self.assertLess(render.index("pullForm(s)"), render.index("discoveryJob(s.job)"))  # the order the fixture uses
+        self.assertLess(render.index("pullForm(s)"), render.index("discoveryJob(s.job, shownRoute !== routeBefore)"))  # the order the fixture uses
 
 
 if __name__ == "__main__":
