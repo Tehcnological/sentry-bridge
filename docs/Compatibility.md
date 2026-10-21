@@ -18,8 +18,9 @@ section for your platform before relying on it in flight.
   it back.
 
 **Tested so far:** a Sentry Plus (WiFi firmware 1.0.32) with ForeFlight, Garmin Pilot, AvareX and
-FltPlan Go on an iPad, and the Windows app with a Sentry Plus, including recovery after the Sentry
-restarts. Not yet tested: the Android app sending to an EFB, other EFB versions, and other devices.
+FltPlan Go on an iPad, the Windows app with a Sentry Plus, including recovery after the Sentry
+restarts, and the Android app sending to an iPad, including following it to a new address after the
+Sentry restarts. Not yet tested: other EFB versions and other devices.
 
 ## Android
 
@@ -30,7 +31,8 @@ restarts. Not yet tested: the Android app sending to an EFB, other EFB versions,
 - Garmin Pilot for Android does not accept GDL90 input at all. On Android, use an EFB with GDL90 input,
   such as FltPlan Go.
 - Keep the bridge's notification visible; battery savers that stop background apps also stop the bridge.
-- If the EFB device rejoins the WiFi, its address can change. If traffic stops, check the address.
+- If the EFB device rejoins the WiFi with a new address, the bridge switches to it when it is the only
+  other device on the WiFi. Otherwise the bridge log says so; choose the EFB with **Find EFB**.
 
 ## Windows, macOS and Linux
 
