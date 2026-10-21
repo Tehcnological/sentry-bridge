@@ -1,0 +1,45 @@
+{
+  "name": "Sentry Bridge",
+  "identifier": "io.github.tehcnological.sentrybridge.source",
+  "subtitle": "Sentry traffic in any EFB",
+  "description": "Shows traffic from a uAvionix Sentry or Sentry Plus in EFB apps other than ForeFlight. The Sentry's Compatibility Mode sends traffic in a raw form; Sentry Bridge decodes it and sends standard GDL90 traffic reports to the EFB, on this device or another one. Advisory information only.",
+  "iconURL": "https://raw.githubusercontent.com/Tehcnological/sentry-bridge/master/fastlane/metadata/android/en-US/images/icon.png",
+  "website": "https://github.com/Tehcnological/sentry-bridge",
+  "tintColor": "#2563EB",
+  "apps": [
+    {
+      "name": "Sentry Bridge",
+      "bundleIdentifier": "io.github.tehcnological.sentrybridge",
+      "developerName": "Sentry Bridge contributors",
+      "subtitle": "Sentry traffic in any EFB",
+      "localizedDescription": "Shows traffic from a uAvionix Sentry or Sentry Plus in EFB apps other than ForeFlight. The Sentry's Compatibility Mode sends traffic in a raw form; Sentry Bridge decodes it and sends standard GDL90 traffic reports to the EFB, on this device or another one. Advisory information only.",
+      "iconURL": "https://raw.githubusercontent.com/Tehcnological/sentry-bridge/master/fastlane/metadata/android/en-US/images/icon.png",
+      "tintColor": "#2563EB",
+      "category": "utilities",
+      "versions": [
+        {
+          "version": "0.3.0",
+          "buildVersion": "1",
+          "date": "2026-10-21",
+          "minOSVersion": "26.0",
+          "localizedDescription": "Release notes: https://github.com/Tehcnological/sentry-bridge/releases/tag/v0.3.0",
+          "downloadURL": "https://github.com/Tehcnological/sentry-bridge/releases/download/v0.3.0/sentry-bridge.ipa",
+          "size": 7042260,
+          "sha256": "9d725378e706b8edf59bb8419f3708fe0f9d9cc0b9e8eaac5a92408166af9e70"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSLocalNetworkUsageDescription": "Receive Sentry flight data and EFB announcements over WiFi, and forward GPS, traffic and weather to the EFB address you select."
+        }
+      },
+      "version": "0.3.0",
+      "versionDate": "2026-10-21",
+      "versionDescription": "Release notes: https://github.com/Tehcnological/sentry-bridge/releases/tag/v0.3.0",
+      "downloadURL": "https://github.com/Tehcnological/sentry-bridge/releases/download/v0.3.0/sentry-bridge.ipa",
+      "size": 7042260
+    }
+  ],
+  "news": []
+}
