@@ -38,6 +38,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 import sentry_ctl
 import ws_probe
+from tools import discovery
 from tools.discovery import ANNOUNCE_TTL_S, parse_announce
 from tools.routes import check_endpoint, migrate, validate_route
 from tools.gui_runtime import CAPTURE_LIMIT, DEFAULTS, DISCOVERY_LIMIT, Runtime, Simulator, number, udp_listener, validate_settings
@@ -47,6 +48,8 @@ AUTO_BACKUP = "sentry-auto-backup.zip"
 SENSORS_STALE_S, SENSORS_RETRY_S = 5.0, 5.0  # /stats sends twice a second
 # A receiver that restarts leaves the old connection open and silent: reconnect after this long without a message.
 SENSORS_SILENT_S = 10.0
+# How often to check that the EFB on another device still answers, and after how many misses to look for it.
+EFB_CHECK_S, EFB_MISSES = 30.0, 2
 # Update check: GitHub's latest stable release, at most once a day, only while the bridge is stopped.
 RELEASES = "https://api.github.com/repos/Tehcnological/sentry-bridge/releases/latest"
 UPDATE_INTERVAL_S, UPDATE_RETRY_S = 24 * 3600, 3600
@@ -163,6 +166,7 @@ class Controller:
         self.contact_ok = None
         self.sensors, self.sensors_at, self.sensor_thread = {}, None, None
         self.sensor_session, self.sensor_cancel = None, threading.Event()
+        self.follow_session, self.follow_cancel, self.follow_thread = None, threading.Event(), None
         self.runtime = Runtime(settings, self._auto_enable, self._stream, self._contact)
         if upgrade_note:
             self.runtime.log(upgrade_note)
@@ -214,8 +218,11 @@ class Controller:
         with self.lock:  # after this, no job can start the receiver listener (see observe_mode)
             self.closing.set()
         self.sensor_cancel.set()
+        self.follow_cancel.set()
         if self.sensor_thread is not None:
             self.sensor_thread.join(5)  # it checks every half second at most, after the reader it replaced
+        if self.follow_thread is not None:
+            self.follow_thread.join(5)  # a probe or sweep lasts at most a few seconds
         try:
             self.runtime.stop()
         except ValueError as error:  # the UDP thread is a daemon; finish the rest of shutdown anyway
@@ -317,6 +324,12 @@ class Controller:
             self.sensor_thread = threading.Thread(target=self._read_sensors, name="gui-sensors", daemon=True,
                                                   args=(self.sensor_cancel, s["sentryIp"], s["httpPort"], self.sensor_thread))
             self.sensor_thread.start()
+        if session != self.follow_session or self.follow_thread is None or not self.follow_thread.is_alive():
+            self.follow_cancel.set()
+            self.follow_session, self.follow_cancel = session, threading.Event()
+            self.follow_thread = threading.Thread(target=self._follow_efb, name="gui-follow", daemon=True,
+                                                  args=(self.follow_cancel, session))
+            self.follow_thread.start()
         if self.contacting:
             return False
         self.contacting = True
@@ -334,6 +347,57 @@ class Controller:
                 self.runtime.log(f"Keepalive: receiver status {info}")
         threading.Thread(target=run, name="gui-keepalive", daemon=True).start()
         return True
+
+    def local_address(self):
+        """This computer's address on the receiver's network (the route to it). Sends nothing."""
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect((self.runtime.settings["sentryIp"], self.runtime.settings["listenPort"]))
+            local = probe.getsockname()[0]
+        if local == "0.0.0.0" or ipaddress.IPv4Address(local).is_loopback:
+            raise ValueError("Join the receiver's WiFi first.")
+        return local
+
+    def _follow_efb(self, cancel, session):
+        """While forwarding to an EFB on another device, check it still answers. When an EFB that answered
+        before stops answering twice in a row (it rejoined the WiFi with a new address, for example after the
+        receiver restarted), sweep the receiver's network and switch to the one other device that answers.
+        With none or several, only log: the user chooses with Find EFB."""
+        forwarding = lambda: (not cancel.is_set() and self.runtime.forwarding and self.runtime.active()
+                              and getattr(self.runtime, "started_at", None) == session and not self.closing.is_set())
+        seen, misses, reported = False, 0, None
+        while forwarding():
+            cancel.wait(EFB_CHECK_S)
+            routes = list(self.runtime.routes)
+            if not forwarding() or len(routes) != 1 or ipaddress.IPv4Address(routes[0][0]).is_loopback:
+                continue
+            current, port = routes[0]
+            if discovery.answers(current):
+                seen, misses, reported = True, 0, None
+                continue
+            misses += 1
+            if not seen or misses < EFB_MISSES:
+                continue  # never answered (a firewall, perhaps) or only once: keep sending as configured
+            try:
+                found = discovery.sweep(self.local_address(), exclude={self.runtime.settings["sentryIp"]})
+            except (OSError, ValueError):
+                continue
+            target = discovery.follow_choice([a for a in found if self.efb_candidate(a, port)], current)
+            if target is None:
+                if reported != current:
+                    reported = current
+                    self.runtime.log(f"The EFB at {current} stopped answering. Devices on the receiver's WiFi: "
+                                     f"{', '.join(found) or 'none'}. Choose one with Find EFB.")
+                continue
+            if not forwarding():
+                return
+            self.runtime.routes = [(target, port)]
+            with self.lock:
+                if self.routes_request and self.routes_request.get("address") == current:
+                    self.routes_request = {**self.routes_request, "address": target}
+                    self.save()
+            self.runtime.log(f"The EFB at {current} stopped answering; now sending to {target}, the only other "
+                             "device on the receiver's WiFi.")
+            misses, reported = 0, None
 
     def _read_sensors(self, cancel, host, port, previous=None):
         """While forwarding, listen to the receiver's /stats WebSocket for battery, CO and temperature.
@@ -689,13 +753,24 @@ class Controller:
 
     def discover(self, seconds):
         """EFBs announcing themselves on the discovery port (JSON with a GDL90 port), for filling in
-        an Other device address. Uses the running bridge's list when it holds the port; otherwise
-        listens briefly. Never sends anything."""
+        an Other device address, plus the other devices that answer a sweep of the receiver's network
+        (EFBs that do not announce). Uses the running bridge's list when it holds the port; otherwise
+        listens briefly. The sweep sends one TCP connection attempt to each address."""
         settings = self.runtime.settings
         port = settings["announcePort"]
         if not port:
             raise ValueError("EFB discovery is off. Set the EFB discovery port in Settings.")
         found = {}
+        swept = []
+
+        def sweep():
+            try:
+                swept.extend(a for a in discovery.sweep(self.local_address(), exclude={settings["sentryIp"]})
+                             if self.efb_candidate(a, settings["efbPort"]))
+            except (OSError, ValueError):
+                pass  # not on the receiver's WiFi: announcements only
+        sweeper = threading.Thread(target=sweep, name="gui-sweep", daemon=True)
+        sweeper.start()
 
         def add(source, efb_port, app):
             if efb_port and ((source, efb_port) in found or len(found) < DISCOVERY_LIMIT) and self.efb_candidate(source, efb_port):
@@ -728,8 +803,12 @@ class Controller:
         finally:
             if listener:
                 listener.close()
+        sweeper.join(discovery.PROBE_TIMEOUT_S + 1)
+        announced = {address for address, _ in found}
         return {"efbs": [dict(app=app, address=address, port=efb_port)
-                         for (address, efb_port), app in sorted(found.items())]}
+                         for (address, efb_port), app in sorted(found.items())]
+                        + [dict(app="Device", address=address, port=settings["efbPort"])
+                           for address in swept if address not in announced]}
 
     def run_worker(self, command, seconds, cwd=None):
         """Run a diagnostic worker process. Exit or an overrun stops it (with its children: a

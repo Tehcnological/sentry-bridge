@@ -145,6 +145,33 @@ object NativeDiagnostics {
         if (dest in cache || cache.size < DISCOVERY_LIMIT) cache[dest] = app to nowMs
     }
 
+    // A TCP knock on a port nothing listens on (tools/discovery.py): a device answers at once, accepting or
+    // refusing, while an unused address stays silent.
+    private const val PROBE_PORT = 7
+    private const val PROBE_TIMEOUT_MS = 2000
+
+    /** Whether a device is at this address: it accepted or refused a TCP connection. */
+    fun answers(network: Network?, address: InetAddress): Boolean = try {
+        Socket().use { socket -> network?.bindSocket(socket); socket.connect(InetSocketAddress(address, PROBE_PORT), PROBE_TIMEOUT_MS) }
+        true
+    } catch (e: java.net.ConnectException) {
+        e.message?.contains("ECONNREFUSED") == true || e.message?.contains("refused", ignoreCase = true) == true
+    } catch (_: java.io.IOException) { false }
+
+    /** Devices answering on local's /24 network, other than local and the excluded addresses, in address order. */
+    fun sweep(local: Inet4Address, exclude: Set<String>, probe: (InetAddress) -> Boolean): List<String> {
+        val hosts = (1..254).map { last -> InetAddress.getByAddress(local.address.copyOf().also { it[3] = last.toByte() }) }
+            .filter { it.hostAddress != local.hostAddress && it.hostAddress !in exclude }
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(128)  // two rounds of one timeout at most
+        try {
+            val results = hosts.map { host -> pool.submit<Boolean> { probe(host) } }
+            return hosts.zip(results).filter { it.second.get() }.map { it.first.hostAddress!! }
+        } finally { pool.shutdownNow() }
+    }
+
+    /** The one other device that answers after the EFB at current stopped answering; null for none or several. */
+    fun followChoice(candidates: List<String>, current: String): String? = candidates.filter { it != current }.singleOrNull()
+
     /** Whether an announcing device can be an Other device destination (same rules as desktop). */
     fun efbCandidate(address: InetAddress, port: Int, sentryIp: String, listenPort: Int): Boolean {
         if (address !is Inet4Address || address.isLoopbackAddress || address.hostAddress == sentryIp) return false

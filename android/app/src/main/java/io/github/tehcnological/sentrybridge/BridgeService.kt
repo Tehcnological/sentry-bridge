@@ -108,6 +108,10 @@ class BridgeService : Service() {
         val discovered = java.util.concurrent.ConcurrentHashMap<InetSocketAddress, Pair<String, Long>>()
         /** True while the running bridge holds the discovery port. */
         @Volatile var announcing = false
+        /** The EFB on another device this run sends to (null for this device or when stopped). */
+        @Volatile var destination: InetSocketAddress? = null
+        /** Set by NativeGui when that EFB moved to a new address (see NativeGui.watchEfb); replaces destination. */
+        @Volatile var followed: InetSocketAddress? = null
     }
 
     @Volatile private var stopRequested = false
@@ -204,6 +208,8 @@ class BridgeService : Service() {
             return
         }
         val dests = fixed.joinToString(", ") { "${it.address.hostAddress}:${it.port}" }
+        followed = null
+        destination = fixed.singleOrNull()?.takeIf { !it.address.isLoopbackAddress }
 
         fun wifiSocket(): DatagramSocket? {
             if (wifiChanged || txWifi == null) {
@@ -218,7 +224,7 @@ class BridgeService : Service() {
 
         fun send(frames: Array<ByteArray>) {
             if (!forwarding || frames.isEmpty()) return
-            for (dest in fixed) {
+            for (dest in followed?.let { listOf(it) } ?: fixed) {
                 // A shared route is loopback on the receiver port by design; the rest must not loop back.
                 if (s.routes != null && !shared) {
                     try { NativeDiagnostics.checkEndpoint(dest.address, dest.port, s.listenPort) }
@@ -380,7 +386,8 @@ class BridgeService : Service() {
                         traffic = liveTraffic,
                         lastRxAgeS = if (lastRx < 0) -1.0 else now - lastRx,
                         heartbeatAgeS = if (lastHeartbeat < 0) -1.0 else now - lastHeartbeat,
-                        warning = NativeGui.coWarning ?: NativeGui.powerWarning, destinations = dests, apps = 0, wifi = NativeGui.simulator || wifi != null,
+                        warning = NativeGui.coWarning ?: NativeGui.powerWarning,
+                        destinations = followed?.let { "${it.address.hostAddress}:${it.port}" } ?: dests, apps = 0, wifi = NativeGui.simulator || wifi != null,
                     )
                     NativeGui.tick()
                     if (SystemClock.elapsedRealtime() - lastNotify > 5000) {

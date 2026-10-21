@@ -1,6 +1,6 @@
 # Privacy
 
-Effective 2026-10-13. This policy describes the Android, Windows and Python
+Effective 2026-10-20. This policy describes the Android, Windows and Python
 Sentry Bridge applications in this source revision. iOS has a separate implementation
 and distribution review. The project does not operate a flight-data collection service.
 
@@ -10,6 +10,8 @@ The bridge receives receiver status, aircraft addresses and callsigns, positions
 altitudes, velocities, GPS and available weather frames over the local network.
 It processes these on the bridge device and forwards selected GDL90 data to your
 configured EFB destination. Announcements are not forwarded.
+To find EFB devices, Find EFB and the check that follows an EFB to a new address try a TCP
+connection to the devices on the receiver's network; no data is sent to them.
 UDP traffic and receiver HTTP requests are not encrypted. Other devices on the
 network may observe them. Use a network you trust.
 

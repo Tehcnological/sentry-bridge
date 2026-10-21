@@ -277,6 +277,48 @@ class TestGUI(unittest.TestCase):
                     self.forward_to(peer)
                     wait_for(lambda: peer["connections"] >= 2)
 
+    def follow(self, answering, swept):
+        """Forwarding to 192.168.4.19 with fast checks; answering() says whether the EFB answers each time."""
+        self.c.http = lambda *args, **kwargs: {}
+        self.c.local_address = lambda: "192.168.4.4"
+        self.c.routes_request = dict(host="windows", topology="network", address="192.168.4.19")
+        self.c.runtime.routes = [("192.168.4.19", 4000)]
+        self.c.runtime.forwarding = True
+        self.c.runtime.active = lambda: True
+        self.c.runtime.started_at = time.monotonic()
+        return (patch.object(gui_server, "EFB_CHECK_S", .05), patch.object(gui_server, "EFB_MISSES", 2),
+                patch.object(gui_server.discovery, "answers", side_effect=lambda address: answering(address)),
+                patch.object(gui_server.discovery, "sweep", return_value=swept))
+
+    def test_an_efb_that_moved_is_followed_to_the_only_other_device(self):
+        calls = []
+        patches = self.follow(lambda address: calls.append(address) or len(calls) <= 2, ["192.168.4.6"])
+        with patches[0], patches[1], patches[2], patches[3]:
+            self.c._contact()
+            wait_for(lambda: self.c.runtime.routes == [("192.168.4.6", 4000)])
+        self.assertEqual(self.c.routes_request["address"], "192.168.4.6")  # the screen and the next Start
+        self.assertIn("now sending to 192.168.4.6", "\n".join(self.c.runtime.logs))
+
+    def test_an_efb_is_not_moved_when_several_devices_answer_or_it_never_answered(self):
+        for answered_before, swept in ((True, ["192.168.4.6", "192.168.4.7"]), (False, ["192.168.4.6"])):
+            with self.subTest(answered_before=answered_before, swept=swept):
+                self.c.close()
+                self.c = Controller(Path(self.tmp.name) / str(len(swept)))
+                calls = []
+                patches = self.follow(lambda address: calls.append(address) or (answered_before and len(calls) == 1), swept)
+                with patches[0], patches[1], patches[2], patches[3]:
+                    self.c._contact()
+                    wait_for(lambda: len(calls) >= 6)
+                self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
+                self.assertEqual("stopped answering" in "\n".join(self.c.runtime.logs), answered_before)
+
+    def test_find_efb_adds_devices_found_by_the_sweep(self):
+        self.c.local_address = lambda: "192.168.4.4"
+        self.c.runtime.settings.update(announcePort=free_port())
+        with patch.object(gui_server.discovery, "sweep", return_value=["192.168.4.6"]):
+            found = self.c.discover(.3)
+        self.assertEqual(found["efbs"], [dict(app="Device", address="192.168.4.6", port=4000)])
+
     def test_restart_cancels_the_waiting_reader_and_uses_the_new_receiver(self):
         old, new = self.stats_peer(), self.stats_peer("pings")
         self.forward_to(old)

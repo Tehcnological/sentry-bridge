@@ -19,8 +19,13 @@ Updates install over the previous version and keep your settings.
 3. Tap **Start**.
 4. In the EFB, select a **Stratux** or **GDL90** device on UDP port 4000.
 
-**Find EFB** lists EFBs that announce themselves on the WiFi. If yours does not appear, find its IP
-address in the EFB device's WiFi details. The address can change when the device rejoins the WiFi.
+**Find EFB** lists EFBs that announce themselves on the WiFi, and other devices on it as "Device". If
+yours does not appear, find its IP address in the EFB device's WiFi details.
+
+The EFB device's address can change when it rejoins the WiFi, for example after the Sentry restarts. The
+bridge checks the EFB every 30 seconds. If it stops answering and exactly one other device is on the
+Sentry's WiFi, the bridge switches to that device by itself and notes it in the log. With several
+devices, choose the right one with **Find EFB**.
 
 ## Settings
 
