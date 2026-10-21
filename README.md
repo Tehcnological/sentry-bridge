@@ -24,6 +24,12 @@ Get the latest version from the [Releases page](https://github.com/Tehcnological
 | macOS, Linux | no download; unmaintained ([open an issue](https://github.com/Tehcnological/sentry-bridge/issues) if you would use it) | |
 | Small WiFi boards (ESP32-C3, Pico W, Pico 2 W) | build from source; experimental | [Small-board firmware](docs/Firmware.md) |
 
+On iPhone or iPad, add the Sentry Bridge source to your sideloading app to install it and get updates:
+
+[![Add to SideStore](https://img.shields.io/badge/Add_to-SideStore-2563EB)](https://tehcnological.github.io/sentry-bridge/add-source.html?app=sidestore)
+[![Add to AltStore](https://img.shields.io/badge/Add_to-AltStore-2563EB)](https://tehcnological.github.io/sentry-bridge/add-source.html?app=altstore)
+[![Add to Feather](https://img.shields.io/badge/Add_to-Feather-2563EB)](https://tehcnological.github.io/sentry-bridge/add-source.html?app=feather)
+
 ## Quick start
 
 1. Connect the device running Sentry Bridge to the Sentry's WiFi (named like `SentryPlus_XXXX`).
