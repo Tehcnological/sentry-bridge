@@ -58,8 +58,8 @@ class TestAltSource(unittest.TestCase):
         app = altsource.update(older, "v0.3.0", "2026-11-02", self.path)["apps"][0]
         self.assertEqual([v["version"] for v in app["versions"]], ["0.10.0", "0.3.0"])
         self.assertEqual(app["version"], "0.10.0")
-        self.assertEqual(sorted(["0.3.0-beta.1", "0.3.0", "0.2.9"], key=altsource.version_key, reverse=True),
-                         ["0.3.0", "0.3.0-beta.1", "0.2.9"])
+        order = ["0.10.0", "0.3.0", "0.3.0-rc.1", "0.3.0-beta.10", "0.3.0-beta.2", "0.3.0-beta", "0.3.0-alpha.1", "0.2.9"]
+        self.assertEqual(sorted(reversed(order), key=altsource.version_key, reverse=True), order)
 
     def test_wrong_bundle_or_changed_permissions_are_rejected(self):
         bundle = self.bundle("v0.3.0", b"first")

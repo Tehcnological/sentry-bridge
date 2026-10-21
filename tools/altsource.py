@@ -41,9 +41,11 @@ def min_os(root=ROOT):
 
 
 def version_key(version):
-    """0.3.0 above 0.3.0-beta.1 above 0.2.9; numbers compare as numbers."""
+    """Semantic version order: 0.3.0 above 0.3.0-beta.10 above 0.3.0-beta.2 above 0.2.9. Numbers compare
+    as numbers; in the pre-release part a number sorts below a word, and more parts above fewer."""
     main, _, suffix = version.partition("-")
-    return tuple(int(part) for part in main.split(".")), not suffix, suffix
+    parts = tuple((0, int(part), "") if part.isdigit() else (1, 0, part) for part in suffix.split(".")) if suffix else ()
+    return tuple(int(part) for part in main.split(".")), not suffix, parts
 
 
 def download_url(tag):
