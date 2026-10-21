@@ -53,6 +53,21 @@ The Sentry returns to ForeFlight mode every time it powers up. With **Automatic 
 **Safety:** Sentry Bridge gives advisory information only. It is not certified for navigation or
 collision avoidance and does not replace see-and-avoid, required equipment or a weather briefing.
 
+## Roadmap
+
+No dates, and plans can change. To ask for something or to help,
+[open an issue](https://github.com/Tehcnological/sentry-bridge/issues).
+
+- **Several EFBs at once.** Today the app sends to one EFB: on the same device, or on one other
+  device. Next is feeding several at the same time, such as the EFB on this tablet plus one or two
+  other tablets, on Windows, Android, iPhone and iPad.
+- **Small WiFi boards.** Firmware for the ESP32-C3, Pico W and Pico 2 W is in the source but not yet
+  tested with a Sentry. Once it is, it becomes a release download. A board with a screen and a case,
+  the LilyGO T-Dongle, is the next target.
+- **Weather in EFBs.** Weather data is already passed on; confirm that EFBs display it.
+- **CO alarm level on iPhone and iPad.** Use the Sentry's own alarm level instead of a fixed 50 ppm.
+- **macOS and Linux** are unmaintained. Open an issue if you would use them.
+
 ## More
 
 - [Documentation index](docs/Home.md)
