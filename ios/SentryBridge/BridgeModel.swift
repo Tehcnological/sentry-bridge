@@ -26,7 +26,15 @@ private final class SessionSubmission: @unchecked Sendable {
     @Published var findingEFBs = false
     @Published var discoveredEFBs: [DiscoveredEFB] = []
     @Published var discoveryMessage: String?
+    private var discoveryList = DiscoveryList()
+    private func showDiscovered(now: Double = sbio_now()) {
+        let entries = discoveryList.entries(now: now)
+        if entries != discoveredEFBs { discoveredEFBs = entries }
+    }
+    private static let nothingFound = "No EFB announcements or devices found."
+    private static let routeChanged = "The bridge now sends to another address. Find EFB again to list devices."
     private var discoveryWorker: BridgeWorker?
+    private var discoverySearching = false
     private var discoveryTask: Task<Void, Never>?
     private var discoveryToken = UUID()
     @Published private(set) var diagnosticLines: [String] = []
@@ -93,24 +101,34 @@ private final class SessionSubmission: @unchecked Sendable {
         exitDiscovery()
         discoveryVisible = true; findingEFBs = true
         discoveredEFBs = []; discoveryMessage = nil
+        discoveryList.start(route: settings.destination)
         let id = UUID(); discoveryToken = id
         let usingBridge = busy && worker != nil
         let deadline = sbio_now() + 6
-        if !usingBridge {
-            let search = BridgeWorker(); discoveryWorker = search
-            search.findEFBs(settings, update: { [weak self] entries in
-                DispatchQueue.main.async {
-                    guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
-                    if self.discoveredEFBs != entries { self.discoveredEFBs = entries }
+        // Listens unless the running bridge holds the port; sweeps the receiver's network either way.
+        discoverySearching = true
+        let search = BridgeWorker(); discoveryWorker = search
+        search.findEFBs(settings, listen: !usingBridge, update: { [weak self] entries in
+            DispatchQueue.main.async {
+                guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
+                self.discoveryList.announce(entries, route: self.settings.destination); self.showDiscovered()
+            }
+        }, swept: { [weak self] entries in
+            DispatchQueue.main.async {
+                guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
+                self.discoveryList.sweep(entries, route: self.settings.destination); self.showDiscovered()
+            }
+        }, finish: { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
+                self.discoverySearching = false; self.discoveryWorker = nil
+                if !usingBridge {
+                    self.findingEFBs = false
+                    self.discoveryMessage = !self.discoveryList.isCurrent(route: self.settings.destination) ? Self.routeChanged
+                        : error ?? (self.discoveredEFBs.isEmpty ? Self.nothingFound : nil)
                 }
-            }, finish: { [weak self] error in
-                DispatchQueue.main.async {
-                    guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
-                    self.findingEFBs = false; self.discoveryWorker = nil
-                    self.discoveryMessage = error ?? (self.discoveredEFBs.isEmpty ? "No eligible EFB announcements received." : nil)
-                }
-            })
-        }
+            }
+        })
         discoveryTask = Task { @MainActor [weak self] in
             #if DEBUG
             if self?.testing == true && ProcessInfo.processInfo.arguments.contains("--ui-delay-discovery-observer") {
@@ -124,16 +142,14 @@ private final class SessionSubmission: @unchecked Sendable {
                 // Sample once more before ending the search. A delayed first main-actor
                 // turn must not discard announcements already received by the worker.
                 if usingBridge && self.findingEFBs {
-                    if self.discoveredEFBs != self.snapshot.efbs { self.discoveredEFBs = self.snapshot.efbs }
-                    if let error = self.snapshot.discoveryError {
-                        self.discoveryMessage = error; self.findingEFBs = false
-                    }
+                    self.discoveryList.announce(self.snapshot.efbs, route: self.settings.destination)
+                    if let error = self.snapshot.discoveryError { self.discoveryMessage = error }
                 }
-                let fresh = self.discoveredEFBs.filter { now - $0.seen < 30 }
-                if fresh != self.discoveredEFBs { self.discoveredEFBs = fresh }
-                if usingBridge && now >= deadline && self.findingEFBs {
+                self.showDiscovered(now: now)
+                if usingBridge && now >= deadline && !self.discoverySearching && self.findingEFBs {
                     self.findingEFBs = false
-                    self.discoveryMessage = self.snapshot.discoveryError ?? (self.discoveredEFBs.isEmpty ? "No eligible EFB announcements received." : nil)
+                    self.discoveryMessage = !self.discoveryList.isCurrent(route: self.settings.destination) ? Self.routeChanged
+                        : self.snapshot.discoveryError ?? (self.discoveredEFBs.isEmpty ? Self.nothingFound : nil)
                 }
                 do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
             }
@@ -151,7 +167,7 @@ private final class SessionSubmission: @unchecked Sendable {
     func exitDiscovery() {
         discoveryToken = UUID(); discoveryWorker?.stop(); discoveryWorker = nil
         discoveryTask?.cancel(); discoveryTask = nil
-        findingEFBs = false; discoveryVisible = false; discoveredEFBs = []
+        findingEFBs = false; discoveryVisible = false; discoveredEFBs = []; discoveryList = DiscoveryList()
     }
     func start() {
         guard !busy, !discoveryVisible else { return }
@@ -249,6 +265,16 @@ private final class SessionSubmission: @unchecked Sendable {
                 self.snapshot = value
                 // Each shared-input rebind result after a WiFi address change is a diagnostics event.
                 if let rebind = value.inputRebind, rebind != previous.inputRebind { self.record("Receiver input: \(rebind)") }
+                if let follow = value.followMessage, follow != previous.followMessage { self.record("EFB: \(follow)") }
+                // Following a moved EFB: show and save the address this run now sends to.
+                if let followed = value.followedDestination, followed != self.settings.destination {
+                    self.settings.destination = followed
+                    // Find EFB results may list the old address: clear them, and drop any a running search reports later.
+                    self.discoveryList.routeChanged(); self.discoveredEFBs = []
+                    if self.discoveryVisible { self.discoveryMessage = Self.routeChanged }
+                    if !self.testing && !self.demo { UserDefaults.standard.set(try? JSONEncoder().encode(self.settings), forKey: self.storeKey) }
+                }
+                if let warning = value.readings?.coWarning, warning != previous.readings?.coWarning { self.record(warning) }
                 if value.elapsed - self.lastDiagnosticSample >= 30 {
                     self.record("elapsed=\(Int(value.elapsed)) input=\(value.received) sent=\(value.forwarded) age=\(String(format: "%.2f", value.age)) maxGap=\(String(format: "%.2f", value.maxGap)) weather=\(value.weather) outputErrors=\(value.sendErrors) receiver=\(value.receiverContact ?? "none")")
                     self.lastDiagnosticSample = value.elapsed

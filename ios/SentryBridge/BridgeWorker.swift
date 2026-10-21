@@ -41,6 +41,12 @@ struct BridgeSnapshot {
     var receiverContact: String?
     /// Latest shared-input rebind result after a WiFi address change; nil when none happened.
     var inputRebind: String?
+    /// Fresh battery, CO and temperature from the receiver's statistics stream; nil when none or stale.
+    var readings: ReceiverReadings?
+    /// The address this run now sends to after following a moved EFB; nil while unchanged.
+    var followedDestination: String?
+    /// Latest message from following the EFB (switched, or none or several devices answer).
+    var followMessage: String?
     var received: UInt64 = 0, forwarded: UInt64 = 0, sendErrors: UInt64 = 0
     var traffic: UInt32 = 0, weather: UInt32 = 0, heartbeat: UInt32 = 0
     var crcBad: UInt32 = 0
@@ -84,19 +90,54 @@ final class BridgeWorker: @unchecked Sendable {
     private let receiverQueue = DispatchQueue(label: "io.sentrybridge.receiver", qos: .userInitiated)
     private let cancel = sbio_cancel_create()
     private let receiverHTTPPort: UInt16, loopbackReceiver: Bool
-    init() { receiverHTTPPort = 80; loopbackReceiver = false }
+    // Following a moved EFB; host tests replace the probe and the local address, never the rule.
+    // A replaced probe still receives this worker's cancel token.
+    private let followCheckS: Double, sweepProbe: (([String], OpaquePointer?) -> [Bool]?)?, localAddress: (String) -> String?
+    private let readsLoopbackStats: Bool
+    // Host tests can refuse the switch to check that a refused one changes nothing but its message.
+    private let refusesSwitch: Bool
+    init() {
+        receiverHTTPPort = 80; loopbackReceiver = false; readsLoopbackStats = false; refusesSwitch = false
+        followCheckS = EFBFollower.checkS; sweepProbe = nil; localAddress = EFBSweep.localAddress(receiver:)
+    }
     #if SBIO_TESTING
     /// Host tests only: an unprivileged receiver web port and, optionally, a loopback fake receiver.
-    init(receiverHTTPPort: UInt16, loopbackReceiver: Bool = false) {
+    init(receiverHTTPPort: UInt16, loopbackReceiver: Bool = false, readsLoopbackStats: Bool = false) {
         self.receiverHTTPPort = receiverHTTPPort; self.loopbackReceiver = loopbackReceiver
+        self.readsLoopbackStats = readsLoopbackStats; refusesSwitch = false
+        followCheckS = EFBFollower.checkS; sweepProbe = nil; localAddress = EFBSweep.localAddress(receiver:)
+    }
+    /// Host tests only: a stubbed probe (no real network) and local address, and a short check interval.
+    convenience init(followCheckS: Double, local: String?, probe: @escaping ([String]) -> [Bool]?) {
+        self.init(followCheckS: followCheckS, local: local, cancellableProbe: { addresses, _ in probe(addresses) })
+    }
+    /// Host tests only: a probe given this worker's cancel token, as the real one is.
+    init(followCheckS: Double, local: String?, refusesSwitch: Bool = false, cancellableProbe: @escaping ([String], OpaquePointer?) -> [Bool]?) {
+        receiverHTTPPort = 80; loopbackReceiver = false; readsLoopbackStats = false
+        self.followCheckS = followCheckS; sweepProbe = cancellableProbe; localAddress = { _ in local }
+        self.refusesSwitch = refusesSwitch
     }
     #endif
+    private var probe: ([String]) -> [Bool]? {
+        guard let sweepProbe else { return EFBSweep.probe(cancel) }
+        return { [cancel] in sweepProbe($0, cancel) }
+    }
     // Queued and active requests retain this worker, so the token outlives every request using it.
     deinit { sbio_cancel_destroy(cancel) }
     private let lock = NSLock()
     private var stopped = false
     func stop() { lock.lock(); stopped = true; lock.unlock(); sbio_cancel_set(cancel) }
     private var shouldStop: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
+    private var ended = false
+    /// Helpers (statistics reader, EFB follower) run while this worker's run lasts and Stop is not pressed.
+    private var helpersRun: Bool { lock.lock(); defer { lock.unlock() }; return !stopped && !ended }
+    private var readings: ReceiverReadings?, readingsAt = -Double.infinity
+    private var lastReceive: Double?
+    // The destination this run sends to; the follower changes it only under the lock, for this run.
+    // The destination this run sends to. The follower only requests a switch; the UDP loop changes it after
+    // the adapter accepted the new address, so a refused switch leaves the route, checks and settings as they were.
+    private var destination = "", pendingDestination: (from: String, to: String)?
+    private var followedDestination: String?, followMessage: String?
     private var compatibilityResult: String?
     private var contactResult: String?
     private var contactInFlight = false
@@ -126,12 +167,30 @@ final class BridgeWorker: @unchecked Sendable {
             lock.lock(); compatibilityResult = result; lock.unlock()
         }
     }
-    func findEFBs(_ settings: BridgeSettings, update: @escaping ([DiscoveredEFB]) -> Void,
-                 finish: @escaping (String?) -> Void) {
+    /// Find EFB: announcements (listen false: the running bridge holds the port and lists them) and a
+    /// sweep of the receiver's network for devices that do not announce, reported once as "Device" on
+    /// the EFB UDP port. finish comes only after the sweep has ended, on every path; Stop cancels it.
+    func findEFBs(_ settings: BridgeSettings, listen: Bool = true, update: @escaping ([DiscoveredEFB]) -> Void,
+                 swept: @escaping ([DiscoveredEFB]) -> Void = { _ in }, finish: @escaping (String?) -> Void) {
         Self.discoveryQueue.async { [self] in
+            let sweeping = DispatchGroup()
+            // Not on the receiver's WiFi: announcements only.
+            if !shouldStop, let local = localAddress(settings.source) {
+                sweeping.enter()
+                DispatchQueue.global(qos: .userInitiated).async { [self] in
+                    defer { sweeping.leave() }
+                    let port = UInt16(settings.outputPort) ?? 0, input = UInt16(settings.inputPort) ?? 0
+                    let found = EFBSweep.sweep(local: local, exclude: [settings.source], probe: probe, cancelled: { shouldStop })
+                        .filter { sbio_efb_candidate($0, port, settings.source, input) != 0 }
+                    let now = sbio_now()
+                    if !shouldStop { swept(found.map { DiscoveredEFB(address: $0, port: port, app: "Device", seen: now) }) }
+                }
+            }
             var error: String?
+            defer { sweeping.wait(); finish(error) }
+            guard listen else { return }
             do {
-                guard !shouldStop else { finish(nil); return }
+                guard !shouldStop else { return }
                 let listener = try EFBListener(port: UInt16(settings.discoveryPort ?? "63093") ?? 0)
                 defer { listener.close() }
                 let cache = EFBAnnouncements(settings)
@@ -145,21 +204,26 @@ final class BridgeWorker: @unchecked Sendable {
                 if !shouldStop { update(cache.snapshot()) }
                 listener.close()
             } catch let caught { error = caught.localizedDescription }
-            finish(error)
         }
     }
     func run(_ settings: BridgeSettings, duration: Double?, demo: Bool = false,
              update: @escaping (BridgeSnapshot) -> Void,
              finish: @escaping (String?, Bool) -> Void) {
         DispatchQueue(label: "io.sentrybridge.udp", qos: .userInitiated).async { [self] in
-            let result = process(settings, duration: duration, demo: demo, update: update)
+            let helpers = DispatchGroup()
+            let result = process(settings, duration: duration, demo: demo, helpers: helpers, update: update)
             // A finished run sends nothing more to the receiver, however it ended.
+            lock.lock(); ended = true; lock.unlock()
             sbio_cancel_set(cancel)
+            // However the run ended (Stop, its length completed, a UDP failure), the cancel above also stops
+            // the reader's waits and the follower's probes, which watch the same token, so both end within
+            // about 50 ms, a sweep in progress included. A new Start comes only after this run.
+            helpers.wait()
             // Socket close precedes completion; a restart cannot race the previous bind.
             finish(result.0, result.1)
         }
     }
-    private func process(_ settings: BridgeSettings, duration: Double?, demo: Bool,
+    private func process(_ settings: BridgeSettings, duration: Double?, demo: Bool, helpers: DispatchGroup,
                          update: (BridgeSnapshot) -> Void) -> (String?, Bool) {
         guard !shouldStop else { return (nil, false) }
         // An exited search must release its socket before a bridge can bind that port.
@@ -196,11 +260,38 @@ final class BridgeWorker: @unchecked Sendable {
             sbio_observe(io, nil, nil); listener?.close()
             withExtendedLifetime(cache) {}
         }
+        lock.lock(); destination = settings.destination; lock.unlock()
+        // Readings while forwarding, Compatibility Mode included; never in the demo or from a loopback source.
+        if !demo && (settings.contactsReceiver || readsLoopbackStats) {
+            let reader = ReceiverReadingsReader(receiver: settings.source, port: receiverHTTPPort, cancel: cancel,
+                                                running: { [self] in helpersRun }, publish: { [self] values in
+                lock.lock(); readings = values; readingsAt = sbio_now(); lock.unlock()
+            })
+            helpers.enter()
+            DispatchQueue(label: "io.sentrybridge.readings", qos: .utility).async { reader.run(); helpers.leave() }
+        }
+        // Follow a moved EFB only for one Other device address.
+        if !demo && (settings.contactsReceiver || sweepProbe != nil) && !BridgeSettings.isLoopback(settings.destination) {
+            helpers.enter()
+            DispatchQueue(label: "io.sentrybridge.follow", qos: .utility).async { [self] in follow(settings); helpers.leave() }
+        }
         var lastUpdate = 0.0, lastContact = -Double.infinity, lastRefresh = 0.0
         var inputRebind: String?
         while !shouldStop {
             guard sbio_step(io, 50) == 0 else { return ("UDP reception failed. Check WiFi and Local Network access.", false) }
             guard !shouldStop else { return (nil, false) }
+            lock.lock(); let next = pendingDestination; pendingDestination = nil; lock.unlock()
+            if let next {
+                let accepted = !refusesSwitch && sbio_set_destination(io, next.to) == 0
+                lock.lock()
+                if accepted {
+                    destination = next.to; followedDestination = next.to
+                    followMessage = EFBFollower.followMessage(from: next.from, to: next.to)
+                } else {
+                    followMessage = "The EFB at \(next.from) stopped answering, but \(next.to) cannot be used; still sending to \(next.from)."
+                }
+                lock.unlock()
+            }
             do { try listener?.step(cache) }
             catch { discoveryError = error.localizedDescription; listener?.close(); listener = nil }
             // The core schedules at most 3 requests per encrypted episode, 20 s apart.
@@ -208,6 +299,7 @@ final class BridgeWorker: @unchecked Sendable {
             let now = sbio_now()
             if now - lastUpdate >= 1 {
                 var s = sbio_status(); sbio_snapshot(io, &s)
+                lock.lock(); if s.age >= 0 { lastReceive = now - s.age }; lock.unlock()
                 // Contact at start, every 30 s while receiving, every 5 s while silent.
                 let silent = s.age < 0 || s.age >= 3
                 // A new DHCP lease leaves a shared input on the old address; rebind in place.
@@ -223,12 +315,44 @@ final class BridgeWorker: @unchecked Sendable {
                 var value = BridgeSnapshot(s)
                 value.efbs = cache.snapshot(); value.discoveryListening = sharesInput || listener != nil
                 value.discoveryError = discoveryError
-                lock.lock(); value.compatibilityRequest = compatibilityResult; value.receiverContact = contactResult; lock.unlock()
+                lock.lock(); value.compatibilityRequest = compatibilityResult; value.receiverContact = contactResult
+                value.readings = now - readingsAt <= ReceiverReadingsReader.staleS ? readings : nil
+                value.followedDestination = followedDestination; value.followMessage = followMessage; lock.unlock()
                 value.inputRebind = inputRebind
                 update(value); lastUpdate = now
                 if let duration, s.elapsed >= duration { return (nil, true) }
             }
         }
         return (nil, false)
+    }
+    /// While forwarding to one Other device address, check it every 30 s; after an EFB that answered
+    /// missed two checks, while receiver data still arrives and this device is on the receiver's network,
+    /// sweep and switch to the one other device that answers (EFBFollower). The switch is committed under
+    /// the lock, only for this run and only if the destination has not changed since the probe.
+    private func follow(_ settings: BridgeSettings) {
+        var rule = EFBFollower()
+        let port = UInt16(settings.outputPort) ?? 0, input = UInt16(settings.inputPort) ?? 0
+        while helpersRun {
+            let wake = sbio_now() + followCheckS
+            while helpersRun && sbio_now() < wake { Thread.sleep(forTimeInterval: 0.05) }
+            lock.lock(); let current = destination, heard = lastReceive; lock.unlock()
+            guard helpersRun, let heard, sbio_now() - heard < 10 else { continue }
+            guard let answered = probe([current])?.first, helpersRun else { continue }
+            guard rule.checked(answered: answered), let local = localAddress(settings.source) else { continue }
+            let found = EFBSweep.sweep(local: local, exclude: [settings.source], probe: probe, cancelled: { !helpersRun })
+                .filter { sbio_efb_candidate($0, port, settings.source, input) != 0 }
+            guard helpersRun else { continue }
+            switch rule.swept(found, current: current) {
+            case .keep: continue
+            case .report(let message):
+                lock.lock(); followMessage = message; lock.unlock()
+            case .follow(let target):
+                lock.lock()
+                guard !stopped, !ended, destination == current, pendingDestination == nil else { lock.unlock(); continue }
+                pendingDestination = (current, target)
+                lock.unlock()
+                rule.followed()
+            }
+        }
     }
 }

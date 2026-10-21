@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -401,6 +402,327 @@ int sbio_request_compatibility(const char *receiver_ip, uint16_t http_port, int 
 int sbio_request_status(const char *receiver_ip, uint16_t http_port, int timeout_ms,
                         sbio_cancel *cancel, char *error, size_t error_cap) {
     return receiver_http(receiver_ip, http_port, timeout_ms, "/?action=get", NULL, cancel, error, error_cap);
+}
+int sbio_set_destination(sbio *io, const char *destination_ip) {
+    uint32_t dst;
+    if (!io || io->demo || io->shared || !sb_parse_ipv4(destination_ip, &dst) || !unicast(dst) ||
+        (dst >> 24) == 127 || interface_broadcast(dst)) return -1;
+    io->destination.sin_addr.s_addr = htonl(dst);
+    return 0;
+}
+int sbio_route_local(const char *receiver_ip, uint16_t port, char *out, size_t cap) {
+    uint32_t receiver, local;
+    if (!sb_parse_ipv4(receiver_ip, &receiver) || routed_address(receiver, port ? port : 9, &local) < 0) return -1;
+    struct in_addr in = { .s_addr = htonl(local) };
+    return inet_ntop(AF_INET, &in, out, (socklen_t)cap) ? 0 : -1;
+}
+/* A TCP knock on a port nothing listens on (tools/discovery.py): a device answers at once, accepting
+   or refusing, while an unused address stays silent. Darwin reports a refusal as ECONNREFUSED, from
+   connect itself or later in SO_ERROR. A window keeps the descriptors well below the process limit. */
+#define PROBE_WINDOW 128
+int sbio_probe(const char *const *addresses, size_t count, uint16_t port, int timeout_ms,
+               sbio_cancel *cancel, uint8_t *results) {
+    struct pollfd fds[PROBE_WINDOW];
+    size_t which[PROBE_WINDOW], next = 0, active = 0;
+    double deadline[PROBE_WINDOW];
+    int outcome = 0;
+    memset(results, 0, count);
+    while (next < count || active) {
+        if (cancelled(cancel)) { outcome = SBIO_HTTP_CANCELLED; break; }
+        while (next < count && active < PROBE_WINDOW) {
+            size_t i = next++;
+            struct sockaddr_in sa = {0};
+            sa.sin_family = AF_INET; sa.sin_port = htons(port);
+            if (!port || !addresses[i] || inet_pton(AF_INET, addresses[i], &sa.sin_addr) != 1) continue;
+            int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP), one = 1;
+            if (s < 0) continue;
+            setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+            if (fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK) < 0) { close(s); continue; }
+            if (connect(s, (struct sockaddr *)&sa, sizeof sa) == 0 || errno == ECONNREFUSED) {
+                results[i] = 1; close(s); continue;
+            }
+            if (errno != EINPROGRESS) { close(s); continue; }  /* no route, or Local Network access denied */
+            fds[active] = (struct pollfd){ .fd = s, .events = POLLOUT };
+            which[active] = i; deadline[active] = sbio_now() + timeout_ms / 1000.0; active++;
+        }
+        if (!active) continue;
+        int r = poll(fds, (nfds_t)active, 50);
+        if (r < 0 && errno != EINTR) { outcome = -1; break; }
+        double now = sbio_now();
+        for (size_t k = 0; k < active;) {
+            int done = now >= deadline[k];
+            if (r > 0 && fds[k].revents) {
+                int so = 0; socklen_t sl = sizeof so;
+                if (getsockopt(fds[k].fd, SOL_SOCKET, SO_ERROR, &so, &sl) == 0 && (so == 0 || so == ECONNREFUSED))
+                    results[which[k]] = 1;
+                done = 1;
+            }
+            if (!done) { k++; continue; }
+            close(fds[k].fd); active--;
+            fds[k] = fds[active]; which[k] = which[active]; deadline[k] = deadline[active];
+        }
+    }
+    for (size_t k = 0; k < active; k++) close(fds[k].fd);
+    return outcome;
+}
+/* SHA-1 only for checking the handshake's Sec-WebSocket-Accept (RFC 6455), not for security. */
+static void sha1(const uint8_t *data, size_t len, uint8_t out[20]) {
+    uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
+    uint8_t block[64];
+    uint64_t bits = (uint64_t)len * 8;
+    for (size_t offset = 0, total = ((len + 8) / 64 + 1) * 64; offset < total; offset += 64) {
+        for (size_t i = 0; i < 64; i++) {
+            size_t at = offset + i;
+            block[i] = at < len ? data[at] : at == len ? 0x80 : 0;
+        }
+        if (offset + 64 == total) for (int i = 0; i < 8; i++) block[56 + i] = (uint8_t)(bits >> (56 - 8 * i));
+        uint32_t w[80];
+        for (int i = 0; i < 16; i++) w[i] = (uint32_t)block[4*i] << 24 | (uint32_t)block[4*i+1] << 16 | (uint32_t)block[4*i+2] << 8 | block[4*i+3];
+        for (int i = 16; i < 80; i++) { uint32_t x = w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16]; w[i] = x << 1 | x >> 31; }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for (int i = 0; i < 80; i++) {
+            uint32_t f, k;
+            if (i < 20) { f = (b & c) | (~b & d); k = 0x5A827999u; }
+            else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1u; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDCu; }
+            else { f = b ^ c ^ d; k = 0xCA62C1D6u; }
+            uint32_t t = (a << 5 | a >> 27) + f + e + k + w[i];
+            e = d; d = c; c = b << 30 | b >> 2; b = a; a = t;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
+    }
+    for (int i = 0; i < 20; i++) out[i] = (uint8_t)(h[i / 4] >> (24 - 8 * (i % 4)));
+}
+static void base64(const uint8_t *data, size_t len, char *out) {
+    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t o = 0;
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t v = (uint32_t)data[i] << 16 | (i + 1 < len ? (uint32_t)data[i+1] << 8 : 0) | (i + 2 < len ? data[i+2] : 0);
+        out[o++] = table[v >> 18 & 63]; out[o++] = table[v >> 12 & 63];
+        out[o++] = i + 1 < len ? table[v >> 6 & 63] : '=';
+        out[o++] = i + 2 < len ? table[v & 63] : '=';
+    }
+    out[o] = 0;
+}
+#define WS_MESSAGE_LIMIT (1024 * 1024)  /* per message, fragments included; the same limit as desktop and Android */
+#define WS_HANDSHAKE_S 10.0
+struct sbio_ws {
+    int s, first_op;
+    uint8_t *buffer, *message;
+    size_t used, capacity, message_length, message_capacity;
+    double heard;
+};
+static int ws_send(sbio_ws *ws, int opcode, const uint8_t *payload, size_t n, double deadline, sbio_cancel *cancel) {
+    uint8_t frame[2 + 8 + 4 + 125], mask[4];
+    if (n > 125) return -1;  /* client frames are only control frames here */
+    arc4random_buf(mask, sizeof mask);
+    size_t length = 0;
+    frame[length++] = (uint8_t)(0x80 | opcode); frame[length++] = (uint8_t)(0x80 | n);
+    memcpy(frame + length, mask, 4); length += 4;
+    for (size_t i = 0; i < n; i++) frame[length++] = payload[i] ^ mask[i % 4];
+    for (size_t sent = 0; sent < length;) {
+        if (deadline > 0 && wait_ready(ws->s, POLLOUT, deadline, cancel) != 1) return -1;
+        ssize_t r = send(ws->s, frame + sent, length - sent, 0);
+        if (r > 0) sent += (size_t)r;
+        else if (r < 0 && errno != EAGAIN && errno != EINTR) return -1;
+        else if (deadline <= 0) return -1;
+    }
+    return 0;
+}
+void sbio_ws_close(sbio_ws *ws, int send_close) {
+    if (!ws) return;
+    static const uint8_t normal[2] = {0x03, 0xe8};
+    if (send_close && ws->s >= 0) ws_send(ws, 0x8, normal, 2, 0, NULL);
+    if (ws->s >= 0) close(ws->s);
+    free(ws->buffer); free(ws->message); free(ws);
+}
+static int ws_reserve(uint8_t **buffer, size_t *capacity, size_t needed) {
+    if (needed <= *capacity) return 0;
+    size_t size = *capacity ? *capacity : 4096;
+    while (size < needed) size *= 2;
+    uint8_t *grown = realloc(*buffer, size);
+    if (!grown) return -1;
+    *buffer = grown; *capacity = size; return 0;
+}
+sbio_ws *sbio_ws_open(const char *receiver_ip, uint16_t port, const char *path, int connect_ms,
+                      sbio_cancel *cancel, char *error, size_t cap) {
+    if (cancelled(cancel)) { snprintf(error, cap, "Cancelled"); return NULL; }
+    struct sockaddr_in sa = {0};
+    sa.sin_family = AF_INET; sa.sin_port = htons(port);
+    if (!port || inet_pton(AF_INET, receiver_ip, &sa.sin_addr) != 1) { snprintf(error, cap, "Invalid receiver address"); return NULL; }
+    sbio_ws *ws = calloc(1, sizeof *ws);
+    if (!ws) { snprintf(error, cap, "Out of memory"); return NULL; }
+    ws->first_op = -1;
+    ws->s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (ws->s < 0) { snprintf(error, cap, "Socket error %d", errno); sbio_ws_close(ws, 0); return NULL; }
+    int one = 1, ready = 1;
+    setsockopt(ws->s, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+    fcntl(ws->s, F_SETFL, fcntl(ws->s, F_GETFL, 0) | O_NONBLOCK);
+    double deadline = sbio_now() + connect_ms / 1000.0;
+    if (connect(ws->s, (struct sockaddr *)&sa, sizeof sa) != 0) {
+        int so = 0; socklen_t sl = sizeof so;
+        if (errno != EINPROGRESS) goto refused;
+        if ((ready = wait_ready(ws->s, POLLOUT, deadline, cancel)) != 1) goto unready;
+        if (getsockopt(ws->s, SOL_SOCKET, SO_ERROR, &so, &sl) != 0 || so) goto refused;
+    }
+    uint8_t nonce[16], digest[20];
+    char key[32], expected[32], request[512];
+    arc4random_buf(nonce, sizeof nonce);
+    base64(nonce, sizeof nonce, key);
+    int len = snprintf(request, sizeof request,
+                       "GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                       "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\nOrigin: http://%s\r\n\r\n",
+                       path, receiver_ip, key, receiver_ip);
+    if (len <= 0 || len >= (int)sizeof request) { snprintf(error, cap, "Invalid WebSocket path"); sbio_ws_close(ws, 0); return NULL; }
+    deadline = sbio_now() + WS_HANDSHAKE_S;  /* the whole handshake, however slowly its bytes arrive */
+    for (int sent = 0; sent < len;) {
+        if ((ready = wait_ready(ws->s, POLLOUT, deadline, cancel)) != 1) goto unready;
+        ssize_t n = send(ws->s, request + sent, (size_t)(len - sent), 0);
+        if (n > 0) sent += (int)n;
+        else if (n < 0 && errno != EAGAIN && errno != EINTR) { snprintf(error, cap, "Sending to the receiver failed (%d)", errno); sbio_ws_close(ws, 0); return NULL; }
+    }
+    char *end = NULL;
+    while (!end) {
+        if (ws_reserve(&ws->buffer, &ws->capacity, ws->used + 1025)) { snprintf(error, cap, "Out of memory"); sbio_ws_close(ws, 0); return NULL; }
+        if ((ready = wait_ready(ws->s, POLLIN, deadline, cancel)) != 1) goto unready;
+        ssize_t n = recv(ws->s, ws->buffer + ws->used, 1024, 0);
+        if (n == 0) { snprintf(error, cap, "The receiver closed the connection during the WebSocket handshake"); sbio_ws_close(ws, 0); return NULL; }
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EINTR) continue;
+            snprintf(error, cap, "Receiver connection failed (%d)", errno); sbio_ws_close(ws, 0); return NULL;
+        }
+        ws->used += (size_t)n; ws->buffer[ws->used] = 0;
+        end = memmem(ws->buffer, ws->used, "\r\n\r\n", 4);
+        if (!end && ws->used > 16384) { snprintf(error, cap, "WebSocket handshake response too large"); sbio_ws_close(ws, 0); return NULL; }
+    }
+    size_t head = (size_t)(end - (char *)ws->buffer);
+    char *response = (char *)ws->buffer;
+    response[head] = 0;
+    char *line_end = strstr(response, "\r\n");
+    size_t status_length = line_end ? (size_t)(line_end - response) : head;
+    int switching = 0;
+    for (size_t i = 0; i + 4 <= status_length; i++)
+        if (!memcmp(response + i, " 101", 4) && (i + 4 == status_length || response[i + 4] == ' ')) switching = 1;
+    if (!switching) { snprintf(error, cap, "WebSocket handshake refused: %.*s", (int)(status_length > 200 ? 200 : status_length), response); sbio_ws_close(ws, 0); return NULL; }
+    char accept_key[64];
+    snprintf(accept_key, sizeof accept_key, "%s258EAFA5-E914-47DA-95CA-C5AB0DC85B11", key);
+    sha1((const uint8_t *)accept_key, strlen(accept_key), digest);
+    base64(digest, sizeof digest, expected);
+    const char *accept = NULL; size_t accept_length = 0;
+    for (char *line = line_end ? line_end + 2 : response + head; line < response + head;) {
+        char *next = strstr(line, "\r\n");
+        size_t length = next ? (size_t)(next - line) : strlen(line);
+        char *colon = memchr(line, ':', length);
+        if (colon) {
+            const char *name = line, *name_end = colon;
+            while (name < name_end && (*name == ' ' || *name == '\t')) name++;
+            while (name_end > name && (name_end[-1] == ' ' || name_end[-1] == '\t')) name_end--;
+            if (name_end - name == 20 && !strncasecmp(name, "sec-websocket-accept", 20)) {
+                const char *value = colon + 1, *value_end = line + length;
+                while (value < value_end && (*value == ' ' || *value == '\t')) value++;
+                while (value_end > value && (value_end[-1] == ' ' || value_end[-1] == '\t')) value_end--;
+                accept = value; accept_length = (size_t)(value_end - value);  /* the last one counts, as on desktop */
+            }
+        }
+        if (!next) break;
+        line = next + 2;
+    }
+    if (!accept || accept_length != strlen(expected) || memcmp(accept, expected, accept_length)) {
+        snprintf(error, cap, "Bad Sec-WebSocket-Accept from the receiver"); sbio_ws_close(ws, 0); return NULL;
+    }
+    /* Frame bytes that arrived with the handshake stay in the buffer. */
+    memmove(ws->buffer, ws->buffer + head + 4, ws->used - head - 4);
+    ws->used -= head + 4;
+    ws->heard = sbio_now();
+    return ws;
+refused:
+    snprintf(error, cap, "Receiver web server refused or unreachable at %s:%u", receiver_ip, port);
+    sbio_ws_close(ws, 0); return NULL;
+unready:
+    if (ready == -2) snprintf(error, cap, "Cancelled");
+    else if (ready == 0) snprintf(error, cap, "Receiver WebSocket did not answer in time at %s:%u", receiver_ip, port);
+    else snprintf(error, cap, "Receiver connection failed (%d)", errno);
+    sbio_ws_close(ws, 0); return NULL;
+}
+/* Reads until the buffer holds n bytes, checking cancel and the silence limit at least every 50 ms. */
+static int ws_fill(sbio_ws *ws, size_t n, double silence_s, sbio_cancel *cancel, char *error, size_t cap) {
+    if (ws_reserve(&ws->buffer, &ws->capacity, n)) { snprintf(error, cap, "Out of memory"); return -1; }
+    while (ws->used < n) {
+        if (cancelled(cancel)) return SBIO_HTTP_CANCELLED;
+        if (sbio_now() - ws->heard > silence_s) { snprintf(error, cap, "No receiver statistics for %.0f s", silence_s); return -1; }
+        int ready = wait_ready(ws->s, POLLIN, sbio_now() + 0.05, cancel);
+        if (ready == -2) return SBIO_HTTP_CANCELLED;
+        if (ready < 0) { snprintf(error, cap, "Receiver connection failed (%d)", errno); return -1; }
+        if (!ready) continue;
+        ssize_t r = recv(ws->s, ws->buffer + ws->used, ws->capacity - ws->used, 0);
+        if (r == 0) { snprintf(error, cap, "The receiver closed the connection"); return -1; }
+        if (r < 0) {
+            if (errno == EAGAIN || errno == EINTR) continue;
+            snprintf(error, cap, "Receiver connection failed (%d)", errno); return -1;
+        }
+        ws->used += (size_t)r;
+    }
+    return 1;
+}
+int sbio_ws_message(sbio_ws *ws, double silence_s, sbio_cancel *cancel, const uint8_t **data,
+                    size_t *length, char *error, size_t cap) {
+    for (;;) {
+        if (cancelled(cancel)) return SBIO_HTTP_CANCELLED;
+        int r;
+        if ((r = ws_fill(ws, 2, silence_s, cancel, error, cap)) != 1) return r;
+        uint8_t b0 = ws->buffer[0], b1 = ws->buffer[1];
+        uint64_t n = b1 & 0x7f;
+        size_t header = 2;
+        if (n == 126) {
+            if ((r = ws_fill(ws, 4, silence_s, cancel, error, cap)) != 1) return r;
+            n = (uint64_t)ws->buffer[2] << 8 | ws->buffer[3]; header = 4;
+        } else if (n == 127) {
+            if ((r = ws_fill(ws, 10, silence_s, cancel, error, cap)) != 1) return r;
+            n = 0;
+            for (int i = 0; i < 8; i++) n = n << 8 | ws->buffer[2 + i];
+            header = 10;
+        }
+        size_t pending = ws->first_op >= 0 ? ws->message_length : 0;
+        if (n > WS_MESSAGE_LIMIT || n + pending > WS_MESSAGE_LIMIT) { snprintf(error, cap, "WebSocket message exceeds 1 MiB"); return -1; }
+        size_t masked = b1 & 0x80 ? 4 : 0, total = header + masked + (size_t)n;
+        if ((r = ws_fill(ws, total, silence_s, cancel, error, cap)) != 1) return r;
+        uint8_t *payload = ws->buffer + header + masked;
+        for (size_t i = 0; masked && i < n; i++) payload[i] ^= ws->buffer[header + i % 4];
+        int fin = b0 & 0x80, op = b0 & 0x0f;
+        if (op == 0x9) {  /* ping: answer unless cancelled */
+            uint8_t echo[125];
+            size_t m = n > 125 ? 125 : (size_t)n;
+            memcpy(echo, payload, m);
+            memmove(ws->buffer, ws->buffer + total, ws->used - total); ws->used -= total;
+            if (!cancelled(cancel) && ws_send(ws, 0xA, echo, m, sbio_now() + 1, cancel) != 0 && !cancelled(cancel)) {
+                snprintf(error, cap, "Sending to the receiver failed (%d)", errno); return -1;
+            }
+            continue;
+        }
+        if (op == 0xA) {  /* pong: ignored, even between the fragments of a message */
+            memmove(ws->buffer, ws->buffer + total, ws->used - total); ws->used -= total;
+            continue;
+        }
+        if (op == 0x8) {  /* close: answer with its status code */
+            uint8_t code[2];
+            size_t m = n < 2 ? (size_t)n : 2;
+            memcpy(code, payload, m);
+            ws_send(ws, 0x8, code, m, 0, NULL);
+            memmove(ws->buffer, ws->buffer + total, ws->used - total); ws->used -= total;
+            return 0;
+        }
+        if (op == 0x1 || op == 0x2) { ws->first_op = op; ws->message_length = 0; }
+        if ((op == 0x1 || op == 0x2 || (op == 0x0 && ws->first_op >= 0)) && n) {
+            if (ws_reserve(&ws->message, &ws->message_capacity, ws->message_length + (size_t)n)) { snprintf(error, cap, "Out of memory"); return -1; }
+            memcpy(ws->message + ws->message_length, payload, (size_t)n); ws->message_length += (size_t)n;
+        }
+        memmove(ws->buffer, ws->buffer + total, ws->used - total); ws->used -= total;
+        if (fin && ws->first_op >= 0) {
+            ws->first_op = -1; ws->heard = sbio_now();
+            *data = ws->message; *length = ws->message_length;
+            return 1;
+        }
+    }
 }
 void sbio_close(sbio *io) {
     if (!io) return;

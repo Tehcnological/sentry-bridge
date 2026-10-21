@@ -54,4 +54,34 @@ int sbio_request_compatibility(const char *receiver_ip, uint16_t http_port, int 
    this request keeps the client active and restores the stream. */
 int sbio_request_status(const char *receiver_ip, uint16_t http_port, int timeout_ms,
                         sbio_cancel *cancel, char *error, size_t error_cap);
+/* Owning worker only: send to another EFB address from now on (following a moved EFB), keeping the
+   output port, counters and decoder state. 0 changed, -1 refused (address kept): not a valid
+   unicast destination, or this route shares its input with an EFB on this device. */
+int sbio_set_destination(sbio *io, const char *destination_ip);
+/* Any thread. The local IPv4 address the system routes to receiver_ip (no datagram is sent), as a
+   dotted string. 0 found, -1 no route. */
+int sbio_route_local(const char *receiver_ip, uint16_t port, char *out, size_t cap);
+/* Any thread. One TCP connection attempt to port per address, up to 128 at once, each bounded by
+   timeout_ms; a connection that is accepted or refused means a device answered (results[i] = 1),
+   anything else (a timeout, no route, Local Network access denied) means none (0). Nothing is sent
+   on an accepted connection; it is closed at once. Returns 0, SBIO_HTTP_CANCELLED when cancel was
+   set (within about 50 ms; results then incomplete), or -1 when polling failed. */
+int sbio_probe(const char *const *addresses, size_t count, uint16_t port, int timeout_ms,
+               sbio_cancel *cancel, uint8_t *results);
+/* Read-only WebSocket client for the receiver's statistics stream (ws://receiver_ip:port/path), the
+   same as the receiver's own statistics page: the handshake, pong replies and a close. Any one
+   thread per connection. */
+typedef struct sbio_ws sbio_ws;
+/* Connect within connect_ms, then the handshake within 10 s. NULL with error set, or with error
+   "Cancelled" when cancel was set (checked at least every 50 ms). */
+sbio_ws *sbio_ws_open(const char *receiver_ip, uint16_t port, const char *path, int connect_ms,
+                      sbio_cancel *cancel, char *error, size_t error_cap);
+/* The next complete text or binary message: 1 with *data and *length set (valid until the next
+   call), 0 when the receiver closed the stream, -1 with error set (including no message for
+   silence_s, counted from the handshake or the previous message: pings and partial frames do not
+   count), or SBIO_HTTP_CANCELLED. Messages are limited to 1 MiB, fragments included. */
+int sbio_ws_message(sbio_ws *ws, double silence_s, sbio_cancel *cancel, const uint8_t **data,
+                    size_t *length, char *error, size_t error_cap);
+/* send_close: one non-blocking attempt to send a normal close frame first. */
+void sbio_ws_close(sbio_ws *ws, int send_close);
 #endif

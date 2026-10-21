@@ -45,7 +45,7 @@ The Sentry returns to ForeFlight mode every time it powers up. With **Automatic 
   confirmed). The Sentry's attitude (AHRS), carbon monoxide, temperature, barometric and battery
   data do not reach the EFB, because Compatibility Mode does not include them.
 - Sentry Bridge shows the Sentry's **battery, CO level and temperature** on its own screen and warns
-  when CO reaches the Sentry's alarm level (not yet on iPhone and iPad).
+  when CO reaches the Sentry's alarm level (at 50 ppm on iPhone and iPad).
 - Testing so far covers the Sentry Plus with ForeFlight, Garmin Pilot, AvareX and FltPlan Go on an
   iPad, and the Windows app with a Sentry Plus. Details and known limits are in
   [Compatibility](docs/Compatibility.md).

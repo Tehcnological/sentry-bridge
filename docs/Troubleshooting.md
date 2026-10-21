@@ -44,4 +44,4 @@ uninstall the app, then install the new APK. Uninstalling removes the app's sett
 ## Battery, CO and temperature show "-"
 
 They appear only while the bridge is forwarding and the Sentry is reachable. After the Sentry restarts
-they return within about 15 seconds of it reconnecting. iPhone and iPad do not show them yet.
+they return within about 15 seconds of it reconnecting.
