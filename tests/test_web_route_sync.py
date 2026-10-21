@@ -13,7 +13,8 @@ NAMES = ("updateDestination", "routeState", "pullForm", "pullSettings", "pullVal
 # Runs app.js's own functions against a small DOM. Prints the state after each poll.
 HARNESS = r"""
 class El { constructor(id) { this.id = id; this.value = ""; this._checked = false; this.hidden = false;
-  this.disabled = false; this.textContent = ""; }
+  this.disabled = false; this.textContent = ""; this.children = []; }
+  replaceChildren(...children) { this.children = children; }
   closest() { return $(this.id + "-label"); }
   get checked() { return this._checked; }
   set checked(on) {  // the two topology radios share a group, as in the page
@@ -34,11 +35,12 @@ FUNCTIONS
 const settings = {sentryIp: "192.168.4.1", listenPort: 4000, efbPort: 4000, httpPort: 80, announcePort: 63093,
   ownshipHex: "", staleSeconds: 15, intervalSeconds: 1, statsSeconds: 10, reference: null};
 function poll(s) { status = s; pullForm(s); return {address: $("address").value, hidden: $("address-field").hidden,
-  help: $("topology-help").textContent, validationHidden: $("validation").hidden, checked}; }
+  help: $("topology-help").textContent, validationHidden: $("validation").hidden, checked,
+  results: $("discovered").children.length}; }
 // Browser A: This device, validated.
 status = {settings, routesRequest: {topology: "same"}};
 $("same").checked = true; snapshotForm(); updateDestination();
-checked = true; $("validation").hidden = false;
+checked = true; $("validation").hidden = false; $("discovered").children = ["Device · 192.168.4.15"];
 const out = [poll({settings, routesRequest: {topology: "same"}})];
 // Browser B saved Other device 192.168.4.20.
 out.push(poll({settings, routesRequest: {topology: "network", address: "192.168.4.20"}}));
@@ -82,7 +84,7 @@ def function_source(script, name):
 class TestWebRouteSync(unittest.TestCase):
     def test_untouched_browser_shows_a_route_saved_elsewhere(self):
         script = (ROOT / "web/app.js").read_text(encoding="utf-8")
-        self.assertIn("if (routeState() !== shownRoute) updateDestination();", script)
+        self.assertIn("if (routeState() !== shownRoute) { $(\"discovered\").replaceChildren(); updateDestination(); }", script)
         if node() is None:
             return  # shortcut: this host has no Node; the line above still pins the refresh
         fields = re.search(r"const settingsFields = (\{[^}]*\});", script).group(1)
@@ -94,11 +96,13 @@ class TestWebRouteSync(unittest.TestCase):
         self.assertEqual(android, {"hidden": True, "network": True, "simulatorHidden": False})
         self.assertTrue(same["hidden"])
         self.assertTrue(same["checked"])  # an unchanged poll keeps the validation
+        self.assertEqual(same["results"], 1)  # and the Find EFB results
         self.assertEqual(network["address"], "192.168.4.20")
         self.assertFalse(network["hidden"])  # the address field appears
         self.assertNotIn("127.0.0.1", network["help"])
         self.assertTrue(network["validationHidden"])
         self.assertFalse(network["checked"])  # the This device validation no longer counts
+        self.assertEqual(network["results"], 0)  # Find EFB results may list the old address
         self.assertIn("UDP 4001", port["help"])
         self.assertFalse(port["checked"])
         self.assertTrue(reload["checked"], reload)  # restored route, unchanged poll: nothing invalidated

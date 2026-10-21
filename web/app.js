@@ -201,8 +201,9 @@ function pullForm(s) {
   const settings = s.settings;
   if (!settings) return;
   pullSettings(s, settings);
-  // Another browser changed the route: show its address field, helper and port, and drop stale validation.
-  if (routeState() !== shownRoute) updateDestination();
+  // Another browser, or the bridge following a moved EFB, changed the route: show it, and drop stale
+  // validation and Find EFB results (they may list the old address).
+  if (routeState() !== shownRoute) { $("discovered").replaceChildren(); updateDestination(); }
 }
 function routeState() {
   return [$("host").value, topology(), synced.address ?? "", efbPort(), status?.settings?.listenPort, status?.settings?.announcePort].join("|");
