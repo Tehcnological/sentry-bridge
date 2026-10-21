@@ -13,10 +13,21 @@ unsigned app file: it gets a signature when you install it, with one of the opti
   - **A paid Apple Developer account**: the app keeps working for up to a year between installs.
   - **Feather** with a developer certificate you already have: signs and installs on the device itself.
 
+## Add the Sentry Bridge source
+
+SideStore, AltStore and Feather can install Sentry Bridge from its source and show new versions as
+updates. Add this source URL in the app's **Sources** screen:
+
+```
+https://raw.githubusercontent.com/Tehcnological/sentry-bridge/master/altsource.json
+```
+
+You can also download `sentry-bridge.ipa` from the release and open it in any of them.
+
 ## Install with SideStore or AltStore (free Apple ID)
 
 1. Set up [SideStore](https://sidestore.io) or [AltStore](https://altstore.io) with their own guides.
-2. Open `sentry-bridge.ipa` in it, or share the file to it.
+2. Install Sentry Bridge from its source, or open `sentry-bridge.ipa` in the app.
 3. If iOS asks, turn on **Settings → Privacy & Security → Developer Mode** and restart.
 4. Open Sentry Bridge and allow **Local Network** access when asked.
 
@@ -31,13 +42,14 @@ above. The app works for up to a year before it needs reinstalling, and the 3-ap
 ## Install with Feather
 
 [Feather](https://github.com/khcrysalis/Feather) signs and installs apps on the iPhone or iPad with a
-developer certificate and provisioning profile you import. Import `sentry-bridge.ipa`, sign it with your
-certificate and install it. The app works for as long as the certificate is valid; if Apple revokes
+developer certificate and provisioning profile you import. Install Sentry Bridge from its source (or
+import `sentry-bridge.ipa`), sign it with your certificate and install it. The app works for as long as the certificate is valid; if Apple revokes
 the certificate, the app stops opening.
 
 ## Updating
 
-Install the IPA from the newer release the same way; settings are kept.
+With the source added, SideStore, AltStore and Feather show new versions as updates. Otherwise install
+the IPA from the newer release the same way. Settings are kept.
 
 ## Try it without a receiver
 

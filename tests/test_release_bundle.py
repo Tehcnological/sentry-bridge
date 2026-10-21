@@ -2,6 +2,7 @@
 import hashlib
 import json
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -112,8 +113,16 @@ class TestReleaseBundle(unittest.TestCase):
         (self.root / "core/sbcore.h").write_text('#define SB_VERSION "0.1.3"\n/* edited after the IPA build */\n')
         self.tests["sources"] = self.apk["sources"] = rb.source_snapshot(self.root)
         self.write_reports()
-        with self.assertRaisesRegex(ValueError, "other iOS or core sources"):
+        with self.assertRaisesRegex(ValueError, "other iOS, core or license sources"):
             rb.prepare(self.root, "v0.1.3")
+        # The app bundles the license texts too: a stale copy in the IPA is rejected.
+        self.write_ipa()
+        (self.root / "NOTICE.txt").write_text("changed after the IPA build\n")
+        self.tests["sources"] = self.apk["sources"] = rb.source_snapshot(self.root)
+        self.write_reports()
+        with self.assertRaisesRegex(ValueError, "other iOS, core or license sources"):
+            rb.prepare(self.root, "v0.1.3")
+        self.assertEqual(set(rb.ipa_sources(rb.source_snapshot(self.root))), {"core/sbcore.h", "LICENSE", "NOTICE.txt"})
         self.write_ipa(version="0.1.2")
         with self.assertRaisesRegex(ValueError, "IPA version"):
             rb.prepare(self.root, "v0.1.3")
@@ -125,6 +134,13 @@ class TestReleaseBundle(unittest.TestCase):
         bundle = rb.prepare(self.root, "v0.1.3")
         self.assertIn("sentry-bridge.ipa", (bundle / "SHA256SUMS").read_text())
         self.assertNotIn("sentry-bridge.exe", rb.DISTRIBUTION_ASSETS)  # the console bridge is not released
+
+    def test_ipa_pins_every_file_the_xcode_project_uses_outside_ios(self):
+        project = (ROOT / "ios/SentryBridge.xcodeproj/project.pbxproj").read_text(encoding="utf-8")
+        outside = {path for path in re.findall(r'path = "?\.\./([^";]+)', project) if path}
+        self.assertTrue(outside)
+        for path in outside:
+            self.assertTrue(path.startswith(rb.IPA_SOURCES) or path in rb.IPA_FILES, path)
 
     def write_reports(self):
         (self.dist / "test-report.json").write_text(json.dumps(self.tests))

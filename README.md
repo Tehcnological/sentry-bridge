@@ -27,10 +27,13 @@ Get the latest version from the [Releases page](https://github.com/Tehcnological
 ## Quick start
 
 1. Connect the device running Sentry Bridge to the Sentry's WiFi (named like `SentryPlus_XXXX`).
-2. Open Sentry Bridge and choose where your EFB runs:
+2. Open Sentry Bridge and choose where your EFB runs. Sentry Bridge feeds **one EFB at a time**:
    - **This device**: the EFB is on the same phone, tablet or computer (not available on Android).
-   - **Other device**: the EFB is on another device on the Sentry's WiFi. Enter its IP address,
+     Only one EFB app on it receives the traffic; close the others.
+   - **Other device**: the EFB is on one other device on the Sentry's WiFi. Enter its IP address,
      or tap **Find EFB** to look it up.
+
+   Not both, and not several devices.
 3. Press **Start**.
 4. In your EFB, select a **Stratux** or **GDL90** device as the traffic source (UDP port 4000).
 5. Once, in **Settings → Open Sentry web settings**, turn off the Sentry's **Power Savings**.
@@ -52,6 +55,19 @@ The Sentry returns to ForeFlight mode every time it powers up. With **Automatic 
 
 **Safety:** Sentry Bridge gives advisory information only. It is not certified for navigation or
 collision avoidance and does not replace see-and-avoid, required equipment or a weather briefing.
+
+## Roadmap
+
+No dates, and plans can change. To ask for something or to help,
+[open an issue](https://github.com/Tehcnological/sentry-bridge/issues).
+
+- **Several EFBs at once.** Today the app sends to one EFB: on the same device, or on one other
+  device. Next is feeding several at the same time, such as the EFB on this tablet plus one or two
+  other tablets, on Windows, Android, iPhone and iPad.
+- **Small WiFi boards.** Firmware for the ESP32-C3, Pico W and Pico 2 W is in the source but not yet
+  tested with a Sentry. Once it is, it becomes a release download. A board with a screen and a case,
+  the LilyGO T-Dongle, is the next target.
+- **CO alarm level on iPhone and iPad.** Use the Sentry's own alarm level instead of a fixed 50 ppm.
 
 ## More
 

@@ -8,7 +8,7 @@ The Windows and Android apps share the same three screens: **Bridge**, **Setting
 | Control | What it does |
 |---|---|
 | Start / Stop | Starts or stops forwarding traffic to the EFB |
-| This device / Other device | Where the EFB runs: on this device, or on another device at an IP address you enter. Android offers Other device only |
+| This device / Other device | Where the one EFB runs: on this device, or on one other device at an IP address you enter. The bridge feeds one EFB at a time. Android offers Other device only |
 | Find EFB | Lists EFBs that announce themselves on the WiFi, and the other devices that answer on it ("Device"); **Use** fills in the address |
 | Check setup | Checks the chosen address and port before you start |
 | Status | Receiver state, GPS, traffic count, weather frames and time since the last packet |
