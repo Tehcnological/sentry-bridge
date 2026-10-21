@@ -777,7 +777,8 @@ class Controller:
 
         def sweep():
             try:
-                swept.extend(a for a in discovery.sweep(self.local_address(), exclude={settings["sentryIp"]})
+                swept.extend(a for a in discovery.sweep(self.local_address(), exclude={settings["sentryIp"]},
+                                                        cancelled=self.closing.is_set)
                              if self.efb_candidate(a, settings["efbPort"]))
             except (OSError, ValueError):
                 pass  # not on the receiver's WiFi: announcements only
@@ -789,11 +790,12 @@ class Controller:
                 found[(source, efb_port)] = app or "?"
 
         deadline = time.monotonic() + seconds
-        with self.lock:
-            self.ensure_open()
-            shared = self.runtime.active() and self.runtime.ann is not None
-            listener = None if shared else udp_listener(port)
+        listener = None
         try:
+            with self.lock:
+                self.ensure_open()
+                shared = self.runtime.active() and self.runtime.ann is not None
+                listener = None if shared else udp_listener(port)
             if listener:
                 listener.settimeout(.2)
             while time.monotonic() < deadline:
@@ -815,7 +817,8 @@ class Controller:
         finally:
             if listener:
                 listener.close()
-        sweeper.join(discovery.PROBE_TIMEOUT_S + 1)
+            # Exit too: close() waits for this job, so it waits for the sweep (cancelled, one probe timeout at most).
+            sweeper.join(discovery.PROBE_TIMEOUT_S + 1)
         announced = {address for address, _ in found}
         return {"efbs": [dict(app=app, address=address, port=efb_port)
                          for (address, efb_port), app in sorted(found.items())]

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules
 from tools.native_core import decoder
 from tools.gui_runtime import DEFAULTS, Runtime, validate_settings
 from tools import gui_server
+from tools.discovery import sweep as real_sweep
 from tools.gui_server import Controller, Handler
 from tools.routes import validate_route
 
@@ -373,6 +374,33 @@ class TestGUI(unittest.TestCase):
         with patch.object(gui_server.discovery, "sweep", return_value=["192.168.4.6"]):
             found = self.c.discover(.3)
         self.assertEqual(found["efbs"], [dict(app="Device", address="192.168.4.6", port=4000)])
+
+    def test_exit_during_find_efb_cancels_and_waits_for_the_sweep(self):
+        self.c.local_address = lambda: "192.168.4.4"
+        self.c.runtime.settings.update(announcePort=free_port())
+        started, outcome = [], []
+
+        def probe(address):
+            started.append(time.monotonic())
+            time.sleep(.5)  # Exit arrives while the probes run
+            return True
+
+        def find():
+            try:
+                outcome.append(self.c.discover(5))
+            except gui_server.Closing as error:
+                outcome.append(error)
+        job = threading.Thread(target=find)
+        with patch.object(gui_server.discovery, "sweep", side_effect=lambda local, **kwargs: real_sweep(local, probe=probe, **kwargs)):
+            job.start()
+            wait_for(lambda: started)
+            self.c.close()
+            job.join(10)
+            done = time.monotonic()
+            self.assertFalse(any(t.name == "gui-sweep" and t.is_alive() for t in threading.enumerate()))
+            time.sleep(.3)
+        self.assertIsInstance(outcome[0], gui_server.Closing)
+        self.assertFalse([t for t in started if t > done])
 
     def test_restart_cancels_the_waiting_reader_and_uses_the_new_receiver(self):
         old, new = self.stats_peer(), self.stats_peer("pings")

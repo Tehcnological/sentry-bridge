@@ -839,10 +839,9 @@ object NativeGui {
         val swept = mutableListOf<String>()
         val sweeper = if (simulator) null else Thread({
             // Not on the receiver's WiFi: announcements only.
-            runCatching { wifi()?.let { network -> sweepDevices(network, config.efbPort).also { synchronized(swept) { swept += it } } } }
+            runCatching { wifi()?.let { network -> sweepDevices(network, config.efbPort) { closing }.also { synchronized(swept) { swept += it } } } }
         }, "gui-sweep").apply { isDaemon = true; start() }
-        val result = announcedEfbs(seconds)
-        sweeper?.join(4000)
+        val result = try { announcedEfbs(seconds) } finally { sweeper?.join(4000) }  // Exit too: no sweep outlives the job
         val efbs = result.getJSONArray("efbs")
         val announced = (0 until efbs.length()).map { efbs.getJSONObject(it).getString("address") }.toSet()
         synchronized(swept) { swept.toList() }.filter { it !in announced }
