@@ -26,9 +26,11 @@ Get the latest version from the [Releases page](https://github.com/Tehcnological
 
 On iPhone or iPad, add the Sentry Bridge source to your sideloading app to install it and get updates:
 
-[![Add to SideStore](https://img.shields.io/badge/Add_to-SideStore-2563EB)](https://tehcnological.github.io/sentry-bridge/add-source.html?app=sidestore)
-[![Add to AltStore](https://img.shields.io/badge/Add_to-AltStore-2563EB)](https://tehcnological.github.io/sentry-bridge/add-source.html?app=altstore)
-[![Add to Feather](https://img.shields.io/badge/Add_to-Feather-2563EB)](https://tehcnological.github.io/sentry-bridge/add-source.html?app=feather)
+<p align="center">
+  <a href="https://tehcnological.github.io/sentry-bridge/add-source.html?app=sidestore"><img alt="Add to SideStore" src="https://img.shields.io/badge/Add_to-SideStore-7C3AED?style=for-the-badge&logo=apple&logoColor=white"></a>
+  <a href="https://tehcnological.github.io/sentry-bridge/add-source.html?app=altstore"><img alt="Add to AltStore" src="https://img.shields.io/badge/Add_to-AltStore-018084?style=for-the-badge&logo=apple&logoColor=white"></a>
+  <a href="https://tehcnological.github.io/sentry-bridge/add-source.html?app=feather"><img alt="Add to Feather" src="https://img.shields.io/badge/Add_to-Feather-E8590C?style=for-the-badge&logo=apple&logoColor=white"></a>
+</p>
 
 ## Quick start
 
