@@ -80,10 +80,8 @@ the CMake-built `sbjni.dll` through `SENTRY_JNI_LIB`; Linux/macOS can compile th
 `tools/smoke_bridge.py <bridge command>` checks any build end to end: it streams simulated traffic
 into the bridge and expects five aircraft out.
 
-The development requirements include `reedsolo`, an independent Reed-Solomon implementation;
-CI installs it so the UAT encode/decode comparison runs on every platform. The seeded
-beyond-correction-radius test checks rejection of that corpus, not a universal guarantee:
-enough errors can turn one valid codeword into another.
+The development requirements include `reedsolo`, an independent Reed-Solomon implementation, so the
+UAT error-correction tests can compare against it.
 
 ### Reproducible corruption stress test
 
