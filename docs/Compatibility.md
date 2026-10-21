@@ -6,6 +6,9 @@ section for your platform before relying on it in flight.
 
 ## All platforms
 
+- **One EFB at a time.** Sentry Bridge sends to one destination: an EFB on the same device, or one
+  other device on the Sentry's WiFi. It cannot feed this device and another device together, or
+  several devices. With **This device**, only one EFB app on that device receives the traffic.
 - **EFBs receive traffic and GPS.** Weather data is passed on, but weather display in EFBs has not
   been confirmed yet.
 - **No AHRS, CO, temperature, barometric or battery data in the EFB.** Compatibility Mode does not

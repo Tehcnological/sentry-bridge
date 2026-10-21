@@ -27,10 +27,13 @@ Get the latest version from the [Releases page](https://github.com/Tehcnological
 ## Quick start
 
 1. Connect the device running Sentry Bridge to the Sentry's WiFi (named like `SentryPlus_XXXX`).
-2. Open Sentry Bridge and choose where your EFB runs:
+2. Open Sentry Bridge and choose where your EFB runs. Sentry Bridge feeds **one EFB at a time**:
    - **This device**: the EFB is on the same phone, tablet or computer (not available on Android).
-   - **Other device**: the EFB is on another device on the Sentry's WiFi. Enter its IP address,
+     Only one EFB app on it receives the traffic; close the others.
+   - **Other device**: the EFB is on one other device on the Sentry's WiFi. Enter its IP address,
      or tap **Find EFB** to look it up.
+
+   Not both, and not several devices.
 3. Press **Start**.
 4. In your EFB, select a **Stratux** or **GDL90** device as the traffic source (UDP port 4000).
 5. Once, in **Settings → Open Sentry web settings**, turn off the Sentry's **Power Savings**.
