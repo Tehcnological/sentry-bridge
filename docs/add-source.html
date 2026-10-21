@@ -7,17 +7,12 @@
 <title>Add the Sentry Bridge source</title>
 <style>
   body { font: 17px/1.5 -apple-system, system-ui, sans-serif; max-width: 34em; margin: 2em auto; padding: 0 16px; }
-  a.app { display: block; margin: .6em 0; padding: .7em 1em; border-radius: 10px; background: #2563EB; color: #fff; text-decoration: none; text-align: center; }
   code { word-break: break-all; }
 </style>
 </head>
 <body>
 <h1>Add the Sentry Bridge source</h1>
-<p>Choose your sideloading app. It opens and asks to add the source.</p>
-<a class="app" id="sidestore">SideStore</a>
-<a class="app" id="altstore">AltStore</a>
-<a class="app" id="feather">Feather</a>
-<p>Nothing opened? Add this URL in the app's Sources screen:<br><code id="url"></code></p>
+<p>If your app did not open, add this URL in its Sources screen:<br><code id="url"></code></p>
 <p><a href="https://github.com/Tehcnological/sentry-bridge/blob/master/docs/iOS-Sideload.md">Install guide</a></p>
 <script>
   // Only these three app links can be opened from here, whatever the query says.
@@ -28,7 +23,6 @@
     feather: "feather://source/" + source,
   };
   document.getElementById("url").textContent = source;
-  for (const [app, link] of Object.entries(links)) document.getElementById(app).href = link;
   const app = new URLSearchParams(location.search).get("app");
   if (Object.hasOwn(links, app)) location.href = links[app];
 </script>

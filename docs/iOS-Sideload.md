@@ -16,8 +16,8 @@ unsigned app file: it gets a signature when you install it, with one of the opti
 ## Add the Sentry Bridge source
 
 SideStore, AltStore and Feather can install Sentry Bridge from its source and show new versions as
-updates. On the iPhone or iPad, open [Add the source](https://tehcnological.github.io/sentry-bridge/add-source.html)
-and tap your app, or add this source URL in the app's **Sources** screen:
+updates. On the iPhone or iPad, tap your app's button in the [README](../README.md#download), or add
+this source URL in the app's **Sources** screen:
 
 ```
 https://raw.githubusercontent.com/Tehcnological/sentry-bridge/master/altsource.json
