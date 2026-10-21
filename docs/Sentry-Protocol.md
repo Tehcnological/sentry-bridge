@@ -72,29 +72,18 @@ the flight ID and the squawk code, so keep the last flight ID.
 | `GET /data?action=get` | The log list as JSON (`numFiles`, `currCSV`, `currLOG`, `files`); add `&file=<prefix>` for details of matching files |
 | `GET /data?action=get&file=currCSV` | The current log as text (`file=currLOG`: the current diagnostic log) |
 | `GET /stats` | Statistics page; its live feed is described [below](#live-statistics-stats) |
-| `GET /calibration?action=get` | Stored calibration values, manufacturing date and serial |
-| `GET /networkInfo?action=get` | WiFi state and nearby networks. Starts a WiFi scan, which takes seconds |
-| `GET /coredump` | Crash dump page; `?action=download` returns the stored dump |
-| `GET /espUpdate`, `GET /pingUpdate` | Firmware update pages |
 
 Nothing needs a password, and nothing depends on the mode. An unknown address returns the status page,
 so a successful response to a guessed address does not mean that page exists. Pages are served
-compressed (`curl --compressed`). *Unconfirmed:* the `/data?action=get`, `/calibration`,
-`/networkInfo`, `/coredump` and firmware update requests.
+compressed (`curl --compressed`). *Unconfirmed:* the `/data?action=get` requests.
 
-**Requests that change the Sentry, even as plain GET requests:**
-
-- `/data?action=rm&file=<prefix>` deletes every log whose name starts with the prefix.
-- `/coredump?action=erase` erases the crash dump; `/coredump?action=test` crashes the Sentry on purpose.
-- `/settings/?action=set` changes settings, and with some keys runs calibration (`calAHRS`), a factory
-  reset (`loadDefaults`) or tests (`tests`).
-- A firmware upload to `/espUpdate` or `/pingUpdate` installs it and restarts the Sentry.
+The web interface also has maintenance and firmware-update pages. Sentry Bridge never uses them.
 
 The settings page's **Save** button sends every field at once; an empty password box can be rejected or
 clear a stored password. To change one setting, send only that key.
 
 **What Sentry Bridge uses:** it reads `/?action=get` and the settings, switches `publicGDL90`, reads the
-`/stats` feed, and downloads logs when asked. It never sends the requests in the list above.
+`/stats` feed, and downloads logs when asked. It changes no other setting and deletes nothing.
 
 ### Power settings
 
