@@ -19,7 +19,15 @@ class TestSweep(unittest.TestCase):
         self.assertEqual(discovery.follow_choice(["192.168.4.6"], "192.168.4.19"), "192.168.4.6")
         self.assertIsNone(discovery.follow_choice([], "192.168.4.19"))
         self.assertIsNone(discovery.follow_choice(["192.168.4.6", "192.168.4.7"], "192.168.4.19"))  # the user chooses
-        self.assertEqual(discovery.follow_choice(["192.168.4.19", "192.168.4.6"], "192.168.4.19"), "192.168.4.6")
+        # The EFB answers the sweep again: a short interruption, so it is kept.
+        self.assertEqual(discovery.follow_choice(["192.168.4.19", "192.168.4.6"], "192.168.4.19"), "192.168.4.19")
+
+    def test_a_cancelled_sweep_finds_nothing(self):
+        self.assertEqual(discovery.sweep("192.168.4.4", probe=lambda address: True, cancelled=lambda: True), [])
+
+    def test_sweeps_stay_on_the_receivers_network(self):
+        self.assertTrue(discovery.on_network("192.168.4.4", "192.168.4.1"))
+        self.assertFalse(discovery.on_network("10.0.0.7", "192.168.4.1"))  # fell back to another WiFi
 
     def test_a_device_answers_whether_it_accepts_or_refuses(self):
         with socket.socket() as listener:

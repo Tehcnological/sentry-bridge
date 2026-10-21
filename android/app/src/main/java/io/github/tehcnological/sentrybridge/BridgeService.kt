@@ -112,6 +112,9 @@ class BridgeService : Service() {
         @Volatile var destination: InetSocketAddress? = null
         /** Set by NativeGui when that EFB moved to a new address (see NativeGui.watchEfb); replaces destination. */
         @Volatile var followed: InetSocketAddress? = null
+        /** Counts Starts, so a follower only acts for the run it was started for. Changed under routeLock. */
+        @Volatile var generation = 0
+        val routeLock = Any()
     }
 
     @Volatile private var stopRequested = false
@@ -208,8 +211,11 @@ class BridgeService : Service() {
             return
         }
         val dests = fixed.joinToString(", ") { "${it.address.hostAddress}:${it.port}" }
-        followed = null
-        destination = fixed.singleOrNull()?.takeIf { !it.address.isLoopbackAddress }
+        synchronized(routeLock) {
+            generation++
+            followed = null
+            destination = fixed.singleOrNull()?.takeIf { !it.address.isLoopbackAddress }
+        }
 
         fun wifiSocket(): DatagramSocket? {
             if (wifiChanged || txWifi == null) {

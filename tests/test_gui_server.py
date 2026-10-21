@@ -2,6 +2,7 @@
 import base64
 import gzip
 import hashlib
+import ipaddress
 import re
 from http.server import ThreadingHTTPServer
 import json
@@ -68,6 +69,15 @@ class TestGUI(unittest.TestCase):
             patcher = patch.object(gui_server.discovery, name, return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        real_connect = ws_probe.connect
+
+        def loopback_only(host, *args, **kwargs):
+            if not ipaddress.IPv4Address(host).is_loopback:
+                raise AssertionError(f"a test tried to reach {host}")
+            return real_connect(host, *args, **kwargs)
+        patcher = patch.object(ws_probe, "connect", loopback_only)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.c = Controller(self.tmp.name)
 
@@ -285,11 +295,13 @@ class TestGUI(unittest.TestCase):
     def follow(self, answering, swept):
         """Forwarding to 192.168.4.19 with fast checks; answering() says whether the EFB answers each time."""
         self.c.http = lambda *args, **kwargs: {}
+        self.c._read_sensors = lambda *args: None  # no sensor connection to the default receiver
         self.c.local_address = lambda: "192.168.4.4"
         self.c.routes_request = dict(host="windows", topology="network", address="192.168.4.19")
         self.c.runtime.routes = [("192.168.4.19", 4000)]
         self.c.runtime.forwarding = True
         self.c.runtime.active = lambda: True
+        self.c.runtime.last_rx = time.monotonic() + 3600  # receiver data keeps arriving
         self.c.runtime.started_at = getattr(self.c.runtime, "started_at", 0) + 1  # a new session (monotonic ticks are 16 ms on Windows)
         return (patch.object(gui_server, "EFB_CHECK_S", .05), patch.object(gui_server, "EFB_MISSES", 2),
                 patch.object(gui_server.discovery, "answers", side_effect=lambda address: answering(address)),
@@ -316,6 +328,44 @@ class TestGUI(unittest.TestCase):
                     wait_for(lambda: len(calls) >= 6)
                 self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
                 self.assertEqual("stopped answering" in "\n".join(self.c.runtime.logs), answered_before)
+
+    def test_an_efb_that_answers_the_sweep_again_is_kept(self):
+        calls = []
+        patches = self.follow(lambda address: calls.append(address) or len(calls) == 1, ["192.168.4.6", "192.168.4.19"])
+        with patches[0], patches[1], patches[2], patches[3] as sweep:
+            self.c._contact()
+            wait_for(lambda: sweep.call_count >= 2)
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
+        self.assertNotIn("stopped answering", "\n".join(self.c.runtime.logs))
+
+    def test_exit_during_a_probe_starts_no_sweep_and_waits_for_the_follower(self):
+        calls, probing = [], threading.Event()
+
+        def slow(address):
+            calls.append(address)
+            if len(calls) == 3:
+                probing.set()
+                time.sleep(.5)  # Exit arrives while this probe runs
+            return len(calls) == 1
+        patches = self.follow(slow, ["192.168.4.6"])
+        with patches[0], patches[1], patches[2], patches[3] as sweep:
+            self.c._contact()
+            probing.wait(5)
+            self.c.close()
+            self.assertFalse(self.c.follow_thread.is_alive())
+            self.assertEqual(sweep.call_count, 0)
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
+
+    def test_no_follow_while_no_receiver_data_arrives(self):
+        # Without receiver data the computer may be on another network: nothing is probed or moved.
+        calls = []
+        patches = self.follow(lambda address: calls.append(address) or False, ["192.168.4.6"])
+        self.c.runtime.last_rx = None
+        with patches[0], patches[1], patches[2], patches[3] as sweep:
+            self.c._contact()
+            time.sleep(.5)
+        self.assertEqual((calls, sweep.call_count), ([], 0))
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
 
     def test_find_efb_adds_devices_found_by_the_sweep(self):
         self.c.local_address = lambda: "192.168.4.4"

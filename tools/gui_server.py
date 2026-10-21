@@ -222,7 +222,8 @@ class Controller:
         if self.sensor_thread is not None:
             self.sensor_thread.join(5)  # it checks every half second at most, after the reader it replaced
         if self.follow_thread is not None:
-            self.follow_thread.join(5)  # a probe or sweep lasts at most a few seconds
+            # A probe and a sweep each last one probe timeout at most; the newest joins the follower it replaced.
+            self.follow_thread.join(2 * discovery.PROBE_TIMEOUT_S + 2)
         try:
             self.runtime.stop()
         except ValueError as error:  # the UDP thread is a daemon; finish the rest of shutdown anyway
@@ -328,7 +329,7 @@ class Controller:
             self.follow_cancel.set()
             self.follow_session, self.follow_cancel = session, threading.Event()
             self.follow_thread = threading.Thread(target=self._follow_efb, name="gui-follow", daemon=True,
-                                                  args=(self.follow_cancel, session))
+                                                  args=(self.follow_cancel, session, self.follow_thread))
             self.follow_thread.start()
         if self.contacting:
             return False
@@ -355,43 +356,54 @@ class Controller:
             local = probe.getsockname()[0]
         if local == "0.0.0.0" or ipaddress.IPv4Address(local).is_loopback:
             raise ValueError("Join the receiver's WiFi first.")
+        if not discovery.on_network(local, self.runtime.settings["sentryIp"]):
+            raise ValueError("This computer is not on the receiver's network.")
         return local
 
-    def _follow_efb(self, cancel, session):
+    def _follow_efb(self, cancel, session, previous=None):
         """While forwarding to an EFB on another device, check it still answers. When an EFB that answered
         before stops answering twice in a row (it rejoined the WiFi with a new address, for example after the
         receiver restarted), sweep the receiver's network and switch to the one other device that answers.
-        With none or several, only log: the user chooses with Find EFB."""
+        With none or several, only log: the user chooses with Find EFB. It acts only while receiver data
+        arrives, so the computer is on the receiver's network, and starts after the follower it replaces."""
+        if previous is not None:
+            previous.join()
         forwarding = lambda: (not cancel.is_set() and self.runtime.forwarding and self.runtime.active()
                               and getattr(self.runtime, "started_at", None) == session and not self.closing.is_set())
+        receiving = lambda: self.runtime.last_rx is not None and time.monotonic() - self.runtime.last_rx < 10
         seen, misses, reported = False, 0, None
         while forwarding():
             cancel.wait(EFB_CHECK_S)
             routes = list(getattr(self.runtime, "routes", ()))
-            if not forwarding() or len(routes) != 1 or ipaddress.IPv4Address(routes[0][0]).is_loopback:
+            if (not forwarding() or not receiving() or len(routes) != 1
+                    or ipaddress.IPv4Address(routes[0][0]).is_loopback):
                 continue
             current, port = routes[0]
             if discovery.answers(current):
                 seen, misses, reported = True, 0, None
                 continue
             misses += 1
-            if not seen or misses < EFB_MISSES:
+            if not seen or misses < EFB_MISSES or not forwarding():
                 continue  # never answered (a firewall, perhaps) or only once: keep sending as configured
             try:
-                found = discovery.sweep(self.local_address(), exclude={self.runtime.settings["sentryIp"]})
+                found = discovery.sweep(self.local_address(), exclude={self.runtime.settings["sentryIp"]},
+                                        cancelled=lambda: not forwarding())
             except (OSError, ValueError):
                 continue
             target = discovery.follow_choice([a for a in found if self.efb_candidate(a, port)], current)
+            if target == current:
+                seen, misses, reported = True, 0, None  # it answered again: a short interruption
+                continue
             if target is None:
-                if reported != current:
+                if reported != current and forwarding():
                     reported = current
                     self.runtime.log(f"The EFB at {current} stopped answering. Devices on the receiver's WiFi: "
                                      f"{', '.join(found) or 'none'}. Choose one with Find EFB.")
                 continue
-            if not forwarding():
-                return
-            self.runtime.routes = [(target, port)]
-            with self.lock:
+            with self.lock:  # the session and route this decision was made for, or nothing
+                if not forwarding() or list(self.runtime.routes) != [(current, port)]:
+                    continue
+                self.runtime.routes = [(target, port)]
                 if self.routes_request and self.routes_request.get("address") == current:
                     self.routes_request = {**self.routes_request, "address": target}
                     self.save()

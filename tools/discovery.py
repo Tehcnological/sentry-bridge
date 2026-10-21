@@ -21,20 +21,31 @@ def answers(address, port=PROBE_PORT, timeout=PROBE_TIMEOUT_S):
         return False
 
 
-def sweep(local, exclude=(), probe=answers):
-    """Devices answering on local's /24 network, other than local and the excluded addresses."""
+def sweep(local, exclude=(), probe=answers, cancelled=lambda: False):
+    """Devices answering on local's /24 network, other than local and the excluded addresses. Every
+    probe runs at once, so a sweep lasts one probe timeout; cancelled before or after it gives none."""
     network = ipaddress.IPv4Network(f"{local}/24", strict=False)
     skip = {local, *exclude}
     hosts = [str(host) for host in network.hosts() if str(host) not in skip]
-    with ThreadPoolExecutor(max_workers=max(1, len(hosts))) as pool:  # all at once: one timeout for the sweep
-        return [host for host, up in zip(hosts, pool.map(probe, hosts)) if up]
+    if cancelled():
+        return []
+    with ThreadPoolExecutor(max_workers=max(1, len(hosts))) as pool:
+        found = [host for host, up in zip(hosts, pool.map(lambda host: not cancelled() and probe(host), hosts)) if up]
+    return [] if cancelled() else found
+
+
+def on_network(local, receiver):
+    """Whether local is on the receiver's /24 network: a sweep never scans another network."""
+    return ipaddress.IPv4Address(local) in ipaddress.IPv4Network(f"{receiver}/24", strict=False)
 
 
 def follow_choice(candidates, current):
-    """Where to send after the EFB at current stopped answering: the one other device that answers,
-    or None when there are none or several (the user chooses then)."""
-    others = [address for address in candidates if address != current]
-    return others[0] if len(others) == 1 else None
+    """Where to send after the EFB at current missed its checks: current itself when it answers the
+    sweep (it recovered), else the one other device that answers, or None for none or several (the
+    user chooses then)."""
+    if current in candidates:
+        return current
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def parse_announce(data):
