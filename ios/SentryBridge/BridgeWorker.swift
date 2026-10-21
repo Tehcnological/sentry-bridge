@@ -8,7 +8,9 @@ struct BridgeSettings: Codable {
     static let sessionLengths = [60, 120, 180, 240]
     var sessionMinutes = 240
     var keepAwake = false
-    var experiment = false
+    /// Bridge Session: keep forwarding in the background (continued processing), on by default. The stored
+    /// name stays "experiment" so settings saved by earlier builds still decode; they keep their saved choice.
+    var experiment = true
     // Optional keeps older saved settings decodable; missing means the default port.
     var discoveryPort: String? = "63093"
     // Missing in older saved settings means on, matching the other platforms' default.

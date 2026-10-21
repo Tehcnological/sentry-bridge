@@ -53,8 +53,8 @@ source. If you would use it on macOS or Linux, [open an issue](https://github.co
 
 - Not in the App Store: download `sentry-bridge.ipa` from the release and sideload it; see
   [Install on iPhone or iPad](iOS-Sideload.md). Requires iOS or iPadOS 26.
-- The bridge runs while the app is open. The **Bridge Session** option keeps it running in the
-  background for up to 4 hours; this is experimental, and iOS can end it sooner.
+- **Bridge Session** (on by default) keeps the bridge running in the background for up to 4 hours; iOS
+  can end it sooner. With it off in Settings, the bridge runs only while the app is open.
 - Allow **Local Network** access when asked; without it the bridge cannot reach the Sentry or the EFB.
 - An EFB on the same iPad works: select a Stratux or GDL90 device in it. Only one EFB at a time receives
   the traffic, so close other EFBs.

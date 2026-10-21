@@ -86,6 +86,8 @@ private final class SessionSubmission: @unchecked Sendable {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
             testing = true; settings = BridgeSettings(); syntheticSettings()
+            // UI tests start in foreground mode; the Bridge Session test turns the session on itself.
+            settings.experiment = false
             if ProcessInfo.processInfo.arguments.contains("--reset-compatibility-notice") {
                 UserDefaults.standard.removeObject(forKey: BridgeView.noticeHiddenKey)
             }
@@ -185,7 +187,7 @@ private final class SessionSubmission: @unchecked Sendable {
         snapshot = BridgeSnapshot(); message = nil; localNetworkDenied = false; stopReason = nil
         token = UUID(); busy = true; state = "Starting"
         diagnosticLines = []; lastDiagnosticSample = -30
-        record("User Start; mode=\(settings.experiment ? "session experiment" : "foreground"); requested minutes=\(settings.sessionMinutes)")
+        record("User Start; mode=\(settings.experiment ? "Bridge Session" : "foreground"); requested minutes=\(settings.sessionMinutes)")
         let id = token
         if settings.experiment {
             requestSession(id)
@@ -225,7 +227,7 @@ private final class SessionSubmission: @unchecked Sendable {
                 guard let self, self.token == id, self.busy, self.state != "Stopping" else { return }
                 if let error {
                     self.record("Submission failed: \(error.localizedDescription)")
-                    let reason = "Bridge Session unavailable: \(error.localizedDescription). Try foreground mode."
+                    let reason = "Bridge Session unavailable: \(error.localizedDescription). Turn off Bridge Session in Settings and Start again."
                     if self.worker != nil { self.stop(reason: reason) }
                     else {
                         self.busy = false; self.state = "Stopped"; self.message = reason

@@ -9,6 +9,10 @@ import Foundation
         settings.inputPort = CommandLine.arguments[1]; settings.outputPort = CommandLine.arguments[2]
         if mode == "invalid" { settings.source = "invalid" }
         // Exercise the exact settings and status logic used by the SwiftUI model.
+        guard BridgeSettings().experiment else { print("FAIL: Bridge Session must be on by default"); exit(1) }
+        // Settings saved by earlier builds keep their saved choice.
+        let saved = try! JSONEncoder().encode({ var old = BridgeSettings(); old.experiment = false; return old }())
+        guard (try? JSONDecoder().decode(BridgeSettings.self, from: saved))?.experiment == false else { print("FAIL: saved Bridge Session choice lost"); exit(1) }
         var route = BridgeSettings()
         guard route.sharesInput else { print("FAIL: default route must share UDP 4000 on this device"); exit(1) }
         route.useOtherDevice()
