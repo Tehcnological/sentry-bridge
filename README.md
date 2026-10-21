@@ -10,10 +10,14 @@
 Sentry Bridge lets you see traffic from a uAvionix **Sentry** or **Sentry Plus** ADS-B receiver in
 EFB apps other than ForeFlight, such as Garmin Pilot, FltPlan Go or AvareX.
 
-Normally the Sentry talks only to ForeFlight, over an encrypted link. In its **Compatibility Mode**
-it also sends GPS in the standard GDL90 format that other apps understand, but it still sends
-traffic in a raw form those apps cannot use. Sentry Bridge reads that raw traffic, decodes it, and
-sends it on to your EFB as standard GDL90 traffic reports.
+Normally the Sentry talks only to ForeFlight, over an encrypted link. It also has a little-known
+**Compatibility Mode**, first documented by
+[foreflight-sentry-decryption](https://github.com/CA796CE/foreflight-sentry-decryption). It has a
+switch in the Sentry's web settings, but it turns itself off every time the Sentry powers up;
+Sentry Bridge turns it back on for you. In Compatibility Mode the Sentry sends GPS in the standard
+GDL90 format that other apps understand, but traffic in a raw form those apps cannot use. Sentry
+Bridge reads that raw traffic, decodes it, and sends it on to your EFB as standard GDL90 traffic
+reports. It does not decrypt the ForeFlight link.
 
 ```
 Sentry (Compatibility Mode)  ──WiFi──▶  Sentry Bridge  ──WiFi──▶  your EFB app
