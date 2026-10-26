@@ -121,6 +121,7 @@ final class SilentAudio {
 /// The phone's position for the GPS check. It is read here and compared in GPSCheck; nothing else uses it.
 final class PhoneLocation: NSObject, CLLocationManagerDelegate {
     var onStopped: (String) -> Void = { _ in }
+    var onAuthorization: () -> Void = {}
     private let manager = CLLocationManager()
     private(set) var latest: PhoneFix?
     private(set) var running = false
@@ -168,6 +169,7 @@ final class PhoneLocation: NSObject, CLLocationManagerDelegate {
         if running { onStopped("iOS paused location updates.") }
     }
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        onAuthorization()
         if let waiting, manager.authorizationStatus != .notDetermined {
             self.waiting = nil
             waiting(manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse)

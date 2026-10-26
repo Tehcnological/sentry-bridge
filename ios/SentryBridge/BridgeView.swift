@@ -177,6 +177,7 @@ struct BridgeView: View {
                 Label(alert, systemImage: "location.slash").foregroundStyle(warning)
                     .accessibilityIdentifier("bridge.gpsWarning")
             }
+            if model.needsAlwaysLocation { alwaysLocationNote }
             if model.snapshot.mode == 2 { Label(model.settings.restoreCompatibility ?? true ? "Encrypted receiver stream. Compatibility Mode is requested automatically." : "Encrypted receiver stream. Turn on Restore Compatibility Mode in Settings.", systemImage: "lock.trianglebadge.exclamationmark") }
             if let request = model.snapshot.compatibilityRequest { Text(request).font(.caption).accessibilityIdentifier("bridge.compatibilityRequest") }
             // Rebind results stay visible here; core log messages can replace the status detail.
@@ -184,6 +185,14 @@ struct BridgeView: View {
             if let follow = model.snapshot.followMessage { Text(follow).font(.caption).accessibilityIdentifier("bridge.followEFB") }
             if model.snapshot.sendErrors > 0 { Text("Output errors: \(model.snapshot.sendErrors). Check permission, WiFi and routing.").foregroundStyle(warning) }
         }.listRowBackground(surface)
+    }
+    /// Shown while GPS check is chosen and location is not set to Always.
+    @ViewBuilder private var alwaysLocationNote: some View {
+        Label("GPS check needs location set to Always.", systemImage: "location.slash").foregroundStyle(warning)
+            .accessibilityIdentifier("bridge.alwaysLocation")
+        Button("Open Settings") {
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.openLocationSettings")
     }
     @ViewBuilder private var setupSections: some View {
         Section("EFB setup") {
@@ -210,23 +219,35 @@ struct BridgeView: View {
 Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this device.")
                 .font(.caption).foregroundStyle(secondary)
             #if DEBUG
+            // UI tests only: points the route at a local test feed.
+            if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--ui-") }) {
             Button("Use synthetic replay route") { model.syntheticSettings() }.foregroundStyle(linkInk).disabled(model.busy)
+            }
             #endif
             Toggle("Restore Compatibility Mode", isOn: Binding(get: { model.settings.restoreCompatibility ?? true }, set: { model.settings.restoreCompatibility = $0 }))
                 .disabled(model.busy).accessibilityIdentifier("bridge.restoreCompatibility")
             Text("Switches the Sentry back to Compatibility Mode when it starts up in ForeFlight-only mode.").font(.caption).foregroundStyle(secondary)
             Text("Keep running").font(.headline)
-            statusRow("In the background", model.choice.method.title + (model.choice.gpsCheck ? " + GPS check" : ""))
-                .accessibilityElement(children: .combine).accessibilityIdentifier("bridge.keepRunning")
+            ForEach(KeepRunningChoice.options(for: model.flavor)) { option in
+                let current = option.method == model.choice.method && option.gpsCheck == model.choice.gpsCheck
+                Button { model.choose(option) } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: current ? "checkmark.circle.fill" : "circle").foregroundStyle(controlTint).accessibilityHidden(true)
+                        Text(option.title).foregroundStyle(ink)
+                    }
+                }
+                .disabled(model.busy)
+                .accessibilityAddTraits(current ? .isSelected : [])
+                .accessibilityIdentifier("bridge.keepRunning." + option.id)
+            }
             if model.choice.method == .bridgeSession {
                 Picker("Session length", selection: $model.settings.sessionMinutes) {
                     ForEach(BridgeSettings.sessionLengths, id: \.self) { Text("\($0) minutes").tag($0) }
                 }.pickerStyle(.menu).disabled(model.busy).accessibilityIdentifier("bridge.sessionLength")
             }
             Text(keepRunningCaption).font(.caption).foregroundStyle(secondary)
-            Button("Change how the bridge keeps running") { openChooser() }.foregroundStyle(linkInk)
-                .disabled(model.busy).accessibilityIdentifier("bridge.changeKeepRunning")
             if let note = model.keepRunningNote { Text(note).font(.caption).foregroundStyle(warning) }
+            if model.needsAlwaysLocation { alwaysLocationNote }
             Toggle("Keep screen awake while visible", isOn: $model.settings.keepAwake).disabled(model.busy)
             NavigationLink("Licenses") { LicensesView() }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.licenses")
             Link("Compatibility and limitations", destination: Self.compatibilityURL).foregroundStyle(linkInk)
@@ -285,24 +306,17 @@ Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this d
         .tint(controlTint)
         .accessibilityIdentifier("compatibility.sheet")
     }
+    /// The current option's description from the chooser.
     private var keepRunningCaption: String {
-        switch model.choice.method {
-        case .backgroundAudio: return "Silent audio keeps forwarding in the background, with no time limit. Notifications report it if iOS stops it."
-        case .bridgeSession: return "Keeps forwarding in the background for the chosen time. If iOS refuses or ends it, notifications say so."
-        case .appOpen: return "Forwarding stops when you leave the app."
-        }
+        KeepRunningChoice.options(for: model.flavor).first { $0.method == model.choice.method && $0.gpsCheck == model.choice.gpsCheck }?.detail ?? ""
     }
-    private func openChooser() {
-        chooserSelection = KeepRunningChoice.preselected(model.keepRunning, flavor: model.flavor, legacySession: model.settings.experiment)
-        model.chooserVisible = true
-    }
-    /// First run, an update that adds this setting, an unreadable saved answer, or Change in Settings.
+    /// First run, an update that adds this setting, or an unreadable saved answer.
     private var chooserSheet: some View {
         let selected = chooserSelection ?? KeepRunningChoice.preselected(model.keepRunning, flavor: model.flavor, legacySession: model.settings.experiment)
         return NavigationStack {
             Form {
                 Section {
-                    Text("How should the bridge keep forwarding when Sentry Bridge is not on screen?")
+                    Text("How should the bridge keep running when you leave the app?")
                     ForEach(KeepRunningChoice.options(for: model.flavor)) { option in
                         Button { chooserSelection = option } label: {
                             HStack(alignment: .top, spacing: 12) {

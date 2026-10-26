@@ -367,7 +367,7 @@ final class BridgeUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         app.activate()
         XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Foreground bridge stopped'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge stopped when you left the app'")).firstMatch.exists)
     }
 
     // Run under each simulator system appearance; the app must not force a scheme.
@@ -607,7 +607,7 @@ final class BridgeUITests: XCTestCase {
         let start = app.buttons["bridge.startStop"]
         reveal(start, in: app, upwards: false); start.tap()
         let active = app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Bridge Session")).firstMatch
-        let unavailable = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session unavailable'")).firstMatch
+        let unavailable = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session refused'")).firstMatch
         // The simulator may reject continued processing. Either way the bridge keeps running and can be stopped:
         // a refusal falls back to a foreground bridge and names the likely causes.
         let launched = active.waitForExistence(timeout: 10)
@@ -633,7 +633,7 @@ final class BridgeUITests: XCTestCase {
         sleep(5)
         app.activate()
         XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5), "background audio must keep the bridge running hidden")
-        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'stopped when hidden'")).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'when you left the app'")).firstMatch.exists)
         reveal(start, in: app, upwards: false); start.tap()
         XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
     }
@@ -651,7 +651,7 @@ final class BridgeUITests: XCTestCase {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Chooser (\(lite ? "Lite" : "Sideload"))"
         shot.lifetime = .keepAlways; add(shot)
         // The sheet's Form is lazy: swipe up (never down, which dismisses) to the notifications paragraph.
-        let notifications = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Notifications are how'")).firstMatch
+        let notifications = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Allow notifications'")).firstMatch
         for _ in 0..<4 where !notifications.exists { sheet.swipeUp() }
         XCTAssertTrue(notifications.exists, "notification permission is explained")
         let pick = lite ? "appOpen" : "backgroundAudio+gps"
@@ -661,15 +661,14 @@ final class BridgeUITests: XCTestCase {
         XCTAssertFalse(sheet.waitForExistence(timeout: 2))
         let settings = app.buttons["Settings"]
         reveal(settings, in: app); settings.tap()
-        let summary = app.descendants(matching: .any).matching(identifier: "bridge.keepRunning").firstMatch
-        reveal(summary, in: app, upwards: false)
-        XCTAssertTrue(summary.label.contains(lite ? "Only while the app is open" : "Background audio + GPS check"), summary.label)
-        let change = app.buttons["bridge.changeKeepRunning"]
-        reveal(change, in: app, upwards: false); change.tap()
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["chooser.option." + pick].isSelected, "reopened on the saved answer")
-        app.buttons["chooser.cancel"].tap()
-        XCTAssertFalse(sheet.waitForExistence(timeout: 2))
+        // Settings lists the options with the saved one selected; tapping another saves it.
+        let saved = app.buttons["bridge.keepRunning." + pick]
+        reveal(saved, in: app, upwards: false)
+        XCTAssertTrue(saved.isSelected, "Settings shows the saved answer")
+        let other = app.buttons["bridge.keepRunning." + (lite ? "bridgeSession" : "backgroundAudio")]
+        reveal(other, in: app, upwards: false); other.tap()
+        XCTAssertTrue(other.isSelected); XCTAssertFalse(saved.isSelected)
+        XCTAssertFalse(sheet.exists)
         // A user launch with the answer saved goes straight to the main screen.
         app.terminate()
         app = XCUIApplication(); app.launchArguments = []; app.launch()
@@ -762,7 +761,7 @@ final class BridgeUITests: XCTestCase {
             return
         }
         let active = app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Bridge Session")).firstMatch
-        let unavailable = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session unavailable'")).firstMatch
+        let unavailable = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session refused'")).firstMatch
         // The simulator may reject continued processing; either outcome must be explicit and stoppable.
         let launched = active.waitForExistence(timeout: 10)
         if !launched { XCTAssertTrue(unavailable.waitForExistence(timeout: 5)) }
@@ -786,7 +785,7 @@ final class BridgeUITests: XCTestCase {
         reveal(start, in: app, upwards: false)
         XCTAssertEqual(start.label, "Start Bridge")
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Bridge Session")).firstMatch.exists)
-        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session unavailable'")).firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session refused'")).firstMatch.waitForExistence(timeout: 3))
         XCTAssertEqual(intentOutcomes(app), ["Requesting a Bridge Session.", "Bridge stopping."])
     }
     func testDuplicateIntentsReportActualState() {
@@ -844,9 +843,11 @@ final class BridgeUITests: XCTestCase {
         reveal(app.switches["bridge.restoreCompatibility"], in: app, upwards: false)
         screen = "Settings"
         try audit()
-        let change = app.buttons["bridge.changeKeepRunning"]
-        reveal(change, in: app, upwards: false); change.tap()
-        XCTAssertTrue(app.buttons["chooser.continue"].waitForExistence(timeout: 5))
+        reveal(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'bridge.keepRunning.'")).firstMatch, in: app, upwards: false)
+        screen = "Settings, keep running"
+        try audit()
+        app.terminate(); app.launchArguments = ["--ui-testing", "--chooser"]; app.launch()
+        XCTAssertTrue(app.buttons["chooser.continue"].waitForExistence(timeout: 10))
         screen = "Keep running chooser"
         try audit()
         app.buttons["chooser.continue"].tap()

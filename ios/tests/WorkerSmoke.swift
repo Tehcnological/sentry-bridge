@@ -160,7 +160,7 @@ import Foundation
         guard recorder.events.last == "remove bridge.watchdog", !watchdog.armed else { fail("watchdog must be removed on Stop") }
         watchdog.tick(now: 113)
         guard recorder.events.last == "post bridge.watchdog 30" else { fail("watchdog must re-arm on the next run") }
-        guard DegradedNotice.watchdog.title == "Sentry Bridge stopped forwarding", DegradedNotice.watchdog.body.contains("Open Sentry Bridge") else { fail("watchdog text") }
+        guard DegradedNotice.watchdog.title == "Sentry Bridge stopped forwarding", DegradedNotice.watchdog.body.contains("Open it") else { fail("watchdog text") }
         // GPS check rule.
         let sentry = SentryFix(gps: true, valid: true, lat: 40, lon: -100, age: 0.5)
         var check = GPSCheck()

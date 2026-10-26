@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 import Network
 import BackgroundTasks
+import CoreLocation
 
 // Cancellation is shared only with the scheduler submission queue.
 private final class SessionSubmission: @unchecked Sendable {
@@ -50,6 +51,9 @@ enum RunMode { case foreground, audio, session }
     @Published private(set) var gpsRunning = false
     @Published private(set) var gpsStatus: String?
     @Published private(set) var gpsWarning: String?
+    @Published private(set) var locationStatus = CLAuthorizationStatus.notDetermined
+    /// GPS check is chosen but location is not set to Always; the app links to its Settings page until it is.
+    var needsAlwaysLocation: Bool { choice.gpsCheck && locationStatus != .authorizedAlways }
     var choice: KeepRunningChoice {
         keepRunning ?? KeepRunningChoice(method: flavor == .sideload ? .backgroundAudio : .bridgeSession)
     }
@@ -139,19 +143,24 @@ enum RunMode { case foreground, audio, session }
         audio.onLost = { [weak self] in
             guard let self, self.busy else { return }
             self.notify(.audioStopped(gpsCheck: self.gpsRunning))
-            self.message = self.gpsRunning ? "Background audio stopped; GPS check keeps the bridge running in the background."
-                : "Background audio stopped and could not resume. Keep Sentry Bridge open to keep forwarding."
+            self.message = self.gpsRunning ? "Background audio stopped. GPS check keeps the bridge running."
+                : "Background audio stopped. Keep the app open to keep the bridge running."
         }
         #endif
+        locationStatus = location.status
+        location.onAuthorization = { [weak self] in
+            guard let self else { return }
+            self.locationStatus = self.location.status; self.record("Location access: \(self.locationStatus.rawValue)")
+        }
         location.onStopped = { [weak self] reason in
             guard let self, self.busy, self.gpsRunning else { return }
             self.notify(.locationStopped(reason)); self.gpsWarning = "GPS check stopped: \(reason)"
         }
     }
-    /// The chooser's answer. Asks for notifications first, then, for GPS check, Always location access;
-    /// a refusal saves the method without GPS check and says how to turn it on later.
+    /// The chooser's answer. Asks for notifications first, then, for GPS check, Always location access.
+    /// Without Always, GPS check stays chosen and the app links to Settings (needsAlwaysLocation).
     func choose(_ option: KeepRunningOption) {
-        var picked = KeepRunningChoice(method: option.method, gpsCheck: option.gpsCheck)
+        let picked = KeepRunningChoice(method: option.method, gpsCheck: option.gpsCheck)
         save(picked); chooserVisible = false; keepRunningNote = nil
         #if DEBUG
         if testing { record("Chooser: \(option.title); permission prompts skipped in UI tests"); return }
@@ -160,14 +169,11 @@ enum RunMode { case foreground, audio, session }
         notifications.requestPermission { [weak self] granted in
             guard let self else { return }
             self.record("Notifications \(granted ? "allowed" : "not allowed")")
-            if !granted { self.keepRunningNote = "Notifications are off, so a stopped bridge cannot alert you. Turn them on in Settings → Notifications → Sentry Bridge." }
+            if !granted { self.keepRunningNote = "Notifications are off, so the app can't warn you if the bridge stops. Turn them on in Settings." }
             guard picked.gpsCheck else { return }
             self.location.requestAlways { [weak self] allowed in
                 guard let self else { return }
-                if !allowed {
-                    picked.gpsCheck = false; self.save(picked)
-                    self.keepRunningNote = "GPS check is off: location access was not allowed. Allow it in Settings → Privacy & Security → Location Services → Sentry Bridge, then choose GPS check again."
-                }
+                self.locationStatus = self.location.status; self.record("Location access \(allowed ? "allowed" : "not allowed")")
             }
         }
     }
@@ -292,7 +298,7 @@ enum RunMode { case foreground, audio, session }
         gpsRunning = mode != .foreground && choice.gpsCheck && !demo
         if gpsRunning && location.status != .authorizedAlways && location.status != .authorizedWhenInUse {
             gpsRunning = false
-            keepRunningNote = "GPS check is off for this run: location access is not allowed. Allow it in Settings → Privacy & Security → Location Services → Sentry Bridge."
+            record("GPS check skipped: no location access")
         }
         record("User Start; flavor=\(flavor.rawValue); mode=\(mode); gpsCheck=\(gpsRunning); requested minutes=\(settings.sessionMinutes)")
         let id = token
@@ -306,7 +312,7 @@ enum RunMode { case foreground, audio, session }
         if runMode == .audio, let error = audio.start() {
             record("Background audio could not start: \(error)")
             runMode = .foreground; notify(.audioStopped(gpsCheck: gpsRunning))
-            message = "Background audio could not start (\(error)). " + (gpsRunning ? "GPS check keeps the bridge running in the background." : "Forwarding continues only while the app is open.")
+            message = "Background audio could not start (\(error)). " + (gpsRunning ? "GPS check keeps the bridge running." : "The bridge runs only while the app is open.")
         } else if runMode == .audio { record("Background audio playing") }
         #endif
         if gpsRunning { location.start() }
@@ -338,7 +344,7 @@ enum RunMode { case foreground, audio, session }
     private func endSessionKeepRunning(_ reason: String) {
         record("\(reason); GPS check keeps forwarding")
         task?.setTaskCompleted(success: true); task = nil; sessionActive = false
-        message = "\(reason). GPS check keeps the bridge running in the background."
+        message = "\(reason). GPS check keeps the bridge running."
         notify(.sessionEnded(gpsCheck: true))
     }
     private func requestSession(_ id: UUID) {
@@ -518,12 +524,12 @@ enum RunMode { case foreground, audio, session }
         // Background audio and GPS check keep running hidden; a pending session request does not.
         if busy && !sessionActive && runMode != .audio && !gpsRunning {
             notify(.stoppedWhenHidden)
-            stop(reason: flavor == .lite ? "Foreground bridge stopped when hidden. Choose Bridge Session in Settings to keep forwarding in the background."
-                 : "Foreground bridge stopped when hidden. Background audio keeps forwarding in the background; check it in Settings.")
+            stop(reason: flavor == .lite ? "Bridge stopped when you left the app. Choose Bridge Session in Settings to keep it running."
+                 : "Bridge stopped when you left the app. Choose Background audio in Settings to keep it running.")
         }
         UIApplication.shared.isIdleTimerDisabled = false
     }
-    func foregrounded() { record("Scene foregrounded"); UIApplication.shared.isIdleTimerDisabled = busy && settings.keepAwake }
+    func foregrounded() { record("Scene foregrounded"); locationStatus = location.status; UIApplication.shared.isIdleTimerDisabled = busy && settings.keepAwake }
     private func checkLocalNetwork() {
         guard let localHost = [settings.source, settings.destination].first(where: { !BridgeSettings.isLoopback($0) }) else { return }
         // UDP connect prompts for local network access without transmitting receiver commands.
