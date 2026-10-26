@@ -121,7 +121,7 @@ Focus also remain untested on hardware.
 
 ## Android
 
-- **The EFB must be on another device.** The Android bridge and the EFBs tested cannot share the
+- **The EFB must be on another device!!!** The Android bridge and the EFBs tested cannot share the
   Sentry connection on one phone. Use the Android app to feed an iPad or a second tablet.
 - Garmin Pilot for Android does not accept GDL90 input at all. On Android, use an EFB with GDL90 input,
   such as FltPlan Go.
@@ -140,6 +140,9 @@ Focus also remain untested on hardware.
 
 Unmaintained: there is no download, and the desktop app is not tested there. It may still run from
 source. If you would use it on macOS or Linux, [open an issue](https://github.com/Tehcnological/sentry-bridge/issues).
+
+For Linux: Two apps cannot share the same port without both agreeing, which afaik no EFB does. 
+Same limitation as Android, no same-device operation.
 
 ## Small boards (ESP32-C3, Pico W, Pico 2 W)
 
