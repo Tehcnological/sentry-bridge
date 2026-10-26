@@ -43,6 +43,28 @@ The Windows and Android apps share the same three screens: **Bridge**, **Setting
 
 Recordings and backups can contain positions and aircraft identifiers; see [Privacy](Privacy.md).
 
+## iPhone and iPad
+
+The iPhone and iPad app uses these controls. The available background choices depend on your version.
+
+| Control | What it does |
+|---|---|
+| Start / Stop | Starts or stops forwarding to the selected EFB. Stop also ends background audio and location updates |
+| This device / Other device | Chooses an EFB on this iPhone or iPad, or one other device on the Sentry's WiFi |
+| Find EFB | Helps choose the other device. A result called Device is not necessarily an EFB; confirm its address |
+| Restore Compatibility Mode | Requests the Sentry mode the bridge needs. Leave it on |
+| Background running | Chooses what keeps forwarding when you switch apps. Stop before changing it |
+| Background audio | Plays silence to help keep the bridge running alongside your EFB; phone calls interrupt it |
+| GPS cross-reference | Adds a comparison with this device's GPS and on-screen warnings. Needs Always location for background use. It never changes the position or traffic sent to the EFB |
+| Bridge Session / Session length | Where offered, asks iOS for background time, up to four hours. iOS may refuse it or end it early |
+| Keep screen awake while visible | Keeps the display awake while Sentry Bridge is on screen; it does not keep the app running after you leave it |
+| Battery, CO, Temperature | The Sentry's readings on the bridge screen. The iPhone and iPad CO warning uses a fixed 50 ppm threshold |
+| Diagnostics | Shows recent bridge events for troubleshooting |
+| Demo with sample data | Shows simulated data inside Sentry Bridge only; sends nothing to an EFB |
+
+For setup, lost-data warnings and the limits of the new background options, read
+[iPhone and iPad compatibility](Compatibility.md#iphone-and-ipad).
+
 ## For developers
 
 - **Run from source:** on Windows, double-click `Run-Gui.cmd`. On macOS or Linux (unmaintained and

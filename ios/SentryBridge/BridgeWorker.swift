@@ -8,8 +8,8 @@ struct BridgeSettings: Codable {
     static let sessionLengths = [60, 120, 180, 240]
     var sessionMinutes = 240
     var keepAwake = false
-    /// Bridge Session: keep forwarding in the background (continued processing), on by default. The stored
-    /// name stays "experiment" so settings saved by earlier builds still decode; they keep their saved choice.
+    /// The Bridge Session switch of builds before the keep-running chooser, stored as "experiment". Kept so
+    /// saved settings still decode; a Lite build preselects "Only while the app is open" when it was off.
     var experiment = true
     // Optional keeps older saved settings decodable; missing means the default port.
     var discoveryPort: String? = "63093"
@@ -54,6 +54,8 @@ struct BridgeSnapshot {
     var crcBad: UInt32 = 0
     var gps = false, mode: Int32 = 0
     var age = -1.0, elapsed = 0.0, maxGap = 0.0
+    /// The Sentry's own fix, read for the GPS cross-reference only; the worker never changes it.
+    var sentryFix = SentryFix()
     var detail = "Ready to bridge"
     func activity(since previous: BridgeSnapshot) -> String {
         if age < 0 { return "Waiting for data" }
@@ -78,6 +80,7 @@ struct BridgeSnapshot {
         received = s.received; forwarded = s.forwarded; sendErrors = s.send_errors
         traffic = s.traffic; weather = s.weather; heartbeat = s.heartbeat; crcBad = s.crc_bad
         gps = s.gps_valid != 0; mode = s.mode; age = s.age; elapsed = s.elapsed; maxGap = s.max_gap
+        sentryFix = SentryFix(gps: gps, valid: s.own_valid != 0, lat: s.own_lat, lon: s.own_lon, age: s.own_age)
         var detail = s.detail
         self.detail = withUnsafePointer(to: &detail) {
             $0.withMemoryRebound(to: CChar.self, capacity: 256) { String(cString: $0) }

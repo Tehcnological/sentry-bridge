@@ -42,6 +42,7 @@ IOS_PUBLIC_FILES = (
     "ios/SentryBridge/BridgeView.swift", "ios/SentryBridge/BridgeWorker.swift",
     "ios/SentryBridge/EFBDiscovery.swift", "ios/SentryBridge/ReceiverReadings.swift", "ios/SentryBridge/BridgeIntents.swift",
     "ios/SentryBridge/SentryBridgeApp.swift", "ios/SentryBridge/Info.plist",
+    "ios/SentryBridge/KeepRunning.swift", "ios/SentryBridge/KeepAlive.swift", "ios/SentryBridge/SentryBridge.entitlements",
     "ios/SentryBridge/PrivacyInfo.xcprivacy", "ios/SentryBridge/DemoReplayer.swift", "ios/SentryBridge/Licenses.swift", "ios/SentryBridge/DemoReceiver.bin", "ios/SentryBridge/AppIcon.icon/icon.json", "ios/SentryBridge/AppIcon.icon/Assets/2-rings.svg",
     "ios/SentryBridge/AppIcon.icon/Assets/3-signal.svg", "ios/SentryBridge/AppIcon.icon/Assets/4-aircraft.svg",
     "ios/tests/BridgeUITests.swift", "ios/tests/WorkerSmoke.swift", "ios/tests/test_ios_adapter.py",
@@ -157,9 +158,94 @@ def ipa_sources(sources):
     return {name: blob for name, blob in sources.items() if name.startswith(IPA_SOURCES) or name in IPA_FILES}
 
 
+# The release IPA is the Sideload build: background audio and location. Lite (no audio) is never released here.
+IPA_FLAVOR = "Sideload"
+FLAVOR_BACKGROUND_MODES = {"Sideload": ["audio", "location"], "Lite": ["location"]}
+
+
+# The IPA's binary declares these (Time Sensitive notifications) with an ad-hoc signature; installers re-sign
+# it and keep what their profile allows.
+IPA_ENTITLEMENTS = ROOT / "ios/SentryBridge/SentryBridge.entitlements"
+
+
+def binary_entitlements(binary):
+    """Read the XML entitlement slot of the release's thin, little-endian 64-bit Mach-O.
+
+    Follow LC_CODE_SIGNATURE and the SuperBlob index, never a marker found in arbitrary executable data.
+    Unsupported or malformed executables fail closed. This also runs on the Windows release host.
+    """
+    def uint(at, end, order="little"):
+        if at < 0 or at + 4 > end:
+            raise ValueError("IPA has a truncated Mach-O code signature")
+        return int.from_bytes(binary[at:at + 4], order)
+
+    end = len(binary)
+    if end < 32 or binary[:4] != b"\xcf\xfa\xed\xfe":
+        raise ValueError("IPA requires a thin 64-bit Mach-O executable")
+    count, size = uint(16, end), uint(20, end)
+    commands_end = 32 + size
+    if commands_end > end or count > size // 8:
+        raise ValueError("IPA has invalid Mach-O load commands")
+    at, signature = 32, None
+    for _ in range(count):
+        command, length = uint(at, commands_end), uint(at + 4, commands_end)
+        if length < 8 or length % 8 or at + length > commands_end:
+            raise ValueError("IPA has invalid Mach-O load command size")
+        if command == 0x1d:  # LC_CODE_SIGNATURE (linkedit_data_command)
+            if length != 16 or signature is not None:
+                raise ValueError("IPA has invalid or duplicate code signature commands")
+            signature = (uint(at + 8, commands_end), uint(at + 12, commands_end))
+        at += length
+    if at != commands_end:
+        raise ValueError("IPA has invalid Mach-O load command extent")
+    if signature is None:
+        return None
+    start, size = signature
+    sig_end = start + size
+    if start < commands_end or size < 12 or sig_end > end or uint(start, sig_end, "big") != 0xfade0cc0:
+        raise ValueError("IPA has an invalid embedded code signature")
+    length, count = uint(start + 4, sig_end, "big"), uint(start + 8, sig_end, "big")
+    if length < 12 or length > size or count > (length - 12) // 8:
+        raise ValueError("IPA has an invalid code signature index")
+    sig_end = start + length
+    slots, ranges, entitlements = set(), [], None
+    for i in range(count):
+        entry = start + 12 + i * 8
+        slot, offset = uint(entry, sig_end, "big"), uint(entry + 4, sig_end, "big")
+        blob = start + offset
+        if slot in slots or offset < 12 + count * 8:
+            raise ValueError("IPA has duplicate or invalid code signature slots")
+        slots.add(slot)
+        magic, blob_length = uint(blob, sig_end, "big"), uint(blob + 4, sig_end, "big")
+        if blob_length < 8 or blob + blob_length > sig_end:
+            raise ValueError("IPA has an invalid code signature blob extent")
+        if any(blob < hi and blob + blob_length > lo for lo, hi in ranges):
+            raise ValueError("IPA has overlapping code signature blobs")
+        ranges.append((blob, blob + blob_length))
+        if slot == 5:  # CSSLOT_ENTITLEMENTS
+            if magic != 0xfade7171:
+                raise ValueError("IPA has an invalid entitlements blob")
+            try:
+                entitlements = plistlib.loads(binary[blob + 8:blob + blob_length])
+            except Exception as error:
+                raise ValueError("IPA has an invalid entitlements plist") from error
+    return entitlements
+
+
+def flavor_problem(info, flavor, links_audio=None):
+    """None when a built Info.plist (and, if known, the binary's audio linkage) matches the flavor."""
+    if info.get("SBBuildFlavor") != flavor:
+        return f"Info.plist flavor is {info.get('SBBuildFlavor')!r}"
+    if sorted(info.get("UIBackgroundModes", [])) != FLAVOR_BACKGROUND_MODES[flavor]:
+        return f"background modes {info.get('UIBackgroundModes')}"
+    if links_audio is not None and links_audio != (flavor == "Sideload"):
+        return "audio framework linked" if links_audio else "audio framework missing"
+    return None
+
+
 def check_ipa(path, report, version, sources):
-    """The IPA from tools/build_ios_ipa.py: built from these iOS and core sources, this version, and
-    unsigned (users sign it when they install it)."""
+    """The IPA from tools/build_ios_ipa.py: built from these iOS and core sources, this version, not signed for
+    any team (users sign it when they install it), and declaring the app's entitlements."""
     if report.get("ipaSha256") != sha256(path):
         raise ValueError("IPA changed after its build report")
     if report.get("sources") != ipa_sources(sources):
@@ -168,12 +254,20 @@ def check_ipa(path, report, version, sources):
         with zipfile.ZipFile(path) as archive:
             names = archive.namelist()
             plist = archive.read("Payload/SentryBridge.app/Info.plist")
+            binary = archive.read("Payload/SentryBridge.app/SentryBridge")
     except (zipfile.BadZipFile, KeyError) as error:
         raise ValueError("IPA has no Payload/SentryBridge.app") from error
-    if plistlib.loads(plist).get("CFBundleShortVersionString") != version:
+    info = plistlib.loads(plist)
+    if info.get("CFBundleShortVersionString") != version:
         raise ValueError("IPA version does not match the release tag")
-    if any("/_CodeSignature/" in name or name.endswith("embedded.mobileprovision") for name in names):
-        raise ValueError("IPA must be unsigned")
+    problem = flavor_problem(info, IPA_FLAVOR)
+    if report.get("flavor") != IPA_FLAVOR or problem:
+        raise ValueError(f"IPA must be the {IPA_FLAVOR} build" + (f" ({problem})" if problem else ""))
+    # An ad-hoc signature carries the entitlements; a provisioning profile would mean a team signed it.
+    if any(name.endswith("embedded.mobileprovision") for name in names):
+        raise ValueError("IPA must not be signed for a team (it holds a provisioning profile)")
+    if binary_entitlements(binary) != plistlib.loads(IPA_ENTITLEMENTS.read_bytes()):
+        raise ValueError("IPA must declare exactly the entitlements in " + IPA_ENTITLEMENTS.name)
 
 
 def prepare(root, tag):

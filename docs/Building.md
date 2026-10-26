@@ -56,6 +56,40 @@ Releases use the project's existing permanent key (`tools/Import-Signing.ps1` re
 `SB_SIGNING_DIR`). Never create a new one: APKs signed with another key cannot update installed
 copies. An accepted F-Droid reproducible-build recipe can retain that certificate; inclusion is pending.
 
+## iPhone and iPad
+
+To build the app yourself, open `ios/SentryBridge.xcodeproj` in Xcode with the iOS 27 SDK on a Mac, choose your
+team under **Signing & Capabilities**, and run it on the device. `python3 tools/build_ios_ipa.py`
+builds the same `dist/sentry-bridge.ipa` the release uses. The build setting `SB_FLAVOR` picks
+the flavor: `Sideload` (the default and the release) keeps running with background audio; `Lite` has no
+silent audio and offers Bridge Session instead (`python3 tools/build_ios_ipa.py --flavor Lite` writes
+`dist/sentry-bridge-lite.ipa`, which is not released). Both flavors request the Time Sensitive notification
+capability; the IPA is ad-hoc signed only to declare it, with no team or profile. A free Apple ID cannot
+sign that capability. For a free-team device build, first run:
+
+```bash
+python3 tools/generate_ios_project.py --no-time-sensitive
+```
+
+Do not commit that generated project change. Notifications arrive at the normal level.
+The app supports devices on iOS/iPadOS 26 or later; the current source uses SDK 27 APIs behind
+availability checks. The review build used Xcode 27.1.
+
+### Updating the AltStore source at release
+
+`altsource.json` describes the currently published IPA, not an unreleased branch. PR #13 adds the
+When In Use and Always location descriptions and the Time Sensitive notification entitlement.
+Until the next release updates the source, `test_published_source_matches_the_app` therefore fails
+when run against the new app sources. This is a known release-metadata mismatch, not evidence that
+AltStore has failed to install the existing published app.
+
+Build and validate the Sideload IPA from the final release sources, then use `tools/altsource.py update`
+with the prepared release bundle and tag (see `python3 tools/altsource.py --help`). Publish the matching
+IPA and source update together. Do not change the live permission listing early to match an IPA that
+has not been published. AltStore checks the listing against the downloaded app:
+[AltStore source permissions](https://faq.altstore.io/developers/make-a-source#app-permissions).
+The source-match test must pass against the release sources before the release is considered complete.
+
 ## Tests
 
 ```bash

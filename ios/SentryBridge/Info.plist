@@ -12,6 +12,10 @@
 <key>CFBundleVersion</key><string>1</string>
 <key>LSRequiresIPhoneOS</key><true/>
 <key>NSLocalNetworkUsageDescription</key><string>Receive Sentry flight data and EFB announcements over WiFi, and forward GPS, traffic and weather to the EFB address you select.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>GPS check compares this device's position with the Sentry's and warns on screen when they disagree. The position stays on this device: it is never stored, never sent to the EFB and never changes ownship or traffic data.</string>
+<key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>GPS check keeps comparing this device's position with the Sentry's while the bridge runs in the background, and warns when they disagree. The position stays on this device: it is never stored, never sent to the EFB and never changes ownship or traffic data.</string>
+<key>UIBackgroundModes</key><array><string>audio</string><string>location</string></array>
+<key>SBBuildFlavor</key><string>$(SB_FLAVOR)</string>
 <key>BGTaskSchedulerPermittedIdentifiers</key><array><string>$(PRODUCT_BUNDLE_IDENTIFIER).bridge.*</string></array>
 <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
 <key>UILaunchScreen</key><dict/>

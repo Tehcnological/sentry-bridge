@@ -71,6 +71,39 @@ def readings(binary,port,output):
     finally:stop.set();server.close()
     if not requests or requests[0]!=b'GET /stats HTTP/1.1':raise RuntimeError(f'readings: receiver saw {requests}')
 
+def gps_isolation(binary,port):
+    """GPS check: a phone position 55 km from the Sentry's is compared, never sent. The output must carry the
+    Sentry's own ownship position and no trace of the phone's, in any frame."""
+    import gdl90
+    phone=(sim.ORIGIN[0]+.5,sim.ORIGIN[1]+.25)
+    def s24(raw):return int.from_bytes(raw,'big')-(1<<24 if raw[0]&0x80 else 0)
+    phone24=[gdl90._latlon_to_24(v).to_bytes(3,'big') for v in phone]
+    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sink:
+        sink.bind(('127.0.0.1',0));sink.settimeout(.05)
+        process=subprocess.Popen([str(binary),str(port),str(sink.getsockname()[1]),'gps-isolation',str(phone[0]),str(phone[1])])
+        output=[]
+        try:
+            generator=sim.SimSentry()
+            with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sender:
+                end=time.monotonic()+15;t=0
+                while time.monotonic()<end and process.poll() is None:
+                    for data in generator.datagrams(t):sender.sendto(data,('127.0.0.1',port))
+                    try:
+                        while True:output.append(sink.recv(65536))
+                    except socket.timeout:pass
+                    time.sleep(.1);t+=1
+            if process.wait(timeout=10):raise RuntimeError('gps-isolation: Swift side failed')
+        finally:
+            if process.poll() is None:process.kill();process.wait()
+    frames=[f for datagram in output for f in gdl90.parse(datagram)]
+    own=[f for f in frames if f.msg_id==gdl90.MSG_OWNSHIP]
+    if not own:raise RuntimeError('gps-isolation: no ownship frames forwarded')
+    for f in own:
+        lat,lon=s24(f.msg[5:8])*180/(1<<23),s24(f.msg[8:11])*180/(1<<23)
+        if abs(lat-sim.ORIGIN[0])>.05 or abs(lon-sim.ORIGIN[1])>.05:raise RuntimeError(f'gps-isolation: ownship at {lat},{lon}')
+    if any(b''.join(phone24) in d for d in output):raise RuntimeError("gps-isolation: the phone's position reached the output")
+    print(f'PASS: gps-isolation: {len(own)} ownship frames carry the Sentry position; {len(output)} datagrams hold nothing of the phone position')
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--thread-sanitizer',action='store_true',help='Instrument the C adapter/core and Swift worker for data races')
@@ -81,7 +114,7 @@ def main():
     for name,path in [('sbcore','core/sbcore.c'),('io','ios/SentryBridge/BridgeIO.c')]:
         subprocess.run(['clang',*cflags,'-O2','-Wall','-Wextra','-Werror','-I'+str(ROOT/'core'),'-c',str(ROOT/path),'-o',str(build/(name+'.o'))],check=True)
     binary=build/'worker-smoke'
-    subprocess.run(['swiftc',*swiftflags,'-D','SBIO_TESTING','-swift-version','5','-module-cache-path',str(build/'modules'),'-import-objc-header',str(ROOT/'ios/SentryBridge/Bridge-Bridging-Header.h'),'-I'+str(ROOT/'core'),str(ROOT/'ios/SentryBridge/BridgeWorker.swift'),str(ROOT/'ios/SentryBridge/EFBDiscovery.swift'),str(ROOT/'ios/SentryBridge/ReceiverReadings.swift'),str(ROOT/'ios/tests/WorkerSmoke.swift'),str(build/'io.o'),str(build/'sbcore.o'),'-o',str(binary)],check=True)
+    subprocess.run(['swiftc',*swiftflags,'-D','SBIO_TESTING','-swift-version','5','-module-cache-path',str(build/'modules'),'-import-objc-header',str(ROOT/'ios/SentryBridge/Bridge-Bridging-Header.h'),'-I'+str(ROOT/'core'),str(ROOT/'ios/SentryBridge/BridgeWorker.swift'),str(ROOT/'ios/SentryBridge/EFBDiscovery.swift'),str(ROOT/'ios/SentryBridge/ReceiverReadings.swift'),str(ROOT/'ios/SentryBridge/KeepRunning.swift'),str(ROOT/'ios/tests/WorkerSmoke.swift'),str(build/'io.o'),str(build/'sbcore.o'),'-o',str(binary)],check=True)
     with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as reservation, socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sink:
         reservation.bind(('127.0.0.1',0));port=reservation.getsockname()[1];reservation.close()
         sink.bind(('127.0.0.1',0));sink.settimeout(.05)
@@ -105,6 +138,8 @@ def main():
         subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'follow'],check=True,timeout=20)
         subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'sweep'],check=True,timeout=10)
         subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'follow-end'],check=True,timeout=15)
+        subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'keep-running'],check=True,timeout=10)
+        gps_isolation(binary,port)
         readings(binary,port,sink.getsockname()[1])
         subprocess.run([str(binary),str(port),str(sink.getsockname()[1]),'lifecycle'],check=True,timeout=30)
         http_stop(binary,port,sink.getsockname()[1])

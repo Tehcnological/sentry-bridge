@@ -1,0 +1,226 @@
+import Foundation
+
+/// Which build this is, set by SB_FLAVOR in the Xcode project (tools/build_ios_ipa.py picks it). The release
+/// IPA is Sideload: background audio keeps the bridge running. Lite has no silent audio and uses Bridge Session.
+enum BuildFlavor: String {
+    case sideload = "Sideload", lite = "Lite"
+    static var current: BuildFlavor {
+        #if LITE
+        return .lite
+        #else
+        return .sideload
+        #endif
+    }
+}
+
+/// How the bridge keeps forwarding while the app is in the background.
+enum KeepRunningMethod: String, Codable {
+    case backgroundAudio, bridgeSession, appOpen
+    static func offered(in flavor: BuildFlavor) -> [KeepRunningMethod] {
+        flavor == .sideload ? [.backgroundAudio] : [.bridgeSession, .appOpen]
+    }
+    var title: String {
+        switch self {
+        case .backgroundAudio: return "Background audio"
+        case .bridgeSession: return "Bridge Session"
+        case .appOpen: return "Only while the app is open"
+        }
+    }
+}
+
+/// One answer in the first-run chooser.
+struct KeepRunningOption: Identifiable, Equatable {
+    let method: KeepRunningMethod, gpsCheck: Bool, recommended: Bool, detail: String
+    var id: String { method.rawValue + (gpsCheck ? "+gps" : "") }
+    var title: String { method.title + (gpsCheck ? " + GPS cross-reference" : "") }
+}
+
+/// The saved answer to "how should the bridge keep running", stored apart from the route settings so an
+/// unreadable or missing answer only brings back the chooser.
+struct KeepRunningChoice: Codable, Equatable {
+    /// Raise when the chooser asks something new: a saved choice from an older version shows it again.
+    static let currentVersion = 1
+    static let storeKey = "bridge.keepRunning.v1"
+    var version = currentVersion
+    var method: KeepRunningMethod
+    var gpsCheck = false
+
+    /// The saved choice, or nil when the chooser must be shown: nothing saved (first launch, or an update
+    /// from a build without this setting), unreadable data, an older version, or a method this build lacks.
+    static func load(_ data: Data?, flavor: BuildFlavor) -> KeepRunningChoice? {
+        guard let data, let choice = try? JSONDecoder().decode(KeepRunningChoice.self, from: data),
+              choice.version >= currentVersion, KeepRunningMethod.offered(in: flavor).contains(choice.method) else { return nil }
+        return choice
+    }
+    func encoded() -> Data? { try? JSONEncoder().encode(self) }
+
+    static let notificationsDetail = "Allow notifications so the app can tell you when the bridge stops."
+    static let gpsDetail = "It also turns on the phone's location. iOS keeps apps that use location running, so this is a backup way to stay running. The app compares the phone's GPS position with the Sentry's and warns you if the Sentry's looks wrong. Needs location set to Always. Uses more battery. Your position stays on the phone."
+
+    static func options(for flavor: BuildFlavor) -> [KeepRunningOption] {
+        switch flavor {
+        case .sideload:
+            #if LITE
+            return []  // Lite carries no background-audio option.
+            #else
+            return [
+                KeepRunningOption(method: .backgroundAudio, gpsCheck: false, recommended: true, detail: "Plays silent audio so iOS keeps the bridge running when you switch apps or lock the screen. EFB alerts and music still play. A phone call pauses it until the call ends."),
+                KeepRunningOption(method: .backgroundAudio, gpsCheck: true, recommended: false, detail: "Background audio, plus GPS cross-reference. " + gpsDetail),
+            ]
+            #endif
+        case .lite:
+            return [
+                KeepRunningOption(method: .bridgeSession, gpsCheck: false, recommended: true, detail: "Asks iOS for up to 4 hours of background time. iOS can say no or end it early. Then the bridge runs only while the app is open."),
+                KeepRunningOption(method: .bridgeSession, gpsCheck: true, recommended: false, detail: "Bridge Session, plus GPS cross-reference. Location keeps the bridge running past 4 hours or if iOS says no. " + gpsDetail),
+                KeepRunningOption(method: .appOpen, gpsCheck: false, recommended: false, detail: "The bridge stops when you switch apps or lock the screen. Uses the least battery."),
+            ]
+        }
+    }
+    /// The option selected when the chooser opens: the saved one, else the recommended one. A Lite build
+    /// updated from settings with Bridge Session turned off starts on "Only while the app is open".
+    static func preselected(_ saved: KeepRunningChoice?, flavor: BuildFlavor, legacySession: Bool = true) -> KeepRunningOption {
+        let options = options(for: flavor)
+        if let saved, let match = options.first(where: { $0.method == saved.method && $0.gpsCheck == saved.gpsCheck }) { return match }
+        if flavor == .lite && !legacySession, let open = options.first(where: { $0.method == .appOpen }) { return open }
+        return options.first { $0.recommended }!
+    }
+}
+
+/// A local notification that background running degraded, or the watchdog's.
+struct DegradedNotice: Equatable {
+    let id: String, title: String, body: String
+    static let watchdogID = "bridge.watchdog"
+    static let watchdog = DegradedNotice(id: watchdogID, title: "Sentry Bridge stopped forwarding",
+                                         body: "iOS closed or paused the app. Open it to restart the bridge.")
+    static func sessionRefused(gpsCheck: Bool) -> DegradedNotice {
+        DegradedNotice(id: "bridge.session", title: "Bridge Session refused",
+                       body: gpsCheck ? "GPS cross-reference keeps the bridge running." : "The bridge runs only while the app is open.")
+    }
+    static func sessionEnded(gpsCheck: Bool) -> DegradedNotice {
+        DegradedNotice(id: "bridge.session", title: "Bridge Session ended",
+                       body: gpsCheck ? "GPS cross-reference keeps the bridge running." : "Open the app to restart the bridge.")
+    }
+    static func audioStopped(gpsCheck: Bool) -> DegradedNotice {
+        DegradedNotice(id: "bridge.audio", title: "Background audio stopped",
+                       body: gpsCheck ? "GPS cross-reference keeps the bridge running. Open the app to restart audio." : "iOS may pause the bridge. Open the app to keep it running.")
+    }
+    static func locationStopped(_ reason: String) -> DegradedNotice {
+        DegradedNotice(id: "bridge.location", title: "GPS cross-reference stopped", body: reason + " Open the app to check the bridge.")
+    }
+    static let stoppedWhenHidden = DegradedNotice(id: "bridge.foreground", title: "Forwarding stopped",
+                                                  body: "The bridge runs only while the app is open.")
+}
+
+/// The decision after iOS refuses a Bridge Session, kept apart from the UI so host tests check it.
+enum KeepRunningPolicy {
+    struct Fallback: Equatable { let background: Bool, message: String, notice: DegradedNotice }
+    /// Never stops the bridge: with GPS cross-reference on, location updates keep it running in the background;
+    /// otherwise it continues as a foreground bridge with the likely causes named.
+    static func sessionRefused(_ error: String, gpsCheck: Bool) -> Fallback {
+        if gpsCheck {
+            return Fallback(background: true, message: "Bridge Session refused (\(error)). GPS cross-reference keeps the bridge running.",
+                            notice: .sessionRefused(gpsCheck: true))
+        }
+        return Fallback(background: false, message: "Bridge Session refused (\(error)). The bridge runs only while the app is open. Low Power Mode or Background App Refresh being off can cause this.",
+                        notice: .sessionRefused(gpsCheck: false))
+    }
+}
+
+/// Posts and removes local notifications; the app uses UNUserNotificationCenter, host tests a recorder.
+protocol NoticePosting: AnyObject {
+    func post(_ notice: DegradedNotice, after seconds: Double?)
+    func remove(_ id: String)
+}
+
+/// While forwarding, one notification stays scheduled `lead` seconds ahead and is replaced every `interval`
+/// seconds from the worker's status updates. If iOS suspends or ends the app the replacing stops and the
+/// notification fires; Stop removes it.
+final class Watchdog {
+    /// 30 s: six missed replacements before it fires, so a stalled update or a scene change never sets it
+    /// off, and the pilot still hears within half a minute, about when EFBs drop traffic as stale.
+    static let lead = 30.0, interval = 5.0
+    private let poster: NoticePosting
+    private var lastScheduled: Double?
+    init(poster: NoticePosting) { self.poster = poster }
+    /// Called with every status update (about once a second); reschedules when `interval` has passed.
+    func tick(now: Double) {
+        if let lastScheduled, now - lastScheduled < Self.interval { return }
+        poster.post(.watchdog, after: Self.lead); lastScheduled = now
+    }
+    func stop() { poster.remove(DegradedNotice.watchdogID); lastScheduled = nil }
+    var armed: Bool { lastScheduled != nil }
+}
+
+/// The phone's latest position, from Core Location. Seconds use sbio_now's monotonic clock.
+struct PhoneFix: Equatable { var lat: Double, lon: Double, accuracy: Double, at: Double }
+/// The Sentry's GPS as the bridge decodes it: the heartbeat's fix flag and its latest ownship position.
+struct SentryFix: Equatable {
+    var gps = false, valid = false, lat = 0.0, lon = 0.0, age = -1.0
+}
+
+/// Compares the phone's position with the Sentry's and warns on the main screen. HARD RULE: the result is
+/// only text. The phone's position never reaches the worker, the EFB, ownship or traffic data.
+struct GPSCheck {
+    /// 0.5 NM. Both receivers normally agree within tens of metres; samples up to 2 s apart at 150 kt add
+    /// about 150 m. Half a mile stays clear of that, yet is a visible shift for pattern traffic. The phone's
+    /// own reported accuracy is added so a poor phone fix does not raise the warning.
+    var limitM = 926.0
+    /// A condition must hold this long before the warning shows (GPS start-up, brief dropouts, a sample
+    /// taken mid-turn), and must be gone this long before it clears.
+    var holdS = 30.0, clearS = 10.0
+    /// Usable fixes: phone sample newer than 10 s with accuracy within 100 m; Sentry ownship newer than 3 s.
+    var phoneFreshS = 10.0, phoneAccuracyM = 100.0, sentryFreshS = 3.0
+    enum Finding: Equatable { case noPhone, agree(Double), sentryNoFix, disagree(Double) }
+    private(set) var finding = Finding.noPhone
+    private(set) var warning: String?
+    private var pending: (Finding, Double)?, clearing: Double?
+
+    static func distanceM(_ lat1: Double, _ lon1: Double, _ lat2: Double, _ lon2: Double) -> Double {
+        let r = 6_371_000.0, p1 = lat1 * .pi / 180, p2 = lat2 * .pi / 180
+        let dp = p2 - p1, dl = (lon2 - lon1) * .pi / 180
+        let a = sin(dp / 2) * sin(dp / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2)
+        return 2 * r * asin(min(1, sqrt(a)))
+    }
+    static func nm(_ metres: Double) -> String { String(format: "%.1f NM", metres / 1852) }
+
+    mutating func update(sentry: SentryFix, phone: PhoneFix?, now: Double) {
+        guard let phone, now - phone.at <= phoneFreshS, phone.accuracy > 0, phone.accuracy <= phoneAccuracyM else {
+            finding = .noPhone; pending = nil; clearing = nil; warning = nil; return
+        }
+        if !sentry.gps || !sentry.valid || sentry.age < 0 || sentry.age > sentryFreshS {
+            finding = .sentryNoFix
+        } else {
+            let distance = Self.distanceM(sentry.lat, sentry.lon, phone.lat, phone.lon)
+            finding = distance > limitM + phone.accuracy ? .disagree(distance) : .agree(distance)
+        }
+        switch finding {
+        case .sentryNoFix, .disagree:
+            clearing = nil
+            let kind = { (f: Finding) -> Int in if case .sentryNoFix = f { return 1 }; return 2 }
+            if pending == nil || kind(pending!.0) != kind(finding) { pending = (finding, now) }
+            if now - pending!.1 >= holdS || warning != nil { warning = text(finding) }
+        default:
+            pending = nil
+            if warning != nil {
+                if clearing == nil { clearing = now }
+                if now - clearing! >= clearS { warning = nil; clearing = nil }
+            }
+        }
+    }
+    private func text(_ finding: Finding) -> String {
+        switch finding {
+        case .sentryNoFix: return "Sentry has no GPS fix. Your EFB may not show your position."
+        case .disagree(let distance): return "Sentry GPS is \(Self.nm(distance)) from this phone's. Traffic may be in the wrong place."
+        default: return ""
+        }
+    }
+    /// The line shown under Live status while the check runs.
+    var status: String {
+        switch finding {
+        case .noPhone: return "Waiting for phone GPS"
+        case .sentryNoFix: return "Sentry has no GPS fix"
+        case .agree(let distance): return distance < 100 ? "Positions agree" : "Positions agree (\(Self.nm(distance)))"
+        case .disagree(let distance): return "\(Self.nm(distance)) apart"
+        }
+    }
+}

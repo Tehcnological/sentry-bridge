@@ -288,6 +288,10 @@ void sbio_snapshot(sbio *io, sbio_status *status) {
     status->mode = sb_get_mode(&io->bridge);
     status->elapsed = now - io->started;
     if (status->age > status->max_gap) status->max_gap = status->age;
+    status->own_valid = io->bridge.has_own;
+    status->own_lat = io->bridge.has_own ? io->bridge.own_lat : 0;
+    status->own_lon = io->bridge.has_own ? io->bridge.own_lon : 0;
+    status->own_age = io->bridge.has_own ? now - io->bridge.own_t : -1;
 }
 int sbio_refresh_shared_input(sbio *io) {
     uint32_t local;

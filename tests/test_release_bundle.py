@@ -3,6 +3,7 @@ import hashlib
 import json
 import plistlib
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,7 @@ IOS_EXPORT = {
     "ios/SentryBridge/BridgeView.swift", "ios/SentryBridge/BridgeWorker.swift",
     "ios/SentryBridge/EFBDiscovery.swift", "ios/SentryBridge/ReceiverReadings.swift", "ios/SentryBridge/BridgeIntents.swift",
     "ios/SentryBridge/SentryBridgeApp.swift", "ios/SentryBridge/Info.plist",
+    "ios/SentryBridge/KeepRunning.swift", "ios/SentryBridge/KeepAlive.swift", "ios/SentryBridge/SentryBridge.entitlements",
     "ios/SentryBridge/PrivacyInfo.xcprivacy", "ios/SentryBridge/DemoReplayer.swift", "ios/SentryBridge/Licenses.swift", "ios/SentryBridge/DemoReceiver.bin", "ios/SentryBridge/AppIcon.icon/icon.json", "ios/SentryBridge/AppIcon.icon/Assets/2-rings.svg",
     "ios/SentryBridge/AppIcon.icon/Assets/3-signal.svg", "ios/SentryBridge/AppIcon.icon/Assets/4-aircraft.svg",
     "ios/tests/BridgeUITests.swift", "ios/tests/WorkerSmoke.swift", "ios/tests/test_ios_adapter.py",
@@ -95,14 +97,58 @@ class TestReleaseBundle(unittest.TestCase):
         header.write_bytes(b'#define SB_VERSION "0.1.3" /* edited */\r\n')
         self.assertEqual(rb.converted_sources(self.root), [])
 
-    def write_ipa(self, version="0.1.3", extra=()):
+    @staticmethod
+    def binary(entitlements):
+        """Minimal Mach-O load commands and indexed signature (not a runnable executable)."""
+        header = lambda n, size: struct.pack("<8I", 0xfeedfacf, 0x100000c, 0, 2, n, size, 0, 0)
+        if entitlements is None:
+            return header(0, 0)
+        blob = plistlib.dumps(entitlements)
+        signature = struct.pack(">5I", 0xfade0cc0, 28 + len(blob), 1, 5, 20)
+        signature += struct.pack(">2I", 0xfade7171, len(blob) + 8) + blob
+        return header(1, 16) + struct.pack("<4I", 0x1d, 16, 48, len(signature)) + signature
+
+    def test_entitlements_must_be_in_the_indexed_code_signature(self):
+        expected = {"com.apple.developer.usernotifications.time-sensitive": True}
+        signed = self.binary(expected)
+        self.assertEqual(rb.binary_entitlements(signed), expected)
+        self.assertIsNone(rb.binary_entitlements(self.binary(None)))
+        # An unsigned executable with an entitlement-looking constant is still unsigned.
+        marker = signed[68:]
+        self.assertIsNone(rb.binary_entitlements(self.binary(None) + marker))
+        # A decoy before the signature must not override the real slot.
+        decoy = self.binary({"get-task-allow": True})[68:]
+        shifted = bytearray(signed[:48] + decoy + signed[48:])
+        struct.pack_into("<I", shifted, 40, 48 + len(decoy))
+        self.assertEqual(rb.binary_entitlements(shifted), expected)
+        # Wrong slot, despite the correct marker and plist, is not an entitlement declaration.
+        wrong_slot = bytearray(signed); struct.pack_into(">I", wrong_slot, 60, 7)
+        self.assertIsNone(rb.binary_entitlements(wrong_slot))
+        mutations = []
+        for offset, order, value in ((40, "<", 0xffffffff), (44, "<", 0xffffffff),
+                                     (36, "<", 0), (52, ">", 0xffffffff),
+                                     (56, ">", 0xffffffff), (64, ">", 0), (72, ">", 0xffffffff)):
+            bad = bytearray(signed); struct.pack_into(order + "I", bad, offset, value); mutations.append(bad)
+        mutations.extend((b"not Mach-O" + marker, signed[:-1]))
+        for bad in mutations:
+            with self.subTest(binary=bytes(bad[:80])):
+                with self.assertRaises(ValueError): rb.binary_entitlements(bad)
+
+    def write_ipa(self, version="0.1.3", extra=(), flavor="Sideload", report_flavor="Sideload", entitlements="project"):
+        if entitlements == "project":
+            entitlements = plistlib.loads(rb.IPA_ENTITLEMENTS.read_bytes())
         """An IPA as tools/build_ios_ipa.py writes it, with its report."""
         ipa = self.dist / "sentry-bridge.ipa"
+        info = {"CFBundleShortVersionString": version, "SBBuildFlavor": flavor,
+                "UIBackgroundModes": rb.FLAVOR_BACKGROUND_MODES.get(flavor, [])}
         with zipfile.ZipFile(ipa, "w") as archive:
-            archive.writestr("Payload/SentryBridge.app/Info.plist", plistlib.dumps({"CFBundleShortVersionString": version}))
+            archive.writestr("Payload/SentryBridge.app/Info.plist", plistlib.dumps(info))
+            archive.writestr("Payload/SentryBridge.app/SentryBridge", self.binary(entitlements))
             for name in extra:
                 archive.writestr(name, b"")
         report = {"versionName": version, "ipaSha256": rb.sha256(ipa), "sources": rb.ipa_sources(rb.source_snapshot(self.root))}
+        if report_flavor:
+            report["flavor"] = report_flavor
         (self.dist / "ios-build-report.json").write_text(json.dumps(report))
 
     def test_ipa_must_match_its_report_sources_version_and_be_unsigned(self):
@@ -126,9 +172,20 @@ class TestReleaseBundle(unittest.TestCase):
         self.write_ipa(version="0.1.2")
         with self.assertRaisesRegex(ValueError, "IPA version"):
             rb.prepare(self.root, "v0.1.3")
-        for signature in ("Payload/SentryBridge.app/_CodeSignature/CodeResources", "Payload/SentryBridge.app/embedded.mobileprovision"):
-            self.write_ipa(extra=[signature])
-            with self.assertRaisesRegex(ValueError, "unsigned"):
+        # Not signed for a team; the ad-hoc signature declares exactly the project's entitlements.
+        self.write_ipa(extra=["Payload/SentryBridge.app/embedded.mobileprovision"])
+        with self.assertRaisesRegex(ValueError, "signed for a team"):
+            rb.prepare(self.root, "v0.1.3")
+        for entitlements in (None, {}, {"com.apple.developer.usernotifications.time-sensitive": True, "get-task-allow": True}):
+            self.write_ipa(entitlements=entitlements)
+            with self.assertRaisesRegex(ValueError, "exactly the entitlements"):
+                rb.prepare(self.root, "v0.1.3")
+        self.write_ipa(extra=["Payload/SentryBridge.app/_CodeSignature/CodeResources"])
+        rb.prepare(self.root, "v0.1.3")  # the ad-hoc signature's resource seal is fine
+        # Only the Sideload build is released: not Lite, and not a report from before flavors existed.
+        for flavor, report_flavor in (("Lite", "Lite"), ("Lite", "Sideload"), ("Sideload", None)):
+            self.write_ipa(flavor=flavor, report_flavor=report_flavor)
+            with self.assertRaisesRegex(ValueError, "Sideload build"):
                 rb.prepare(self.root, "v0.1.3")
         self.write_ipa()
         bundle = rb.prepare(self.root, "v0.1.3")

@@ -2,6 +2,12 @@ import XCTest
 import Darwin
 
 final class BridgeUITests: XCTestCase {
+    /// The build flavor under test (SB_FLAVOR); run the suite once per flavor.
+    #if LITE
+    private let lite = true
+    #else
+    private let lite = false
+    #endif
     private var sockets: [Int32] = []
     private var timers: [(DispatchSourceTimer, DispatchQueue)] = []
     private func udpSocket() -> Int32 {
@@ -208,7 +214,8 @@ final class BridgeUITests: XCTestCase {
     }
     func testSavedRoutingSurvivesRelaunch() {
         // Exercise real persistence in this disposable simulator's app container.
-        let app = XCUIApplication(); app.launchArguments = []; app.launch()
+        // A user launch, apart from skipping the first-run chooser that a fresh simulator would show.
+        let app = XCUIApplication(); app.launchArguments = ["--ui-skip-chooser"]; app.launch()
         let settings = app.buttons["Settings"]
         reveal(settings, in: app); settings.tap()
         let replay = app.buttons["Use synthetic replay route"]
@@ -360,7 +367,7 @@ final class BridgeUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         app.activate()
         XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Foreground bridge stopped'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge stopped when you left the app'")).firstMatch.exists)
     }
 
     // Run under each simulator system appearance; the app must not force a scheme.
@@ -594,42 +601,175 @@ final class BridgeUITests: XCTestCase {
         XCTAssertEqual(destination.value as? String, "127.0.0.1")
     }
 
-    func testBridgeSessionRequestAndStop() {
-        let app = launch()
-        let settings = app.buttons["Settings"]
-        reveal(settings, in: app); settings.tap()
-        let toggle = app.switches["Bridge Session"]
-        reveal(toggle, in: app)
-        XCTAssertTrue(toggle.exists)
-        if !toggle.isEnabled {
-            XCTAssertEqual(toggle.value as? String, "0")
-            let start = app.buttons["bridge.startStop"]
-            reveal(start, in: app, upwards: false); start.tap()
-            XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5))
-            start.tap()
-            XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
-            return
-        }
-        // SwiftUI exposes the whole labelled row as a Switch. Tap the actual trailing control,
-        // rather than the row centre or a width-dependent percentage of the row.
-        toggle.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
-            .withOffset(CGVector(dx: -20, dy: 0)).tap()
-        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '1'"), object: toggle)
-        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed, "Enable the session switch before Start")
+    func testBridgeSessionRequestAndStop() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession"])
         let start = app.buttons["bridge.startStop"]
         reveal(start, in: app, upwards: false); start.tap()
         let active = app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Bridge Session")).firstMatch
-        let unavailable = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session unavailable'")).firstMatch
-        // The simulator may reject continued processing. Either outcome must be clear and stoppable.
+        let unavailable = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session refused'")).firstMatch
+        // The simulator may reject continued processing. Either way the bridge keeps running and can be stopped:
+        // a refusal falls back to a foreground bridge and names the likely causes.
         let launched = active.waitForExistence(timeout: 10)
-        if !launched { XCTAssertTrue(unavailable.waitForExistence(timeout: 5)) }
-        let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = launched ? "Bridge Session accepted" : "Bridge Session unavailable"
-        shot.lifetime = .keepAlways; add(shot)
-        if launched {
-            app.buttons["bridge.startStop"].tap()
-            XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+        if !launched {
+            XCTAssertTrue(unavailable.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'only while the app is open'")).firstMatch.exists)
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Foreground bridge")).firstMatch.exists)
         }
+        XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5), "a refused session must not stop the bridge")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = launched ? "Bridge Session accepted" : "Bridge Session refused: foreground fallback"
+        shot.lifetime = .keepAlways; add(shot)
+        reveal(start, in: app, upwards: false); start.tap()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+    }
+    func testSessionRegistrationRefusalKeepsForegroundBridgeRunning() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession", "--refuse-session-registration"])
+        let start = app.buttons["bridge.startStop"]
+        reveal(start, in: app, upwards: false); start.tap()
+        XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'System could not register'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Foreground bridge")).firstMatch.exists)
+        XCUIDevice.shared.press(.home)
+        sleep(2); app.activate()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5), "the fallback must stop when hidden")
+    }
+    private func expectKeepAlive(_ app: XCUIApplication, _ value: String, timeout: TimeInterval = 5) {
+        let status = app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "debug.keepAlive", value)).firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: timeout), value)
+    }
+    func testPendingSessionStartsGPSBeforeHiding() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession+gps", "--ui-test-location", "--ui-location-always", "--hold-session-request"])
+        app.buttons["bridge.startStop"].tap()
+        XCTAssertTrue(app.staticTexts["Requesting session"].waitForExistence(timeout: 5))
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false")
+        XCUIDevice.shared.press(.home); sleep(2); app.activate()
+        XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5))
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false")
+        app.buttons["bridge.startStop"].tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=false session=false")
+    }
+    func testPendingSessionWithoutGPSStopsWhenHidden() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession", "--ui-test-location", "--hold-session-request"])
+        app.buttons["bridge.startStop"].tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=true session=false")
+        XCUIDevice.shared.press(.home); sleep(2); app.activate()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+        expectKeepAlive(app, "location=false gps=false watchdog=false session=false")
+    }
+    func testLocationGrantStartsAndRevocationStopsLiveCheck() {
+        let mode = lite ? "bridgeSession+gps" : "backgroundAudio+gps"
+        let app = launch(extraArguments: ["--keep-running=" + mode, "--ui-test-location", "--refuse-session-registration"])
+        app.buttons["bridge.startStop"].tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=true session=false")
+        let allow = app.buttons["debug.allowLocation"], deny = app.buttons["debug.denyLocation"]
+        reveal(allow, in: app); allow.tap()
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false")
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "bridge.alwaysLocation.")).count, 0)
+        reveal(deny, in: app); deny.tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=true session=false")
+        reveal(allow, in: app); allow.tap()
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false")
+        let start = app.buttons["bridge.startStop"]; reveal(start, in: app); start.tap()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+        expectKeepAlive(app, "location=false gps=false watchdog=false session=false")
+    }
+    func testLateLocationGrantOutlastsSessionLimit() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession+gps", "--ui-test-location", "--accept-test-session", "--test-session-seconds=10"])
+        app.buttons["bridge.startStop"].tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=true session=true")
+        let allow = app.buttons["debug.allowLocation"]; reveal(allow, in: app); allow.tap()
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=true")
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false", timeout: 15)
+        XCTAssertTrue(app.buttons["Stop Bridge"].exists, "GPS gained during this run must outlast the session")
+        let start = app.buttons["bridge.startStop"]; reveal(start, in: app); start.tap()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+    }
+    func testSessionLimitWithoutLocationStillStops() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession+gps", "--ui-test-location", "--accept-test-session", "--test-session-seconds=3"])
+        app.buttons["bridge.startStop"].tap()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Bridge Session length reached")).firstMatch.exists)
+        expectKeepAlive(app, "location=false gps=false watchdog=false session=false")
+    }
+    func testAlwaysLocationNoteHasOneVisibleContext() {
+        let mode = lite ? "bridgeSession+gps" : "backgroundAudio+gps"
+        let app = launch(extraArguments: ["--keep-running=" + mode, "--ui-test-location", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"])
+        let status = app.staticTexts["bridge.alwaysLocation.status"]
+        reveal(status, in: app); XCTAssertTrue(status.exists)
+        let settings = app.buttons["Settings"]; reveal(settings, in: app); settings.tap()
+        let note = app.staticTexts["bridge.alwaysLocation.settings"]
+        reveal(note, in: app, upwards: false); XCTAssertTrue(note.exists)
+        func assertSingleWarning() {
+            XCTAssertFalse(status.exists)
+            XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "bridge.alwaysLocation.")).count, 1)
+            XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "bridge.openLocationSettings.")).count, 1)
+        }
+        assertSingleWarning()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        assertSingleWarning()
+    }
+    func testBackgroundAudioKeepsRunningWhenHidden() throws {
+        try XCTSkipIf(lite, "Background audio is a Sideload option")
+        let app = launch(extraArguments: ["--keep-running=backgroundAudio"])
+        let start = app.buttons["bridge.startStop"]
+        reveal(start, in: app, upwards: false); start.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Background audio")).firstMatch.waitForExistence(timeout: 5))
+        XCUIDevice.shared.press(.home)
+        sleep(5)
+        app.activate()
+        XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5), "background audio must keep the bridge running hidden")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'when you left the app'")).firstMatch.exists)
+        reveal(start, in: app, upwards: false); start.tap()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+    }
+    /// First run: the chooser offers this flavor's options with the recommended one selected, saves the
+    /// answer, can be reopened from Settings, and stays away on the next launch once answered.
+    func testKeepRunningChooser() {
+        var app = launch(extraArguments: ["--chooser"])
+        let sheet = app.descendants(matching: .any).matching(identifier: "chooser.sheet").firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let ids = lite ? ["bridgeSession", "bridgeSession+gps", "appOpen"] : ["backgroundAudio", "backgroundAudio+gps"]
+        XCTAssertTrue(app.buttons["chooser.option." + ids[0]].isSelected, "the recommended option starts selected")
+        // On smaller phones the Form has not created the third Lite row until it is scrolled into view.
+        for id in ids {
+            let option = app.buttons["chooser.option." + id]
+            for _ in 0..<4 where !option.exists { sheet.swipeUp() }
+            XCTAssertTrue(option.exists, id)
+        }
+        XCTAssertFalse(app.buttons["chooser.option." + (lite ? "backgroundAudio" : "bridgeSession")].exists)
+        XCTAssertFalse(app.buttons["chooser.cancel"].exists, "the first-run chooser needs an answer")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Chooser (\(lite ? "Lite" : "Sideload"))"
+        shot.lifetime = .keepAlways; add(shot)
+        // The sheet's Form is lazy: swipe up (never down, which dismisses) to the notifications paragraph.
+        let notifications = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Allow notifications'")).firstMatch
+        for _ in 0..<4 where !notifications.exists { sheet.swipeUp() }
+        XCTAssertTrue(notifications.exists, "notification permission is explained")
+        let pick = lite ? "appOpen" : "backgroundAudio+gps"
+        app.buttons["chooser.option." + pick].tap()
+        XCTAssertTrue(app.buttons["chooser.option." + pick].isSelected)
+        app.buttons["chooser.continue"].tap()
+        XCTAssertFalse(sheet.waitForExistence(timeout: 2))
+        let settings = app.buttons["Settings"]
+        reveal(settings, in: app); settings.tap()
+        // Settings lists the options with the saved one selected; tapping another saves it.
+        let saved = app.buttons["bridge.keepRunning." + pick]
+        reveal(saved, in: app, upwards: false)
+        XCTAssertTrue(saved.isSelected, "Settings shows the saved answer")
+        let other = app.buttons["bridge.keepRunning." + (lite ? "bridgeSession" : "backgroundAudio")]
+        reveal(other, in: app, upwards: false); other.tap()
+        XCTAssertTrue(other.isSelected); XCTAssertFalse(saved.isSelected)
+        XCTAssertFalse(sheet.exists)
+        // A user launch with the answer saved goes straight to the main screen.
+        app.terminate()
+        app = XCUIApplication(); app.launchArguments = []; app.launch()
+        XCTAssertTrue(app.buttons["bridge.startStop"].waitForExistence(timeout: 10))
+        XCTAssertFalse(sheet.exists)
     }
 
     func testSyntheticUDPRoundTrip() {
@@ -705,22 +845,34 @@ final class BridgeUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
     }
 
-    func testStartIntentUsesSharedBridge() {
+    func testStartIntentUsesSharedBridge() throws {
         let app = launch(extraArguments: ["--ui-intents=start"])
+        if !lite {
+            // Sideload: the Shortcut starts the bridge on background audio.
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Background audio")).firstMatch.waitForExistence(timeout: 10))
+            XCTAssertEqual(intentOutcomes(app), ["Bridge starting."])
+            let start = app.buttons["bridge.startStop"]
+            reveal(start, in: app, upwards: false); start.tap()
+            XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+            return
+        }
         let active = app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Bridge Session")).firstMatch
-        let unavailable = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session unavailable'")).firstMatch
+        let unavailable = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session refused'")).firstMatch
         // The simulator may reject continued processing; either outcome must be explicit and stoppable.
         let launched = active.waitForExistence(timeout: 10)
         if !launched { XCTAssertTrue(unavailable.waitForExistence(timeout: 5)) }
         let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = launched ? "Start intent: session accepted" : "Start intent: session unavailable"
+        shot.name = launched ? "Start intent: session accepted" : "Start intent: session refused, foreground fallback"
         shot.lifetime = .keepAlways; add(shot)
+        // Accepted or refused, the bridge runs until Stop.
         let start = app.buttons["bridge.startStop"]
         reveal(start, in: app, upwards: false)
-        if launched { start.tap() }
+        XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5))
+        start.tap()
         XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
     }
-    func testStopIntentCancelsRequestedSession() {
+    func testStopIntentCancelsRequestedSession() throws {
+        try XCTSkipUnless(lite, "Sideload has no session request to cancel")
         // Stop arrives while the session request is still pending; the late scheduler reply must be ignored.
         let app = launch(extraArguments: ["--ui-intents=start,stop"])
         let stopped = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Stopped by shortcut'")).firstMatch
@@ -729,13 +881,14 @@ final class BridgeUITests: XCTestCase {
         reveal(start, in: app, upwards: false)
         XCTAssertEqual(start.label, "Start Bridge")
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Bridge Session")).firstMatch.exists)
-        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session unavailable'")).firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Bridge Session refused'")).firstMatch.waitForExistence(timeout: 3))
         XCTAssertEqual(intentOutcomes(app), ["Requesting a Bridge Session.", "Bridge stopping."])
     }
     func testDuplicateIntentsReportActualState() {
         // A second Start while the session request is pending must not claim the bridge is running.
         var app = launch(extraArguments: ["--ui-intents=start,start,stop"])
-        XCTAssertEqual(intentOutcomes(app), ["Requesting a Bridge Session.", "A Bridge Session request is already pending.", "Bridge stopping."])
+        XCTAssertEqual(intentOutcomes(app), lite ? ["Requesting a Bridge Session.", "A Bridge Session request is already pending.", "Bridge stopping."]
+                                                 : ["Bridge starting.", "Bridge already running.", "Bridge stopping."])
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Stopped by shortcut'")).firstMatch.waitForExistence(timeout: 5))
         app.terminate()
         // Running, then Stopping: Start and Stop report the transition instead of acting twice.
@@ -786,6 +939,14 @@ final class BridgeUITests: XCTestCase {
         reveal(app.switches["bridge.restoreCompatibility"], in: app, upwards: false)
         screen = "Settings"
         try audit()
+        reveal(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'bridge.keepRunning.'")).firstMatch, in: app, upwards: false)
+        screen = "Settings, keep running"
+        try audit()
+        app.terminate(); app.launchArguments = ["--ui-testing", "--chooser"]; app.launch()
+        XCTAssertTrue(app.buttons["chooser.continue"].waitForExistence(timeout: 10))
+        screen = "Keep running chooser"
+        try audit()
+        app.buttons["chooser.continue"].tap()
         let report = XCTAttachment(string: (["VoiceOver-relevant:"] + voiceOver + ["Visual, for review:"] + review).joined(separator: "\n"))
         report.name = "Accessibility audit issues"; report.lifetime = .keepAlways; add(report)
         XCTAssertTrue(voiceOver.isEmpty, voiceOver.joined(separator: "\n"))
