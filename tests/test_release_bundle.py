@@ -3,6 +3,7 @@ import hashlib
 import json
 import plistlib
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,7 @@ IOS_EXPORT = {
     "ios/SentryBridge/BridgeView.swift", "ios/SentryBridge/BridgeWorker.swift",
     "ios/SentryBridge/EFBDiscovery.swift", "ios/SentryBridge/ReceiverReadings.swift", "ios/SentryBridge/BridgeIntents.swift",
     "ios/SentryBridge/SentryBridgeApp.swift", "ios/SentryBridge/Info.plist",
+    "ios/SentryBridge/KeepRunning.swift", "ios/SentryBridge/KeepAlive.swift", "ios/SentryBridge/SentryBridge.entitlements",
     "ios/SentryBridge/PrivacyInfo.xcprivacy", "ios/SentryBridge/DemoReplayer.swift", "ios/SentryBridge/Licenses.swift", "ios/SentryBridge/DemoReceiver.bin", "ios/SentryBridge/AppIcon.icon/icon.json", "ios/SentryBridge/AppIcon.icon/Assets/2-rings.svg",
     "ios/SentryBridge/AppIcon.icon/Assets/3-signal.svg", "ios/SentryBridge/AppIcon.icon/Assets/4-aircraft.svg",
     "ios/tests/BridgeUITests.swift", "ios/tests/WorkerSmoke.swift", "ios/tests/test_ios_adapter.py",
@@ -97,11 +99,40 @@ class TestReleaseBundle(unittest.TestCase):
 
     @staticmethod
     def binary(entitlements):
-        """A stand-in executable whose ad-hoc signature holds this entitlements plist (None: no blob)."""
+        """Minimal Mach-O load commands and indexed signature (not a runnable executable)."""
+        header = lambda n, size: struct.pack("<8I", 0xfeedfacf, 0x100000c, 0, 2, n, size, 0, 0)
         if entitlements is None:
-            return b"\xcf\xfa\xed\xfe unsigned"
+            return header(0, 0)
         blob = plistlib.dumps(entitlements)
-        return b"\xcf\xfa\xed\xfe header" + b"\xfa\xde\x71\x71" + (len(blob) + 8).to_bytes(4, "big") + blob + b"tail"
+        signature = struct.pack(">5I", 0xfade0cc0, 28 + len(blob), 1, 5, 20)
+        signature += struct.pack(">2I", 0xfade7171, len(blob) + 8) + blob
+        return header(1, 16) + struct.pack("<4I", 0x1d, 16, 48, len(signature)) + signature
+
+    def test_entitlements_must_be_in_the_indexed_code_signature(self):
+        expected = {"com.apple.developer.usernotifications.time-sensitive": True}
+        signed = self.binary(expected)
+        self.assertEqual(rb.binary_entitlements(signed), expected)
+        self.assertIsNone(rb.binary_entitlements(self.binary(None)))
+        # An unsigned executable with an entitlement-looking constant is still unsigned.
+        marker = signed[68:]
+        self.assertIsNone(rb.binary_entitlements(self.binary(None) + marker))
+        # A decoy before the signature must not override the real slot.
+        decoy = self.binary({"get-task-allow": True})[68:]
+        shifted = bytearray(signed[:48] + decoy + signed[48:])
+        struct.pack_into("<I", shifted, 40, 48 + len(decoy))
+        self.assertEqual(rb.binary_entitlements(shifted), expected)
+        # Wrong slot, despite the correct marker and plist, is not an entitlement declaration.
+        wrong_slot = bytearray(signed); struct.pack_into(">I", wrong_slot, 60, 7)
+        self.assertIsNone(rb.binary_entitlements(wrong_slot))
+        mutations = []
+        for offset, order, value in ((40, "<", 0xffffffff), (44, "<", 0xffffffff),
+                                     (36, "<", 0), (52, ">", 0xffffffff),
+                                     (56, ">", 0xffffffff), (64, ">", 0), (72, ">", 0xffffffff)):
+            bad = bytearray(signed); struct.pack_into(order + "I", bad, offset, value); mutations.append(bad)
+        mutations.extend((b"not Mach-O" + marker, signed[:-1]))
+        for bad in mutations:
+            with self.subTest(binary=bytes(bad[:80])):
+                with self.assertRaises(ValueError): rb.binary_entitlements(bad)
 
     def write_ipa(self, version="0.1.3", extra=(), flavor="Sideload", report_flavor="Sideload", entitlements="project"):
         if entitlements == "project":

@@ -169,13 +169,67 @@ IPA_ENTITLEMENTS = ROOT / "ios/SentryBridge/SentryBridge.entitlements"
 
 
 def binary_entitlements(binary):
-    """The entitlements plist in a Mach-O code signature, or None when it declares none. Parsed here so the
-    check also runs where codesign does not (the release is assembled on Windows)."""
-    at = binary.find(b"\xfa\xde\x71\x71")  # CSMAGIC_EMBEDDED_ENTITLEMENTS, big-endian
-    if at < 0:
+    """Read the XML entitlement slot of the release's thin, little-endian 64-bit Mach-O.
+
+    Follow LC_CODE_SIGNATURE and the SuperBlob index, never a marker found in arbitrary executable data.
+    Unsupported or malformed executables fail closed. This also runs on the Windows release host.
+    """
+    def uint(at, end, order="little"):
+        if at < 0 or at + 4 > end:
+            raise ValueError("IPA has a truncated Mach-O code signature")
+        return int.from_bytes(binary[at:at + 4], order)
+
+    end = len(binary)
+    if end < 32 or binary[:4] != b"\xcf\xfa\xed\xfe":
+        raise ValueError("IPA requires a thin 64-bit Mach-O executable")
+    count, size = uint(16, end), uint(20, end)
+    commands_end = 32 + size
+    if commands_end > end or count > size // 8:
+        raise ValueError("IPA has invalid Mach-O load commands")
+    at, signature = 32, None
+    for _ in range(count):
+        command, length = uint(at, commands_end), uint(at + 4, commands_end)
+        if length < 8 or length % 8 or at + length > commands_end:
+            raise ValueError("IPA has invalid Mach-O load command size")
+        if command == 0x1d:  # LC_CODE_SIGNATURE (linkedit_data_command)
+            if length != 16 or signature is not None:
+                raise ValueError("IPA has invalid or duplicate code signature commands")
+            signature = (uint(at + 8, commands_end), uint(at + 12, commands_end))
+        at += length
+    if at != commands_end:
+        raise ValueError("IPA has invalid Mach-O load command extent")
+    if signature is None:
         return None
-    length = int.from_bytes(binary[at + 4:at + 8], "big")
-    return plistlib.loads(binary[at + 8:at + length])
+    start, size = signature
+    sig_end = start + size
+    if start < commands_end or size < 12 or sig_end > end or uint(start, sig_end, "big") != 0xfade0cc0:
+        raise ValueError("IPA has an invalid embedded code signature")
+    length, count = uint(start + 4, sig_end, "big"), uint(start + 8, sig_end, "big")
+    if length < 12 or length > size or count > (length - 12) // 8:
+        raise ValueError("IPA has an invalid code signature index")
+    sig_end = start + length
+    slots, ranges, entitlements = set(), [], None
+    for i in range(count):
+        entry = start + 12 + i * 8
+        slot, offset = uint(entry, sig_end, "big"), uint(entry + 4, sig_end, "big")
+        blob = start + offset
+        if slot in slots or offset < 12 + count * 8:
+            raise ValueError("IPA has duplicate or invalid code signature slots")
+        slots.add(slot)
+        magic, blob_length = uint(blob, sig_end, "big"), uint(blob + 4, sig_end, "big")
+        if blob_length < 8 or blob + blob_length > sig_end:
+            raise ValueError("IPA has an invalid code signature blob extent")
+        if any(blob < hi and blob + blob_length > lo for lo, hi in ranges):
+            raise ValueError("IPA has overlapping code signature blobs")
+        ranges.append((blob, blob + blob_length))
+        if slot == 5:  # CSSLOT_ENTITLEMENTS
+            if magic != 0xfade7171:
+                raise ValueError("IPA has an invalid entitlements blob")
+            try:
+                entitlements = plistlib.loads(binary[blob + 8:blob + blob_length])
+            except Exception as error:
+                raise ValueError("IPA has an invalid entitlements plist") from error
+    return entitlements
 
 
 def flavor_problem(info, flavor, links_audio=None):
