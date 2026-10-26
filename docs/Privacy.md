@@ -18,12 +18,12 @@ network may observe them. Use a network you trust.
 
 ## iPhone and iPad: location and notifications
 
-GPS check is off by default. When you turn it on, the app asks for Always location
+GPS cross-reference is off by default. When you turn it on, the app asks for Always location
 access and, while the bridge forwards, compares this device's position with the
 position the Sentry reports. The comparison runs on the device only. The phone's
 position is never stored, never written to diagnostics, never sent to the EFB or
 anywhere else, and never replaces or changes ownship or traffic data. Diagnostics
-note only that a warning appeared and the distance. Turning GPS check off stops
+note only that a warning appeared and the distance. Turning GPS cross-reference off stops
 location updates; you can also remove the permission in Settings → Privacy & Security
 → Location Services.
 

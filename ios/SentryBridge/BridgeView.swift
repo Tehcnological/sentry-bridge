@@ -168,9 +168,9 @@ struct BridgeView: View {
                         .accessibilityIdentifier("bridge.coWarning")
                 }
             }
-            // GPS check: the phone's position compared with the Sentry's, shown here only.
+            // GPS cross-reference: the phone's position compared with the Sentry's, shown here only.
             if model.busy && model.gpsRunning {
-                statusRow("GPS check", model.gpsStatus ?? "Starting")
+                statusRow("GPS cross-reference", model.gpsStatus ?? "Starting")
                     .accessibilityElement(children: .combine).accessibilityIdentifier("bridge.gpsCheck")
             }
             if model.busy, let alert = model.gpsWarning {
@@ -186,9 +186,9 @@ struct BridgeView: View {
             if model.snapshot.sendErrors > 0 { Text("Output errors: \(model.snapshot.sendErrors). Check permission, WiFi and routing.").foregroundStyle(warning) }
         }.listRowBackground(surface)
     }
-    /// Shown while GPS check is chosen and location is not set to Always.
+    /// Shown while GPS cross-reference is chosen and location is not set to Always.
     @ViewBuilder private var alwaysLocationNote: some View {
-        Label("GPS check needs location set to Always.", systemImage: "location.slash").foregroundStyle(warning)
+        Label("GPS cross-reference needs location set to Always.", systemImage: "location.slash").foregroundStyle(warning)
             .accessibilityIdentifier("bridge.alwaysLocation")
         Button("Open Settings") {
             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
@@ -227,7 +227,7 @@ Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this d
             Toggle("Restore Compatibility Mode", isOn: Binding(get: { model.settings.restoreCompatibility ?? true }, set: { model.settings.restoreCompatibility = $0 }))
                 .disabled(model.busy).accessibilityIdentifier("bridge.restoreCompatibility")
             Text("Switches the Sentry back to Compatibility Mode when it starts up in ForeFlight-only mode.").font(.caption).foregroundStyle(secondary)
-            Text("Keep running").font(.headline)
+            Text("Background running").font(.headline)
             ForEach(KeepRunningChoice.options(for: model.flavor)) { option in
                 let current = option.method == model.choice.method && option.gpsCheck == model.choice.gpsCheck
                 Button { model.choose(option) } label: {
@@ -316,7 +316,7 @@ Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this d
         return NavigationStack {
             Form {
                 Section {
-                    Text("How should the bridge keep running when you leave the app?")
+                    Text("The bridge has to keep running while you use your EFB or the screen is locked. Choose how.")
                     ForEach(KeepRunningChoice.options(for: model.flavor)) { option in
                         Button { chooserSelection = option } label: {
                             HStack(alignment: .top, spacing: 12) {
@@ -340,7 +340,7 @@ Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this d
             .foregroundStyle(ink)
             .scrollContentBackground(colorScheme == .dark ? .hidden : .visible)
             .background(background.ignoresSafeArea())
-            .navigationTitle("Keep running")
+            .navigationTitle("Background running")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if model.keepRunning != nil {

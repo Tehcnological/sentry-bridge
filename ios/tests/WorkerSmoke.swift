@@ -120,7 +120,7 @@ import Foundation
     }
     static func fail(_ message: String) -> Never { print("FAIL: \(message)"); exit(1) }
     /// The keep-running chooser's triggers and settings migration, the refused-session fallback, the
-    /// watchdog's scheduling and removal, and the GPS check rule.
+    /// watchdog's scheduling and removal, and the GPS cross-reference rule.
     static func keepRunningChecks() {
         // Chooser triggers: nothing saved, unreadable, an older version, or a method this build lacks.
         let audio = KeepRunningChoice(method: .backgroundAudio), session = KeepRunningChoice(method: .bridgeSession, gpsCheck: true)
@@ -144,9 +144,9 @@ import Foundation
         // A refused Bridge Session never stops the bridge.
         let foreground = KeepRunningPolicy.sessionRefused("BGTaskSchedulerErrorDomain error 1", gpsCheck: false)
         guard !foreground.background, foreground.message.contains("only while the app is open"), foreground.message.contains("Low Power Mode"),
-              foreground.message.contains("error 1"), foreground.notice == .sessionRefused(gpsCheck: false) else { fail("refused session without GPS check: \(foreground)") }
+              foreground.message.contains("error 1"), foreground.notice == .sessionRefused(gpsCheck: false) else { fail("refused session without GPS cross-reference: \(foreground)") }
         let located = KeepRunningPolicy.sessionRefused("error 1", gpsCheck: true)
-        guard located.background, located.message.contains("GPS check keeps"), located.notice.body.contains("GPS check") else { fail("refused session with GPS check") }
+        guard located.background, located.message.contains("GPS cross-reference keeps"), located.notice.body.contains("GPS cross-reference") else { fail("refused session with GPS cross-reference") }
         // Watchdog: one notification 30 s ahead, replaced every 5 s of updates, removed on Stop.
         final class Recorder: NoticePosting {
             var events: [String] = []
@@ -161,7 +161,7 @@ import Foundation
         watchdog.tick(now: 113)
         guard recorder.events.last == "post bridge.watchdog 30" else { fail("watchdog must re-arm on the next run") }
         guard DegradedNotice.watchdog.title == "Sentry Bridge stopped forwarding", DegradedNotice.watchdog.body.contains("Open it") else { fail("watchdog text") }
-        // GPS check rule.
+        // GPS cross-reference rule.
         let sentry = SentryFix(gps: true, valid: true, lat: 40, lon: -100, age: 0.5)
         var check = GPSCheck()
         check.update(sentry: sentry, phone: nil, now: 0)
@@ -198,9 +198,9 @@ import Foundation
         var oldPhone = near; oldPhone.at = -11; check = GPSCheck()
         check.update(sentry: sentry, phone: oldPhone, now: 0)
         guard check.finding == .noPhone else { fail("a phone fix older than 10 s must not be compared") }
-        print("PASS: keep-running chooser triggers, v0.3.0 settings migration, refused-session fallback, watchdog, GPS check rule")
+        print("PASS: keep-running chooser triggers, v0.3.0 settings migration, refused-session fallback, watchdog, GPS cross-reference rule")
     }
-    /// The GPS check reads the worker's snapshots and a phone position far from the Sentry's; the Python side
+    /// The GPS cross-reference reads the worker's snapshots and a phone position far from the Sentry's; the Python side
     /// checks that nothing of the phone's position reaches the output.
     static func gpsIsolation(_ settings: BridgeSettings, phoneLat: Double, phoneLon: Double) -> Never {
         var check = GPSCheck(); check.holdS = 1
@@ -210,7 +210,7 @@ import Foundation
         }, finish: { error, completed in
             guard error == nil, completed else { fail("gps-isolation worker: \(error ?? "incomplete")") }
             guard case .disagree = check.finding, check.warning?.contains("NM from this phone") == true else { fail("gps-isolation: the check saw \(check.finding)") }
-            print("PASS: gps-isolation: GPS check warned \(check.status); output checked by the host script")
+            print("PASS: gps-isolation: GPS cross-reference warned \(check.status); output checked by the host script")
             exit(0)
         })
         dispatchMain()

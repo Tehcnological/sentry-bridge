@@ -118,7 +118,7 @@ final class SilentAudio {
 }
 #endif
 
-/// The phone's position for the GPS check. It is read here and compared in GPSCheck; nothing else uses it.
+/// The phone's position for the GPS cross-reference. It is read here and compared in GPSCheck; nothing else uses it.
 final class PhoneLocation: NSObject, CLLocationManagerDelegate {
     var onStopped: (String) -> Void = { _ in }
     var onAuthorization: () -> Void = {}
@@ -157,7 +157,7 @@ final class PhoneLocation: NSObject, CLLocationManagerDelegate {
     }
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard running, let location = locations.last else { return }
-        // Convert the fix time to sbio_now's monotonic clock, which the GPS check compares against.
+        // Convert the fix time to sbio_now's monotonic clock, which the GPS cross-reference compares against.
         latest = PhoneFix(lat: location.coordinate.latitude, lon: location.coordinate.longitude,
                           accuracy: location.horizontalAccuracy, at: sbio_now() + location.timestamp.timeIntervalSinceNow)
     }

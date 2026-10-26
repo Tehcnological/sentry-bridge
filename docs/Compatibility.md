@@ -54,17 +54,17 @@ source. If you would use it on macOS or Linux, [open an issue](https://github.co
 - Not in the App Store: download `sentry-bridge.ipa` from the release and sideload it; see
   [Install on iPhone or iPad](iOS-Sideload.md). Requires iOS or iPadOS 26.
 - **Keeping the bridge running.** On first launch the app asks how the bridge should keep forwarding
-  when it is not on screen. Change the answer later in **Settings → Keep running**.
+  when it is not on screen. Change the answer later in **Settings → Background running**.
   - **Background audio** (recommended): the app plays silence alongside other audio, so iOS keeps it
     running in the background with no time limit. EFB alerts and music still play. A phone call pauses it;
     it resumes after the call when iOS allows.
-  - **Background audio + GPS check**: also compares this device's GPS with the Sentry's position and warns
+  - **Background audio + GPS cross-reference**: also compares this device's GPS with the Sentry's position and warns
     on the main screen when the Sentry has no fix, or the two are more than 0.5 NM apart, for 30 seconds.
     Needs Always location access, and iOS shows the location indicator. The phone's position is only
     compared: it is never sent to the EFB and never changes ownship or traffic data.
   - Builds without background audio (none released yet) offer **Bridge Session** instead: up to 4 hours
     in the background. If iOS refuses or ends it, the bridge continues while the app is open and says so;
-    with GPS check on it keeps running in the background.
+    with GPS cross-reference on it keeps running in the background.
 - **Notifications**: allow them when asked; they are how the app reports a stopped bridge. You get one when
   background running stops (audio cannot resume, location updates stop, a session is refused or ends) and,
   if iOS suspends or closes the app while it forwards, "Sentry Bridge stopped forwarding" within about

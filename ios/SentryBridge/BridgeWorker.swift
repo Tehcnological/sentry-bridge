@@ -54,7 +54,7 @@ struct BridgeSnapshot {
     var crcBad: UInt32 = 0
     var gps = false, mode: Int32 = 0
     var age = -1.0, elapsed = 0.0, maxGap = 0.0
-    /// The Sentry's own fix, read for the GPS check only; the worker never changes it.
+    /// The Sentry's own fix, read for the GPS cross-reference only; the worker never changes it.
     var sentryFix = SentryFix()
     var detail = "Ready to bridge"
     func activity(since previous: BridgeSnapshot) -> String {

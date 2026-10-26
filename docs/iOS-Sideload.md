@@ -57,7 +57,7 @@ the IPA from the newer release the same way. Settings are kept.
 
 The release app keeps forwarding with the screen locked or another app open by playing silence, which
 does not interrupt EFB alerts or music. If iOS stops the app anyway, a notification says so within about
-30 seconds; open the app to start the bridge again. GPS check (optional) compares the phone's position
+30 seconds; open the app to start the bridge again. GPS cross-reference (optional) compares the phone's position
 with the Sentry's and warns on screen when they disagree; it needs Always location access. See
 [Compatibility](Compatibility.md#iphone-and-ipad) for the details.
 

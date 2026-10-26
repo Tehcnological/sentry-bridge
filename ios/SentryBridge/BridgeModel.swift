@@ -42,7 +42,7 @@ enum RunMode { case foreground, audio, session }
     private var discoveryTask: Task<Void, Never>?
     private var discoveryToken = UUID()
     // Keeping the bridge running: the chooser's saved answer (nil shows the chooser), this run's mode,
-    // the GPS check and the notifications that report a stopped or degraded bridge.
+    // the GPS cross-reference and the notifications that report a stopped or degraded bridge.
     let flavor = BuildFlavor.current
     @Published var keepRunning: KeepRunningChoice?
     @Published var chooserVisible = false
@@ -52,7 +52,7 @@ enum RunMode { case foreground, audio, session }
     @Published private(set) var gpsStatus: String?
     @Published private(set) var gpsWarning: String?
     @Published private(set) var locationStatus = CLAuthorizationStatus.notDetermined
-    /// GPS check is chosen but location is not set to Always; the app links to its Settings page until it is.
+    /// GPS cross-reference is chosen but location is not set to Always; the app links to its Settings page until it is.
     var needsAlwaysLocation: Bool { choice.gpsCheck && locationStatus != .authorizedAlways }
     var choice: KeepRunningChoice {
         keepRunning ?? KeepRunningChoice(method: flavor == .sideload ? .backgroundAudio : .bridgeSession)
@@ -143,7 +143,7 @@ enum RunMode { case foreground, audio, session }
         audio.onLost = { [weak self] in
             guard let self, self.busy else { return }
             self.notify(.audioStopped(gpsCheck: self.gpsRunning))
-            self.message = self.gpsRunning ? "Background audio stopped. GPS check keeps the bridge running."
+            self.message = self.gpsRunning ? "Background audio stopped. GPS cross-reference keeps the bridge running."
                 : "Background audio stopped. Keep the app open to keep the bridge running."
         }
         #endif
@@ -154,11 +154,11 @@ enum RunMode { case foreground, audio, session }
         }
         location.onStopped = { [weak self] reason in
             guard let self, self.busy, self.gpsRunning else { return }
-            self.notify(.locationStopped(reason)); self.gpsWarning = "GPS check stopped: \(reason)"
+            self.notify(.locationStopped(reason)); self.gpsWarning = "GPS cross-reference stopped: \(reason)"
         }
     }
-    /// The chooser's answer. Asks for notifications first, then, for GPS check, Always location access.
-    /// Without Always, GPS check stays chosen and the app links to Settings (needsAlwaysLocation).
+    /// The chooser's answer. Asks for notifications first, then, for GPS cross-reference, Always location access.
+    /// Without Always, GPS cross-reference stays chosen and the app links to Settings (needsAlwaysLocation).
     func choose(_ option: KeepRunningOption) {
         let picked = KeepRunningChoice(method: option.method, gpsCheck: option.gpsCheck)
         save(picked); chooserVisible = false; keepRunningNote = nil
@@ -190,7 +190,7 @@ enum RunMode { case foreground, audio, session }
         if demo { return "Demo: sample data, not forwarded" }
         let base = sessionActive ? "Bridge Session" : runMode == .audio ? "Background audio"
             : gpsRunning ? "Background location" : "Foreground bridge"
-        return gpsRunning ? base + (base == "Background location" ? " (GPS check)" : " + GPS check") : base
+        return gpsRunning ? base + (base == "Background location" ? " (GPS cross-reference)" : " + GPS cross-reference") : base
     }
     func syntheticSettings() {
         guard !busy else { return }
@@ -294,11 +294,11 @@ enum RunMode { case foreground, audio, session }
         token = UUID(); busy = true; state = "Starting"
         diagnosticLines = []; lastDiagnosticSample = -30
         runMode = mode; gpsCheck = GPSCheck(); gpsStatus = nil; gpsWarning = nil; locationStale = false
-        // GPS check runs with a background method only, and only with location access.
+        // GPS cross-reference runs with a background method only, and only with location access.
         gpsRunning = mode != .foreground && choice.gpsCheck && !demo
         if gpsRunning && location.status != .authorizedAlways && location.status != .authorizedWhenInUse {
             gpsRunning = false
-            record("GPS check skipped: no location access")
+            record("GPS cross-reference skipped: no location access")
         }
         record("User Start; flavor=\(flavor.rawValue); mode=\(mode); gpsCheck=\(gpsRunning); requested minutes=\(settings.sessionMinutes)")
         let id = token
@@ -306,13 +306,13 @@ enum RunMode { case foreground, audio, session }
             requestSession(id)
         } else { launchWorker(id, duration: nil) }
     }
-    /// Background running for this run: silent audio (Sideload) and the GPS check's location updates.
+    /// Background running for this run: silent audio (Sideload) and the GPS cross-reference's location updates.
     private func startKeepAlive() {
         #if !LITE
         if runMode == .audio, let error = audio.start() {
             record("Background audio could not start: \(error)")
             runMode = .foreground; notify(.audioStopped(gpsCheck: gpsRunning))
-            message = "Background audio could not start (\(error)). " + (gpsRunning ? "GPS check keeps the bridge running." : "The bridge runs only while the app is open.")
+            message = "Background audio could not start (\(error)). " + (gpsRunning ? "GPS cross-reference keeps the bridge running." : "The bridge runs only while the app is open.")
         } else if runMode == .audio { record("Background audio playing") }
         #endif
         if gpsRunning { location.start() }
@@ -324,13 +324,13 @@ enum RunMode { case foreground, audio, session }
         location.stop(); gpsRunning = false; gpsStatus = nil; gpsWarning = nil
         watchdog.stop()
     }
-    /// Compares positions for the GPS check. The phone's position is only compared here: it never reaches
+    /// Compares positions for the GPS cross-reference. The phone's position is only compared here: it never reaches
     /// the worker, the EFB or any ownship or traffic data.
     private func checkGPS(_ value: BridgeSnapshot) {
         guard gpsRunning else { return }
         let now = sbio_now()
         gpsCheck.update(sentry: value.sentryFix, phone: location.latest, now: now)
-        if gpsCheck.warning != gpsWarning, !(gpsWarning?.hasPrefix("GPS check stopped") ?? false) {
+        if gpsCheck.warning != gpsWarning, !(gpsWarning?.hasPrefix("GPS cross-reference stopped") ?? false) {
             if let warning = gpsCheck.warning { record(warning) }
             gpsWarning = gpsCheck.warning
         }
@@ -340,11 +340,11 @@ enum RunMode { case foreground, audio, session }
         if silent && !locationStale { notify(.locationStopped("No position from iOS for 60 s.")) }
         locationStale = silent
     }
-    /// The session ended or its length passed while GPS check keeps the bridge running.
+    /// The session ended or its length passed while GPS cross-reference keeps the bridge running.
     private func endSessionKeepRunning(_ reason: String) {
-        record("\(reason); GPS check keeps forwarding")
+        record("\(reason); GPS cross-reference keeps forwarding")
         task?.setTaskCompleted(success: true); task = nil; sessionActive = false
-        message = "\(reason). GPS check keeps the bridge running."
+        message = "\(reason). GPS cross-reference keeps the bridge running."
         notify(.sessionEnded(gpsCheck: true))
     }
     private func requestSession(_ id: UUID) {
@@ -367,7 +367,7 @@ enum RunMode { case foreground, audio, session }
                         self.stop(reason: "Bridge Session cancelled or expired; forwarding stopped.")
                     }
                 }
-                // With GPS check on the run outlasts the session; the session itself ends at its length.
+                // With GPS cross-reference on the run outlasts the session; the session itself ends at its length.
                 self.launchWorker(id, duration: self.gpsRunning ? nil : Double(self.settings.sessionMinutes * 60))
             }
         }
@@ -384,7 +384,7 @@ enum RunMode { case foreground, audio, session }
                 guard let self, self.token == id, self.busy, self.state != "Stopping" else { return }
                 if let error {
                     self.record("Submission failed: \(error.localizedDescription)")
-                    // Never stops the bridge: it continues in the foreground, or on GPS check's location updates.
+                    // Never stops the bridge: it continues in the foreground, or on GPS cross-reference's location updates.
                     let fallback = KeepRunningPolicy.sessionRefused(error.localizedDescription, gpsCheck: self.gpsRunning)
                     self.notify(fallback.notice); self.message = fallback.message
                     self.runMode = .foreground; self.submission = nil
@@ -521,7 +521,7 @@ enum RunMode { case foreground, audio, session }
     func backgrounded() {
         exitDiscovery()
         record("Scene backgrounded; sessionActive=\(sessionActive)")
-        // Background audio and GPS check keep running hidden; a pending session request does not.
+        // Background audio and GPS cross-reference keep running hidden; a pending session request does not.
         if busy && !sessionActive && runMode != .audio && !gpsRunning {
             notify(.stoppedWhenHidden)
             stop(reason: flavor == .lite ? "Bridge stopped when you left the app. Choose Bridge Session in Settings to keep it running."

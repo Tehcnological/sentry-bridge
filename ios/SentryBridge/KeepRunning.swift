@@ -32,7 +32,7 @@ enum KeepRunningMethod: String, Codable {
 struct KeepRunningOption: Identifiable, Equatable {
     let method: KeepRunningMethod, gpsCheck: Bool, recommended: Bool, detail: String
     var id: String { method.rawValue + (gpsCheck ? "+gps" : "") }
-    var title: String { method.title + (gpsCheck ? " + GPS check" : "") }
+    var title: String { method.title + (gpsCheck ? " + GPS cross-reference" : "") }
 }
 
 /// The saved answer to "how should the bridge keep running", stored apart from the route settings so an
@@ -54,8 +54,8 @@ struct KeepRunningChoice: Codable, Equatable {
     }
     func encoded() -> Data? { try? JSONEncoder().encode(self) }
 
-    static let notificationsDetail = "Allow notifications so the app can tell you if the bridge stops."
-    static let gpsDetail = "Checks the Sentry's GPS against the phone's and warns you if it looks wrong. Needs location set to Always and uses more battery. Your position never leaves the phone."
+    static let notificationsDetail = "Allow notifications so the app can tell you when the bridge stops."
+    static let gpsDetail = "It also turns on the phone's location. iOS keeps apps that use location running, so this is a backup way to stay running. The app compares the phone's GPS position with the Sentry's and warns you if the Sentry's looks wrong. Needs location set to Always. Uses more battery. Your position stays on the phone."
 
     static func options(for flavor: BuildFlavor) -> [KeepRunningOption] {
         switch flavor {
@@ -64,15 +64,15 @@ struct KeepRunningChoice: Codable, Equatable {
             return []  // Lite carries no background-audio option.
             #else
             return [
-                KeepRunningOption(method: .backgroundAudio, gpsCheck: false, recommended: true, detail: "Keeps the bridge running when you leave the app or lock the screen. It plays silence, so EFB alerts and music still work. A phone call pauses it until the call ends."),
-                KeepRunningOption(method: .backgroundAudio, gpsCheck: true, recommended: false, detail: "Same as Background audio. " + gpsDetail),
+                KeepRunningOption(method: .backgroundAudio, gpsCheck: false, recommended: true, detail: "Plays silent audio so iOS keeps the bridge running when you switch apps or lock the screen. EFB alerts and music still play. A phone call pauses it until the call ends."),
+                KeepRunningOption(method: .backgroundAudio, gpsCheck: true, recommended: false, detail: "Background audio, plus GPS cross-reference. " + gpsDetail),
             ]
             #endif
         case .lite:
             return [
-                KeepRunningOption(method: .bridgeSession, gpsCheck: false, recommended: true, detail: "Keeps the bridge running in the background for up to 4 hours. If iOS says no or ends it early, the bridge runs only while the app is open."),
-                KeepRunningOption(method: .bridgeSession, gpsCheck: true, recommended: false, detail: "Same as Bridge Session, and keeps running past 4 hours. " + gpsDetail),
-                KeepRunningOption(method: .appOpen, gpsCheck: false, recommended: false, detail: "The bridge stops when you leave the app. Uses the least battery."),
+                KeepRunningOption(method: .bridgeSession, gpsCheck: false, recommended: true, detail: "Asks iOS for up to 4 hours of background time. iOS can say no or end it early. Then the bridge runs only while the app is open."),
+                KeepRunningOption(method: .bridgeSession, gpsCheck: true, recommended: false, detail: "Bridge Session, plus GPS cross-reference. Location keeps the bridge running past 4 hours or if iOS says no. " + gpsDetail),
+                KeepRunningOption(method: .appOpen, gpsCheck: false, recommended: false, detail: "The bridge stops when you switch apps or lock the screen. Uses the least battery."),
             ]
         }
     }
@@ -94,18 +94,18 @@ struct DegradedNotice: Equatable {
                                          body: "iOS closed or paused the app. Open it to restart the bridge.")
     static func sessionRefused(gpsCheck: Bool) -> DegradedNotice {
         DegradedNotice(id: "bridge.session", title: "Bridge Session refused",
-                       body: gpsCheck ? "GPS check keeps the bridge running." : "The bridge runs only while the app is open.")
+                       body: gpsCheck ? "GPS cross-reference keeps the bridge running." : "The bridge runs only while the app is open.")
     }
     static func sessionEnded(gpsCheck: Bool) -> DegradedNotice {
         DegradedNotice(id: "bridge.session", title: "Bridge Session ended",
-                       body: gpsCheck ? "GPS check keeps the bridge running." : "Open the app to restart the bridge.")
+                       body: gpsCheck ? "GPS cross-reference keeps the bridge running." : "Open the app to restart the bridge.")
     }
     static func audioStopped(gpsCheck: Bool) -> DegradedNotice {
         DegradedNotice(id: "bridge.audio", title: "Background audio stopped",
-                       body: gpsCheck ? "GPS check keeps the bridge running. Open the app to restart audio." : "iOS may pause the bridge. Open the app to keep it running.")
+                       body: gpsCheck ? "GPS cross-reference keeps the bridge running. Open the app to restart audio." : "iOS may pause the bridge. Open the app to keep it running.")
     }
     static func locationStopped(_ reason: String) -> DegradedNotice {
-        DegradedNotice(id: "bridge.location", title: "GPS check stopped", body: reason + " Open the app to check the bridge.")
+        DegradedNotice(id: "bridge.location", title: "GPS cross-reference stopped", body: reason + " Open the app to check the bridge.")
     }
     static let stoppedWhenHidden = DegradedNotice(id: "bridge.foreground", title: "Forwarding stopped",
                                                   body: "The bridge runs only while the app is open.")
@@ -114,11 +114,11 @@ struct DegradedNotice: Equatable {
 /// The decision after iOS refuses a Bridge Session, kept apart from the UI so host tests check it.
 enum KeepRunningPolicy {
     struct Fallback: Equatable { let background: Bool, message: String, notice: DegradedNotice }
-    /// Never stops the bridge: with GPS check on, location updates keep it running in the background;
+    /// Never stops the bridge: with GPS cross-reference on, location updates keep it running in the background;
     /// otherwise it continues as a foreground bridge with the likely causes named.
     static func sessionRefused(_ error: String, gpsCheck: Bool) -> Fallback {
         if gpsCheck {
-            return Fallback(background: true, message: "Bridge Session refused (\(error)). GPS check keeps the bridge running.",
+            return Fallback(background: true, message: "Bridge Session refused (\(error)). GPS cross-reference keeps the bridge running.",
                             notice: .sessionRefused(gpsCheck: true))
         }
         return Fallback(background: false, message: "Bridge Session refused (\(error)). The bridge runs only while the app is open. Low Power Mode or Background App Refresh being off can cause this.",
