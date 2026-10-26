@@ -99,6 +99,7 @@ No dates, and plans can change. To ask for something or to help,
   tested with a Sentry. Once it is, it becomes a release download. A board with a screen and a case,
   the LilyGO T-Dongle, is the next target.
 - **CO alarm level on iPhone and iPad.** Use the Sentry's own alarm level instead of a fixed 50 ppm.
+- **Links to Hidden Pages.** Find and link to all hidden pages in the Sentry's web settings.
 
 ## More
 
