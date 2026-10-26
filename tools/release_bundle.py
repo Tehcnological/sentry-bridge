@@ -42,6 +42,7 @@ IOS_PUBLIC_FILES = (
     "ios/SentryBridge/BridgeView.swift", "ios/SentryBridge/BridgeWorker.swift",
     "ios/SentryBridge/EFBDiscovery.swift", "ios/SentryBridge/ReceiverReadings.swift", "ios/SentryBridge/BridgeIntents.swift",
     "ios/SentryBridge/SentryBridgeApp.swift", "ios/SentryBridge/Info.plist",
+    "ios/SentryBridge/KeepRunning.swift", "ios/SentryBridge/KeepAlive.swift", "ios/SentryBridge/SentryBridge.entitlements",
     "ios/SentryBridge/PrivacyInfo.xcprivacy", "ios/SentryBridge/DemoReplayer.swift", "ios/SentryBridge/Licenses.swift", "ios/SentryBridge/DemoReceiver.bin", "ios/SentryBridge/AppIcon.icon/icon.json", "ios/SentryBridge/AppIcon.icon/Assets/2-rings.svg",
     "ios/SentryBridge/AppIcon.icon/Assets/3-signal.svg", "ios/SentryBridge/AppIcon.icon/Assets/4-aircraft.svg",
     "ios/tests/BridgeUITests.swift", "ios/tests/WorkerSmoke.swift", "ios/tests/test_ios_adapter.py",
@@ -157,9 +158,40 @@ def ipa_sources(sources):
     return {name: blob for name, blob in sources.items() if name.startswith(IPA_SOURCES) or name in IPA_FILES}
 
 
+# The release IPA is the Sideload build: background audio and location. Lite (no audio) is never released here.
+IPA_FLAVOR = "Sideload"
+FLAVOR_BACKGROUND_MODES = {"Sideload": ["audio", "location"], "Lite": ["location"]}
+
+
+# The IPA's binary declares these (Time Sensitive notifications) with an ad-hoc signature; installers re-sign
+# it and keep what their profile allows.
+IPA_ENTITLEMENTS = ROOT / "ios/SentryBridge/SentryBridge.entitlements"
+
+
+def binary_entitlements(binary):
+    """The entitlements plist in a Mach-O code signature, or None when it declares none. Parsed here so the
+    check also runs where codesign does not (the release is assembled on Windows)."""
+    at = binary.find(b"\xfa\xde\x71\x71")  # CSMAGIC_EMBEDDED_ENTITLEMENTS, big-endian
+    if at < 0:
+        return None
+    length = int.from_bytes(binary[at + 4:at + 8], "big")
+    return plistlib.loads(binary[at + 8:at + length])
+
+
+def flavor_problem(info, flavor, links_audio=None):
+    """None when a built Info.plist (and, if known, the binary's audio linkage) matches the flavor."""
+    if info.get("SBBuildFlavor") != flavor:
+        return f"Info.plist flavor is {info.get('SBBuildFlavor')!r}"
+    if sorted(info.get("UIBackgroundModes", [])) != FLAVOR_BACKGROUND_MODES[flavor]:
+        return f"background modes {info.get('UIBackgroundModes')}"
+    if links_audio is not None and links_audio != (flavor == "Sideload"):
+        return "audio framework linked" if links_audio else "audio framework missing"
+    return None
+
+
 def check_ipa(path, report, version, sources):
-    """The IPA from tools/build_ios_ipa.py: built from these iOS and core sources, this version, and
-    unsigned (users sign it when they install it)."""
+    """The IPA from tools/build_ios_ipa.py: built from these iOS and core sources, this version, not signed for
+    any team (users sign it when they install it), and declaring the app's entitlements."""
     if report.get("ipaSha256") != sha256(path):
         raise ValueError("IPA changed after its build report")
     if report.get("sources") != ipa_sources(sources):
@@ -168,12 +200,20 @@ def check_ipa(path, report, version, sources):
         with zipfile.ZipFile(path) as archive:
             names = archive.namelist()
             plist = archive.read("Payload/SentryBridge.app/Info.plist")
+            binary = archive.read("Payload/SentryBridge.app/SentryBridge")
     except (zipfile.BadZipFile, KeyError) as error:
         raise ValueError("IPA has no Payload/SentryBridge.app") from error
-    if plistlib.loads(plist).get("CFBundleShortVersionString") != version:
+    info = plistlib.loads(plist)
+    if info.get("CFBundleShortVersionString") != version:
         raise ValueError("IPA version does not match the release tag")
-    if any("/_CodeSignature/" in name or name.endswith("embedded.mobileprovision") for name in names):
-        raise ValueError("IPA must be unsigned")
+    problem = flavor_problem(info, IPA_FLAVOR)
+    if report.get("flavor") != IPA_FLAVOR or problem:
+        raise ValueError(f"IPA must be the {IPA_FLAVOR} build" + (f" ({problem})" if problem else ""))
+    # An ad-hoc signature carries the entitlements; a provisioning profile would mean a team signed it.
+    if any(name.endswith("embedded.mobileprovision") for name in names):
+        raise ValueError("IPA must not be signed for a team (it holds a provisioning profile)")
+    if binary_entitlements(binary) != plistlib.loads(IPA_ENTITLEMENTS.read_bytes()):
+        raise ValueError("IPA must declare exactly the entitlements in " + IPA_ENTITLEMENTS.name)
 
 
 def prepare(root, tag):

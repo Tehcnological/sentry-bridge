@@ -1,8 +1,9 @@
 # Privacy
 
-Effective 2026-10-20. This policy describes the Android, Windows and Python
+Effective 2026-10-26. This policy describes the Android, Windows and Python
 Sentry Bridge applications in this source revision. iOS has a separate implementation
-and distribution review. The project does not operate a flight-data collection service.
+and distribution review; its location and notification use is described below.
+The project does not operate a flight-data collection service.
 
 ## Receiver and EFB data
 
@@ -14,6 +15,22 @@ To find EFB devices, Find EFB and the check that follows an EFB to a new address
 connection to the devices on the receiver's network; no data is sent to them.
 UDP traffic and receiver HTTP requests are not encrypted. Other devices on the
 network may observe them. Use a network you trust.
+
+## iPhone and iPad: location and notifications
+
+GPS check is off by default. When you turn it on, the app asks for Always location
+access and, while the bridge forwards, compares this device's position with the
+position the Sentry reports. The comparison runs on the device only. The phone's
+position is never stored, never written to diagnostics, never sent to the EFB or
+anywhere else, and never replaces or changes ownship or traffic data. Diagnostics
+note only that a warning appeared and the distance. Turning GPS check off stops
+location updates; you can also remove the permission in Settings → Privacy & Security
+→ Location Services.
+
+Notifications are local: the app schedules them on the device to report a stopped
+bridge or background running that stopped. No push service is used and nothing
+leaves the device. The sideloaded build keeps running in the background by playing
+silence; it does not use the microphone or record anything.
 
 ## Local storage and retention
 

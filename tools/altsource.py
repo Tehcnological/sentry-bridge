@@ -29,9 +29,10 @@ DESCRIPTION = ("Shows traffic from a uAvionix Sentry or Sentry Plus in EFB apps 
 
 
 def app_permissions(root=ROOT):
-    """The usage descriptions the app declares; it requests no special entitlements."""
+    """The usage descriptions and entitlements (Time Sensitive notifications) the app declares."""
     info = plistlib.loads((root / "ios/SentryBridge/Info.plist").read_bytes())
-    return {"entitlements": [], "privacy": {key: value for key, value in sorted(info.items())
+    entitlements = plistlib.loads((root / "ios/SentryBridge/SentryBridge.entitlements").read_bytes())
+    return {"entitlements": sorted(entitlements), "privacy": {key: value for key, value in sorted(info.items())
                                             if key.startswith("NS") and key.endswith("UsageDescription")}}
 
 

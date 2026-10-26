@@ -12,6 +12,9 @@ private final class SessionSubmission: @unchecked Sendable {
     var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
 }
 
+/// What keeps the current run going with the app in the background.
+enum RunMode { case foreground, audio, session }
+
 @MainActor final class BridgeModel: ObservableObject {
     /// The app and its intents share this one model, so there is never a second worker.
     static let shared = BridgeModel()
@@ -37,6 +40,29 @@ private final class SessionSubmission: @unchecked Sendable {
     private var discoverySearching = false
     private var discoveryTask: Task<Void, Never>?
     private var discoveryToken = UUID()
+    // Keeping the bridge running: the chooser's saved answer (nil shows the chooser), this run's mode,
+    // the GPS check and the notifications that report a stopped or degraded bridge.
+    let flavor = BuildFlavor.current
+    @Published var keepRunning: KeepRunningChoice?
+    @Published var chooserVisible = false
+    @Published var keepRunningNote: String?
+    @Published private(set) var runMode = RunMode.foreground
+    @Published private(set) var gpsRunning = false
+    @Published private(set) var gpsStatus: String?
+    @Published private(set) var gpsWarning: String?
+    var choice: KeepRunningChoice {
+        keepRunning ?? KeepRunningChoice(method: flavor == .sideload ? .backgroundAudio : .bridgeSession)
+    }
+    private let notifications = LocalNotifications()
+    private lazy var watchdog = Watchdog(poster: notifications)
+    private let location = PhoneLocation()
+    private var gpsCheck = GPSCheck()
+    private var locationStale = false
+    #if !LITE
+    private let audio = SilentAudio()
+    #endif
+    /// UI tests start foreground bridges unless a test picks a method with --keep-running.
+    private var forceForeground = false
     @Published private(set) var diagnosticLines: [String] = []
     private var lastDiagnosticSample = -30.0
     var diagnosticReport: String { diagnosticLines.joined(separator: "\n") }
@@ -83,16 +109,82 @@ private final class SessionSubmission: @unchecked Sendable {
             .flatMap { try? JSONDecoder().decode(BridgeSettings.self, from: $0) } ?? BridgeSettings()
         // Older builds allowed any length from 1 to 240; round up to the nearest offered length.
         settings.sessionMinutes = BridgeSettings.sessionLengths.first { $0 >= settings.sessionMinutes } ?? 240
+        keepRunning = KeepRunningChoice.load(UserDefaults.standard.data(forKey: KeepRunningChoice.storeKey), flavor: flavor)
+        chooserVisible = keepRunning == nil
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--ui-testing") {
             testing = true; settings = BridgeSettings(); syntheticSettings()
-            // UI tests start in foreground mode; the Bridge Session test turns the session on itself.
-            settings.experiment = false
-            if ProcessInfo.processInfo.arguments.contains("--reset-compatibility-notice") {
+            // UI tests start foreground bridges without the chooser unless they ask for either.
+            forceForeground = true; chooserVisible = false
+            if let picked = arguments.first(where: { $0.hasPrefix("--keep-running=") })?.dropFirst("--keep-running=".count) {
+                let parts = picked.split(separator: "+")
+                if let method = KeepRunningMethod(rawValue: String(parts[0])) {
+                    keepRunning = KeepRunningChoice(method: method, gpsCheck: parts.count > 1); forceForeground = false
+                }
+            }
+            if arguments.contains("--chooser") {
+                UserDefaults.standard.removeObject(forKey: KeepRunningChoice.storeKey)
+                keepRunning = nil; chooserVisible = true; forceForeground = false
+            }
+            if arguments.contains("--reset-compatibility-notice") {
                 UserDefaults.standard.removeObject(forKey: BridgeView.noticeHiddenKey)
             }
         }
+        // The persistence test launches like a user but must reach the main screen.
+        if arguments.contains("--ui-skip-chooser") { chooserVisible = false }
         #endif
+        #if !LITE
+        audio.onEvent = { [weak self] in self?.record($0) }
+        audio.onLost = { [weak self] in
+            guard let self, self.busy else { return }
+            self.notify(.audioStopped(gpsCheck: self.gpsRunning))
+            self.message = self.gpsRunning ? "Background audio stopped; GPS check keeps the bridge running in the background."
+                : "Background audio stopped and could not resume. Keep Sentry Bridge open to keep forwarding."
+        }
+        #endif
+        location.onStopped = { [weak self] reason in
+            guard let self, self.busy, self.gpsRunning else { return }
+            self.notify(.locationStopped(reason)); self.gpsWarning = "GPS check stopped: \(reason)"
+        }
+    }
+    /// The chooser's answer. Asks for notifications first, then, for GPS check, Always location access;
+    /// a refusal saves the method without GPS check and says how to turn it on later.
+    func choose(_ option: KeepRunningOption) {
+        var picked = KeepRunningChoice(method: option.method, gpsCheck: option.gpsCheck)
+        save(picked); chooserVisible = false; keepRunningNote = nil
+        #if DEBUG
+        if testing { record("Chooser: \(option.title); permission prompts skipped in UI tests"); return }
+        #endif
+        record("Chooser: \(option.title)")
+        notifications.requestPermission { [weak self] granted in
+            guard let self else { return }
+            self.record("Notifications \(granted ? "allowed" : "not allowed")")
+            if !granted { self.keepRunningNote = "Notifications are off, so a stopped bridge cannot alert you. Turn them on in Settings → Notifications → Sentry Bridge." }
+            guard picked.gpsCheck else { return }
+            self.location.requestAlways { [weak self] allowed in
+                guard let self else { return }
+                if !allowed {
+                    picked.gpsCheck = false; self.save(picked)
+                    self.keepRunningNote = "GPS check is off: location access was not allowed. Allow it in Settings → Privacy & Security → Location Services → Sentry Bridge, then choose GPS check again."
+                }
+            }
+        }
+    }
+    private func save(_ choice: KeepRunningChoice) {
+        keepRunning = choice
+        UserDefaults.standard.set(choice.encoded(), forKey: KeepRunningChoice.storeKey)
+    }
+    private func notify(_ notice: DegradedNotice) {
+        record("Notification: \(notice.title). \(notice.body)")
+        if !demo { notifications.post(notice, after: nil) }
+    }
+    /// Shown under the Start button: what keeps this run going.
+    var modeLabel: String {
+        if demo { return "Demo: sample data, not forwarded" }
+        let base = sessionActive ? "Bridge Session" : runMode == .audio ? "Background audio"
+            : gpsRunning ? "Background location" : "Foreground bridge"
+        return gpsRunning ? base + (base == "Background location" ? " (GPS check)" : " + GPS check") : base
     }
     func syntheticSettings() {
         guard !busy else { return }
@@ -171,7 +263,8 @@ private final class SessionSubmission: @unchecked Sendable {
         discoveryTask?.cancel(); discoveryTask = nil
         findingEFBs = false; discoveryVisible = false; discoveredEFBs = []; discoveryList = DiscoveryList()
     }
-    func start() {
+    /// mode overrides the chooser's method for this run (Shortcuts, UI tests).
+    func start(mode override: RunMode? = nil) {
         guard !busy, !discoveryVisible else { return }
         var sourceIP: UInt32 = 0, destinationIP: UInt32 = 0
         guard sb_parse_ipv4(settings.source, &sourceIP) == 1,
@@ -182,16 +275,71 @@ private final class SessionSubmission: @unchecked Sendable {
               let output = UInt16(settings.outputPort), output > 0 else {
             message = "Use ports from 1 to 65535."; return
         }
-        guard !settings.experiment || BridgeSettings.sessionLengths.contains(settings.sessionMinutes) else { message = "Choose a session length of 60, 120, 180 or 240 minutes."; return }
+        let chosen: RunMode
+        switch choice.method {
+        case .backgroundAudio: chosen = .audio
+        case .bridgeSession: chosen = .session
+        case .appOpen: chosen = .foreground
+        }
+        let mode = demo ? .foreground : override ?? (forceForeground ? .foreground : chosen)
+        guard mode != .session || BridgeSettings.sessionLengths.contains(settings.sessionMinutes) else { message = "Choose a session length of 60, 120, 180 or 240 minutes."; return }
         savedValidatedSettings = false
         snapshot = BridgeSnapshot(); message = nil; localNetworkDenied = false; stopReason = nil
         token = UUID(); busy = true; state = "Starting"
         diagnosticLines = []; lastDiagnosticSample = -30
-        record("User Start; mode=\(settings.experiment ? "Bridge Session" : "foreground"); requested minutes=\(settings.sessionMinutes)")
+        runMode = mode; gpsCheck = GPSCheck(); gpsStatus = nil; gpsWarning = nil; locationStale = false
+        // GPS check runs with a background method only, and only with location access.
+        gpsRunning = mode != .foreground && choice.gpsCheck && !demo
+        if gpsRunning && location.status != .authorizedAlways && location.status != .authorizedWhenInUse {
+            gpsRunning = false
+            keepRunningNote = "GPS check is off for this run: location access is not allowed. Allow it in Settings → Privacy & Security → Location Services → Sentry Bridge."
+        }
+        record("User Start; flavor=\(flavor.rawValue); mode=\(mode); gpsCheck=\(gpsRunning); requested minutes=\(settings.sessionMinutes)")
         let id = token
-        if settings.experiment {
+        if mode == .session {
             requestSession(id)
         } else { launchWorker(id, duration: nil) }
+    }
+    /// Background running for this run: silent audio (Sideload) and the GPS check's location updates.
+    private func startKeepAlive() {
+        #if !LITE
+        if runMode == .audio, let error = audio.start() {
+            record("Background audio could not start: \(error)")
+            runMode = .foreground; notify(.audioStopped(gpsCheck: gpsRunning))
+            message = "Background audio could not start (\(error)). " + (gpsRunning ? "GPS check keeps the bridge running in the background." : "Forwarding continues only while the app is open.")
+        } else if runMode == .audio { record("Background audio playing") }
+        #endif
+        if gpsRunning { location.start() }
+    }
+    private func stopKeepAlive() {
+        #if !LITE
+        audio.stop()
+        #endif
+        location.stop(); gpsRunning = false; gpsStatus = nil; gpsWarning = nil
+        watchdog.stop()
+    }
+    /// Compares positions for the GPS check. The phone's position is only compared here: it never reaches
+    /// the worker, the EFB or any ownship or traffic data.
+    private func checkGPS(_ value: BridgeSnapshot) {
+        guard gpsRunning else { return }
+        let now = sbio_now()
+        gpsCheck.update(sentry: value.sentryFix, phone: location.latest, now: now)
+        if gpsCheck.warning != gpsWarning, !(gpsWarning?.hasPrefix("GPS check stopped") ?? false) {
+            if let warning = gpsCheck.warning { record(warning) }
+            gpsWarning = gpsCheck.warning
+        }
+        gpsStatus = gpsCheck.status
+        // Location updates stopped: no fix from iOS for 60 s, counted from the start of the run.
+        let silent = value.elapsed > 60 && (location.latest.map { now - $0.at > 60 } ?? true)
+        if silent && !locationStale { notify(.locationStopped("No position from iOS for 60 s.")) }
+        locationStale = silent
+    }
+    /// The session ended or its length passed while GPS check keeps the bridge running.
+    private func endSessionKeepRunning(_ reason: String) {
+        record("\(reason); GPS check keeps forwarding")
+        task?.setTaskCompleted(success: true); task = nil; sessionActive = false
+        message = "\(reason). GPS check keeps the bridge running in the background."
+        notify(.sessionEnded(gpsCheck: true))
     }
     private func requestSession(_ id: UUID) {
         let identifier = (Bundle.main.bundleIdentifier ?? "io.github.tehcnological.sentrybridge") + ".bridge." + id.uuidString
@@ -208,10 +356,13 @@ private final class SessionSubmission: @unchecked Sendable {
                 continued.expirationHandler = { [weak self] in
                     DispatchQueue.main.async {
                         guard let self, self.token == id, self.sessionActive else { return }
+                        if self.gpsRunning { self.endSessionKeepRunning("Bridge Session cancelled or expired"); return }
+                        self.notify(.sessionEnded(gpsCheck: false))
                         self.stop(reason: "Bridge Session cancelled or expired; forwarding stopped.")
                     }
                 }
-                self.launchWorker(id, duration: Double(self.settings.sessionMinutes * 60))
+                // With GPS check on the run outlasts the session; the session itself ends at its length.
+                self.launchWorker(id, duration: self.gpsRunning ? nil : Double(self.settings.sessionMinutes * 60))
             }
         }
         guard registered else {
@@ -227,13 +378,11 @@ private final class SessionSubmission: @unchecked Sendable {
                 guard let self, self.token == id, self.busy, self.state != "Stopping" else { return }
                 if let error {
                     self.record("Submission failed: \(error.localizedDescription)")
-                    let reason = "Bridge Session unavailable: \(error.localizedDescription). Turn off Bridge Session in Settings and Start again."
-                    if self.worker != nil { self.stop(reason: reason) }
-                    else {
-                        self.busy = false; self.state = "Stopped"; self.message = reason
-                        self.taskIdentifier = nil; self.submission = nil
-                        UIApplication.shared.isIdleTimerDisabled = false
-                    }
+                    // Never stops the bridge: it continues in the foreground, or on GPS check's location updates.
+                    let fallback = KeepRunningPolicy.sessionRefused(error.localizedDescription, gpsCheck: self.gpsRunning)
+                    self.notify(fallback.notice); self.message = fallback.message
+                    self.runMode = .foreground; self.submission = nil
+                    if self.worker == nil { self.launchWorker(id, duration: nil) }
                 } else { self.record("Request submitted using immediate-start policy") }
             }
         }
@@ -256,6 +405,8 @@ private final class SessionSubmission: @unchecked Sendable {
         let worker = BridgeWorker(); self.worker = worker; state = "Waiting for data"
         UIApplication.shared.isIdleTimerDisabled = settings.keepAwake
         checkLocalNetwork()
+        startKeepAlive()
+        if !demo { watchdog.tick(now: sbio_now()) }
         worker.run(settings, duration: duration, demo: demo, update: { [weak self] value in
             DispatchQueue.main.async {
                 guard let self, self.token == id, self.state != "Stopping" else { return }
@@ -282,6 +433,12 @@ private final class SessionSubmission: @unchecked Sendable {
                     self.lastDiagnosticSample = value.elapsed
                 }
                 self.state = value.activity(since: previous)
+                // Each update pushes the watchdog notification ahead; a suspended app stops doing so.
+                if !self.demo { self.watchdog.tick(now: sbio_now()) }
+                self.checkGPS(value)
+                if self.gpsRunning, self.sessionActive, value.elapsed >= Double(self.settings.sessionMinutes * 60) {
+                    self.endSessionKeepRunning("Bridge Session length reached")
+                }
                 if let continued = self.task as? BGContinuedProcessingTask {
                     continued.progress.completedUnitCount = min(Int64(value.elapsed), continued.progress.totalUnitCount)
                     continued.updateTitle("Bridge Session", subtitle: value.sessionSubtitle(minutes: self.settings.sessionMinutes))
@@ -291,6 +448,8 @@ private final class SessionSubmission: @unchecked Sendable {
             DispatchQueue.main.async {
                 guard let self, self.token == id else { return }
                 self.record("Worker stopped; completed=\(completed); \(error ?? self.stopReason ?? (completed ? "monitoring period completed" : "user stop"))")
+                self.stopKeepAlive()
+                if completed && self.sessionActive { self.notify(.sessionEnded(gpsCheck: false)) }
                 self.task?.setTaskCompleted(success: completed && error == nil)
                 self.task = nil; self.sessionActive = false; self.taskIdentifier = nil
                 self.submission?.cancel(); self.submission = nil
@@ -306,11 +465,13 @@ private final class SessionSubmission: @unchecked Sendable {
         guard busy else { return }
         state = "Stopping"; stopReason = reason
         record(reason ?? "User Stop")
+        // A stop the app makes is reported by its own notification; the watchdog is for one it cannot make.
+        watchdog.stop()
         submission?.cancel(); submission = nil
         if let taskIdentifier { BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier) }
         if let worker { worker.stop() }
         else {
-            token = UUID(); busy = false; sessionActive = false; state = "Stopped"; endDemo()
+            token = UUID(); busy = false; sessionActive = false; state = "Stopped"; endDemo(); stopKeepAlive()
             task?.setTaskCompleted(success: false); task = nil; taskIdentifier = nil; message = reason
             UIApplication.shared.isIdleTimerDisabled = false
         }
@@ -340,10 +501,10 @@ private final class SessionSubmission: @unchecked Sendable {
             }
         }
         exitDiscovery()
-        settings.experiment = true
-        start()
+        // Lite: the Shortcut asks for a Bridge Session as before. Sideload: background audio.
+        start(mode: flavor == .lite ? .session : .audio)
         guard busy else { return message ?? "Bridge could not start." }
-        return "Requesting a Bridge Session."
+        return flavor == .lite ? "Requesting a Bridge Session." : "Bridge starting."
     }
     private func stopIntentOutcome() -> String {
         guard busy else { return "Bridge is not running." }
@@ -354,7 +515,12 @@ private final class SessionSubmission: @unchecked Sendable {
     func backgrounded() {
         exitDiscovery()
         record("Scene backgrounded; sessionActive=\(sessionActive)")
-        if busy && !sessionActive { stop(reason: "Foreground bridge stopped when hidden. Turn on Bridge Session in Settings to keep forwarding in the background.") }
+        // Background audio and GPS check keep running hidden; a pending session request does not.
+        if busy && !sessionActive && runMode != .audio && !gpsRunning {
+            notify(.stoppedWhenHidden)
+            stop(reason: flavor == .lite ? "Foreground bridge stopped when hidden. Choose Bridge Session in Settings to keep forwarding in the background."
+                 : "Foreground bridge stopped when hidden. Background audio keeps forwarding in the background; check it in Settings.")
+        }
         UIApplication.shared.isIdleTimerDisabled = false
     }
     func foregrounded() { record("Scene foregrounded"); UIApplication.shared.isIdleTimerDisabled = busy && settings.keepAwake }

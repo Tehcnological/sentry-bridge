@@ -39,7 +39,7 @@ class TestAltSource(unittest.TestCase):
         self.assertEqual((app["version"], app["downloadURL"], app["size"]), ("0.3.1", newest["downloadURL"], 12))
         self.assertEqual(app["bundleIdentifier"], "io.github.tehcnological.sentrybridge")
         self.assertIn("NSLocalNetworkUsageDescription", app["appPermissions"]["privacy"])
-        self.assertEqual(app["appPermissions"]["entitlements"], [])
+        self.assertEqual(app["appPermissions"]["entitlements"], ["com.apple.developer.usernotifications.time-sensitive"])
 
     def test_a_rebuilt_version_replaces_its_entry(self):
         altsource.update(self.bundle("v0.3.0", b"first"), "v0.3.0", "2026-10-21", self.path)

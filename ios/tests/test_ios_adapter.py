@@ -15,7 +15,8 @@ import sim
 class Status(C.Structure):
     _fields_=[('received',C.c_uint64),('forwarded',C.c_uint64),('send_errors',C.c_uint64),('rejected_sources',C.c_uint64),
               ('traffic',C.c_uint32),('weather',C.c_uint32),('heartbeat',C.c_uint32),('crc_bad',C.c_uint32),
-              ('gps_valid',C.c_int),('mode',C.c_int),('age',C.c_double),('elapsed',C.c_double),('max_gap',C.c_double),('detail',C.c_char*256)]
+              ('gps_valid',C.c_int),('mode',C.c_int),('age',C.c_double),('elapsed',C.c_double),('max_gap',C.c_double),('detail',C.c_char*256),
+              ('own_valid',C.c_int),('own_lat',C.c_double),('own_lon',C.c_double),('own_age',C.c_double)]
 
 @unittest.skipUnless(sys.platform=='darwin','Darwin/iOS adapter validation runs on Mac')
 class IOSAdapter(unittest.TestCase):
@@ -133,6 +134,16 @@ class IOSAdapter(unittest.TestCase):
         self.assertEqual(self.wait_frames(h,3),[weather,own,heartbeat])
         self.send(b'\x7e\x07\x00\x00\x7e');self.step(h);self.assertEqual(self.frames(),[])
         s=self.status(h);self.assertEqual(s.weather,1);self.assertEqual(s.heartbeat,1);self.assertTrue(s.gps_valid);self.assertGreater(s.crc_bad,0)
+    def test_ownship_position_is_reported_read_only(self):
+        """The GPS check reads the Sentry's ownship position; the relayed ownship frame stays byte for byte."""
+        h,e=self.open();self.assertTrue(h,e)
+        self.assertFalse(self.status(h).own_valid);self.assertEqual(self.status(h).own_age,-1)
+        own=gdl90.encode_report(gdl90.Report(address=0,lat=40.25,lon=-100.5,alt_ft=2000,nic=9,nacp=10),gdl90.MSG_OWNSHIP)
+        self.send(own);self.step(h)
+        self.assertEqual(self.wait_frames(h,1),[own])
+        s=self.status(h);self.assertTrue(s.own_valid)
+        self.assertAlmostEqual(s.own_lat,40.25,places=4);self.assertAlmostEqual(s.own_lon,-100.5,places=4)
+        self.assertGreaterEqual(s.own_age,0);self.assertLess(s.own_age,1)
     def test_interface_routes_and_failed_output(self):
         fixture = r"""
 #include <arpa/inet.h>

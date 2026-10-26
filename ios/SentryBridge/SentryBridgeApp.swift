@@ -23,7 +23,7 @@ import SwiftUI
                         switch step {
                         case "start": _ = try? await StartBridgeSessionIntent().perform()
                         case "stop": _ = try? await StopBridgeIntent().perform()
-                        case "foreground": model.settings.experiment = false; model.start()
+                        case "foreground": model.start(mode: .foreground)
                         default: break
                         }
                     }

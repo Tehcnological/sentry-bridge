@@ -9,7 +9,7 @@ import Foundation
         settings.inputPort = CommandLine.arguments[1]; settings.outputPort = CommandLine.arguments[2]
         if mode == "invalid" { settings.source = "invalid" }
         // Exercise the exact settings and status logic used by the SwiftUI model.
-        guard BridgeSettings().experiment else { print("FAIL: Bridge Session must be on by default"); exit(1) }
+        guard BridgeSettings().experiment else { print("FAIL: the earlier Bridge Session switch must default on"); exit(1) }
         // Settings saved by earlier builds keep their saved choice.
         let saved = try! JSONEncoder().encode({ var old = BridgeSettings(); old.experiment = false; return old }())
         guard (try? JSONDecoder().decode(BridgeSettings.self, from: saved))?.experiment == false else { print("FAIL: saved Bridge Session choice lost"); exit(1) }
@@ -42,6 +42,8 @@ import Foundation
         guard session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")) == "GPS fix • 1,234 traffic • 4,310 sent • 2/60 min" else { print("FAIL: fix subtitle \(session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")))"); exit(1) }
         session.age = 8.6
         guard session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")) == "Receiver silent 8 s • 2/60 min" else { print("FAIL: silent subtitle \(session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")))"); exit(1) }
+        if mode == "keep-running" { keepRunningChecks(); return }
+        if mode == "gps-isolation" { gpsIsolation(settings, phoneLat: Double(CommandLine.arguments[4])!, phoneLon: Double(CommandLine.arguments[5])!) }
         if mode == "rules" { ruleChecks(fixtures: CommandLine.arguments[4]); return }
         if mode == "follow" { followChecks(settings); followChecks(settings, refused: true); return }
         if mode == "sweep" { sweepChecks(settings); discoveryListChecks(); return }
@@ -112,6 +114,103 @@ import Foundation
                 sbio_close(io)
             }
             print("PASS: Swift worker \(mode), input \(received), sent \(forwarded), ports released")
+            exit(0)
+        })
+        dispatchMain()
+    }
+    static func fail(_ message: String) -> Never { print("FAIL: \(message)"); exit(1) }
+    /// The keep-running chooser's triggers and settings migration, the refused-session fallback, the
+    /// watchdog's scheduling and removal, and the GPS check rule.
+    static func keepRunningChecks() {
+        // Chooser triggers: nothing saved, unreadable, an older version, or a method this build lacks.
+        let audio = KeepRunningChoice(method: .backgroundAudio), session = KeepRunningChoice(method: .bridgeSession, gpsCheck: true)
+        guard KeepRunningChoice.load(nil, flavor: .sideload) == nil else { fail("first launch must show the chooser") }
+        guard KeepRunningChoice.load(Data("not json".utf8), flavor: .sideload) == nil,
+              KeepRunningChoice.load(Data(#"{"version":1,"method":"teleport","gpsCheck":false}"#.utf8), flavor: .lite) == nil else { fail("an unreadable choice must show the chooser") }
+        guard KeepRunningChoice.load(Data(#"{"version":0,"method":"backgroundAudio","gpsCheck":false}"#.utf8), flavor: .sideload) == nil else { fail("an older settings version must show the chooser") }
+        guard KeepRunningChoice.load(audio.encoded(), flavor: .lite) == nil, KeepRunningChoice.load(session.encoded(), flavor: .sideload) == nil else { fail("a method this flavor lacks must show the chooser") }
+        guard KeepRunningChoice.load(audio.encoded(), flavor: .sideload) == audio, KeepRunningChoice.load(session.encoded(), flavor: .lite) == session else { fail("a saved choice must load") }
+        // Migration: settings saved by v0.3.0 (before the chooser) still decode, keep their route and leave the choice unset.
+        let v030 = Data(#"{"source":"192.168.4.1","inputPort":"4000","destination":"192.168.4.20","outputPort":"4000","sessionMinutes":120,"keepAwake":true,"experiment":false,"discoveryPort":"63093","restoreCompatibility":true}"#.utf8)
+        guard let old = try? JSONDecoder().decode(BridgeSettings.self, from: v030), old.destination == "192.168.4.20", old.sessionMinutes == 120, !old.experiment else { fail("v0.3.0 settings must decode") }
+        guard KeepRunningChoice.preselected(nil, flavor: .sideload, legacySession: old.experiment).id == "backgroundAudio",
+              KeepRunningChoice.preselected(nil, flavor: .lite, legacySession: old.experiment).id == "appOpen",
+              KeepRunningChoice.preselected(nil, flavor: .lite).id == "bridgeSession",
+              KeepRunningChoice.preselected(session, flavor: .lite).id == "bridgeSession+gps" else { fail("chooser preselection") }
+        guard KeepRunningChoice.options(for: .sideload).map(\.id) == ["backgroundAudio", "backgroundAudio+gps"],
+              KeepRunningChoice.options(for: .lite).map(\.id) == ["bridgeSession", "bridgeSession+gps", "appOpen"],
+              KeepRunningChoice.options(for: .sideload).filter(\.recommended).map(\.id) == ["backgroundAudio"],
+              KeepRunningChoice.options(for: .lite).filter(\.recommended).map(\.id) == ["bridgeSession"] else { fail("chooser options") }
+        // A refused Bridge Session never stops the bridge.
+        let foreground = KeepRunningPolicy.sessionRefused("BGTaskSchedulerErrorDomain error 1", gpsCheck: false)
+        guard !foreground.background, foreground.message.contains("only while the app is open"), foreground.message.contains("Low Power Mode"),
+              foreground.message.contains("error 1"), foreground.notice == .sessionRefused(gpsCheck: false) else { fail("refused session without GPS check: \(foreground)") }
+        let located = KeepRunningPolicy.sessionRefused("error 1", gpsCheck: true)
+        guard located.background, located.message.contains("GPS check keeps"), located.notice.body.contains("GPS check") else { fail("refused session with GPS check") }
+        // Watchdog: one notification 30 s ahead, replaced every 5 s of updates, removed on Stop.
+        final class Recorder: NoticePosting {
+            var events: [String] = []
+            func post(_ notice: DegradedNotice, after seconds: Double?) { events.append("post \(notice.id) \(seconds.map { String(Int($0)) } ?? "now")") }
+            func remove(_ id: String) { events.append("remove \(id)") }
+        }
+        let recorder = Recorder(), watchdog = Watchdog(poster: recorder)
+        for second in 0...12 { watchdog.tick(now: 100 + Double(second)) }
+        guard recorder.events == Array(repeating: "post bridge.watchdog 30", count: 3), watchdog.armed else { fail("watchdog schedule \(recorder.events)") }
+        watchdog.stop()
+        guard recorder.events.last == "remove bridge.watchdog", !watchdog.armed else { fail("watchdog must be removed on Stop") }
+        watchdog.tick(now: 113)
+        guard recorder.events.last == "post bridge.watchdog 30" else { fail("watchdog must re-arm on the next run") }
+        guard DegradedNotice.watchdog.title == "Sentry Bridge stopped forwarding", DegradedNotice.watchdog.body.contains("Open Sentry Bridge") else { fail("watchdog text") }
+        // GPS check rule.
+        let sentry = SentryFix(gps: true, valid: true, lat: 40, lon: -100, age: 0.5)
+        var check = GPSCheck()
+        check.update(sentry: sentry, phone: nil, now: 0)
+        guard check.finding == .noPhone, check.warning == nil else { fail("no phone fix must not warn") }
+        let near = PhoneFix(lat: 40.0005, lon: -100, accuracy: 10, at: 0)
+        check.update(sentry: sentry, phone: near, now: 0)
+        guard case .agree = check.finding, check.warning == nil, check.status == "Positions agree" else { fail("agreeing positions: \(check.finding)") }
+        let far = PhoneFix(lat: 40.02, lon: -100, accuracy: 10, at: 0)  // 2.2 km
+        for t in stride(from: 0.0, to: 29.5, by: 1) { var p = far; p.at = t; check.update(sentry: sentry, phone: p, now: t) }
+        guard case .disagree = check.finding, check.warning == nil else { fail("disagreement must hold 30 s before warning") }
+        var p = far; p.at = 30; check.update(sentry: sentry, phone: p, now: 30)
+        guard let warning = check.warning, warning.contains("1.2 NM") else { fail("disagreement warning: \(String(describing: check.warning))") }
+        p = near; p.at = 31; check.update(sentry: sentry, phone: p, now: 31)
+        guard check.warning != nil else { fail("warning must hold 10 s after agreement returns") }
+        p.at = 41; check.update(sentry: sentry, phone: p, now: 41)
+        guard check.warning == nil else { fail("warning must clear after 10 s of agreement") }
+        // A poor phone fix is not compared; its accuracy widens the limit when it is.
+        check = GPSCheck(); p = far; p.accuracy = 150
+        check.update(sentry: sentry, phone: p, now: 0)
+        guard check.finding == .noPhone else { fail("a phone fix worse than 100 m must not be compared") }
+        p = PhoneFix(lat: 40.0095, lon: -100, accuracy: 90, at: 0)  // about 1,056 m: over 926 m + 90 m
+        check.update(sentry: sentry, phone: p, now: 0)
+        guard case .disagree = check.finding else { fail("1,056 m with 90 m accuracy is over the limit") }
+        p.lat = 40.0090; check.update(sentry: sentry, phone: p, now: 0)  // about 1,001 m: within 926 m + 90 m
+        guard case .agree = check.finding else { fail("phone accuracy must widen the limit") }
+        // The Sentry without a fix (or a stale ownship report) while the phone has one.
+        check = GPSCheck()
+        var lost = sentry; lost.gps = false
+        for t in stride(from: 0.0, through: 30, by: 1) { var q = near; q.at = t; check.update(sentry: lost, phone: q, now: t) }
+        guard check.finding == .sentryNoFix, check.warning?.contains("no GPS fix") == true else { fail("Sentry without a fix must warn") }
+        var stale = sentry; stale.age = 4; check = GPSCheck()
+        check.update(sentry: stale, phone: near, now: 0)
+        guard check.finding == .sentryNoFix else { fail("a stale ownship report counts as no fix") }
+        var oldPhone = near; oldPhone.at = -11; check = GPSCheck()
+        check.update(sentry: sentry, phone: oldPhone, now: 0)
+        guard check.finding == .noPhone else { fail("a phone fix older than 10 s must not be compared") }
+        print("PASS: keep-running chooser triggers, v0.3.0 settings migration, refused-session fallback, watchdog, GPS check rule")
+    }
+    /// The GPS check reads the worker's snapshots and a phone position far from the Sentry's; the Python side
+    /// checks that nothing of the phone's position reaches the output.
+    static func gpsIsolation(_ settings: BridgeSettings, phoneLat: Double, phoneLon: Double) -> Never {
+        var check = GPSCheck(); check.holdS = 1
+        let worker = BridgeWorker()
+        worker.run(settings, duration: 5, update: { value in
+            check.update(sentry: value.sentryFix, phone: PhoneFix(lat: phoneLat, lon: phoneLon, accuracy: 5, at: sbio_now()), now: sbio_now())
+        }, finish: { error, completed in
+            guard error == nil, completed else { fail("gps-isolation worker: \(error ?? "incomplete")") }
+            guard case .disagree = check.finding, check.warning?.contains("NM from this phone") == true else { fail("gps-isolation: the check saw \(check.finding)") }
+            print("PASS: gps-isolation: GPS check warned \(check.status); output checked by the host script")
             exit(0)
         })
         dispatchMain()

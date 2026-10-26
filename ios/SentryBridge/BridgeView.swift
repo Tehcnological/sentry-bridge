@@ -22,6 +22,7 @@ struct BridgeView: View {
     @AppStorage(BridgeView.noticeHiddenKey) private var noticeHidden = false
     @State private var showCompatibility = false
     @State private var dontShowAgain = false
+    @State private var chooserSelection: KeepRunningOption?
     static let noticeHiddenKey = "bridge.compatibilityNoticeHidden"
     private static let compatibilityURL = URL(string: "https://github.com/Tehcnological/sentry-bridge/blob/master/docs/Compatibility.md#iphone-and-ipad")!
     /// Other UI tests start the bridge directly; the notice test opts in with --compatibility-notice.
@@ -75,6 +76,7 @@ struct BridgeView: View {
             .navigationBarTitleDisplayMode(typeSize.isAccessibilitySize ? .inline : .automatic)
             .tint(controlTint)
             .sheet(isPresented: $showCompatibility) { compatibilitySheet }
+            .sheet(isPresented: $model.chooserVisible) { chooserSheet }
             .sheet(isPresented: $model.discoveryVisible, onDismiss: { model.exitDiscovery() }) {
                 NavigationStack {
                     List {
@@ -126,7 +128,7 @@ struct BridgeView: View {
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text(model.state).font(.title3.bold()).accessibilityIdentifier("bridge.status")
-                    Text(model.demo ? "Demo: sample data, not forwarded" : model.sessionActive ? "Bridge Session" : "Foreground bridge").accessibilityIdentifier("bridge.mode")
+                    Text(model.modeLabel).accessibilityIdentifier("bridge.mode")
                         .font(.subheadline).foregroundStyle(secondary)
                 }
             }.padding(.vertical, 8)
@@ -166,6 +168,15 @@ struct BridgeView: View {
                         .accessibilityIdentifier("bridge.coWarning")
                 }
             }
+            // GPS check: the phone's position compared with the Sentry's, shown here only.
+            if model.busy && model.gpsRunning {
+                statusRow("GPS check", model.gpsStatus ?? "Starting")
+                    .accessibilityElement(children: .combine).accessibilityIdentifier("bridge.gpsCheck")
+            }
+            if model.busy, let alert = model.gpsWarning {
+                Label(alert, systemImage: "location.slash").foregroundStyle(warning)
+                    .accessibilityIdentifier("bridge.gpsWarning")
+            }
             if model.snapshot.mode == 2 { Label(model.settings.restoreCompatibility ?? true ? "Encrypted receiver stream. Compatibility Mode is requested automatically." : "Encrypted receiver stream. Turn on Restore Compatibility Mode in Settings.", systemImage: "lock.trianglebadge.exclamationmark") }
             if let request = model.snapshot.compatibilityRequest { Text(request).font(.caption).accessibilityIdentifier("bridge.compatibilityRequest") }
             // Rebind results stay visible here; core log messages can replace the status detail.
@@ -204,17 +215,18 @@ Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this d
             Toggle("Restore Compatibility Mode", isOn: Binding(get: { model.settings.restoreCompatibility ?? true }, set: { model.settings.restoreCompatibility = $0 }))
                 .disabled(model.busy).accessibilityIdentifier("bridge.restoreCompatibility")
             Text("Switches the Sentry back to Compatibility Mode when it starts up in ForeFlight-only mode.").font(.caption).foregroundStyle(secondary)
-            Text("Session options").font(.headline)
-            Toggle("Bridge Session", isOn: $model.settings.experiment)
-                .disabled(model.busy)
-            if model.settings.experiment {
+            Text("Keep running").font(.headline)
+            statusRow("In the background", model.choice.method.title + (model.choice.gpsCheck ? " + GPS check" : ""))
+                .accessibilityElement(children: .combine).accessibilityIdentifier("bridge.keepRunning")
+            if model.choice.method == .bridgeSession {
                 Picker("Session length", selection: $model.settings.sessionMinutes) {
                     ForEach(BridgeSettings.sessionLengths, id: \.self) { Text("\($0) minutes").tag($0) }
                 }.pickerStyle(.menu).disabled(model.busy).accessibilityIdentifier("bridge.sessionLength")
-                Text("Keeps forwarding with the app in the background, for the chosen time. iOS can end it early.").font(.caption).foregroundStyle(secondary)
-            } else {
-                Text("Forwarding stops when you leave the app.").font(.caption).foregroundStyle(secondary)
             }
+            Text(keepRunningCaption).font(.caption).foregroundStyle(secondary)
+            Button("Change how the bridge keeps running") { openChooser() }.foregroundStyle(linkInk)
+                .disabled(model.busy).accessibilityIdentifier("bridge.changeKeepRunning")
+            if let note = model.keepRunningNote { Text(note).font(.caption).foregroundStyle(warning) }
             Toggle("Keep screen awake while visible", isOn: $model.settings.keepAwake).disabled(model.busy)
             NavigationLink("Licenses") { LicensesView() }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.licenses")
             Link("Compatibility and limitations", destination: Self.compatibilityURL).foregroundStyle(linkInk)
@@ -272,6 +284,65 @@ Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this d
         }
         .tint(controlTint)
         .accessibilityIdentifier("compatibility.sheet")
+    }
+    private var keepRunningCaption: String {
+        switch model.choice.method {
+        case .backgroundAudio: return "Silent audio keeps forwarding in the background, with no time limit. Notifications report it if iOS stops it."
+        case .bridgeSession: return "Keeps forwarding in the background for the chosen time. If iOS refuses or ends it, notifications say so."
+        case .appOpen: return "Forwarding stops when you leave the app."
+        }
+    }
+    private func openChooser() {
+        chooserSelection = KeepRunningChoice.preselected(model.keepRunning, flavor: model.flavor, legacySession: model.settings.experiment)
+        model.chooserVisible = true
+    }
+    /// First run, an update that adds this setting, an unreadable saved answer, or Change in Settings.
+    private var chooserSheet: some View {
+        let selected = chooserSelection ?? KeepRunningChoice.preselected(model.keepRunning, flavor: model.flavor, legacySession: model.settings.experiment)
+        return NavigationStack {
+            Form {
+                Section {
+                    Text("How should the bridge keep forwarding when Sentry Bridge is not on screen?")
+                    ForEach(KeepRunningChoice.options(for: model.flavor)) { option in
+                        Button { chooserSelection = option } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: option == selected ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(controlTint).accessibilityHidden(true)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(option.title + (option.recommended ? " (recommended)" : "")).font(.headline).foregroundStyle(ink)
+                                    Text(option.detail).font(.callout).foregroundStyle(secondary)
+                                }
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(option == selected ? .isSelected : [])
+                        .accessibilityIdentifier("chooser.option." + option.id)
+                    }
+                }.listRowBackground(surface)
+                Section("Notifications") {
+                    Text(KeepRunningChoice.notificationsDetail).font(.callout)
+                }.listRowBackground(surface)
+            }
+            .foregroundStyle(ink)
+            .scrollContentBackground(colorScheme == .dark ? .hidden : .visible)
+            .background(background.ignoresSafeArea())
+            .navigationTitle("Keep running")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if model.keepRunning != nil {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { model.chooserVisible = false }.accessibilityIdentifier("chooser.cancel")
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Continue") { model.choose(selected) }.accessibilityIdentifier("chooser.continue")
+                }
+            }
+        }
+        .tint(controlTint)
+        // Without a saved answer the sheet stays until one is chosen.
+        .interactiveDismissDisabled(model.keepRunning == nil)
+        .accessibilityIdentifier("chooser.sheet")
     }
     private func styledForm<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         Form { content() }

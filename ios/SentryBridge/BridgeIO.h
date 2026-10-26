@@ -9,6 +9,10 @@ typedef struct {
     int gps_valid, mode;
     double age, elapsed, max_gap;
     char detail[256];
+    /* The Sentry's own position from its latest ownship report (read-only, for the GPS check):
+       own_valid 1 when one was received, own_age seconds since then. Nothing writes it back. */
+    int own_valid;
+    double own_lat, own_lon, own_age;
 } sbio_status;
 /* Serialized worker API. Strict exclusive bind; IPv4 unicast only. */
 sbio *sbio_open(const char *source_ip, uint16_t input_port,
