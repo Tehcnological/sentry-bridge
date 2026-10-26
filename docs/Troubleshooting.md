@@ -14,7 +14,7 @@
 
 The Sentry returns to ForeFlight mode at every power-up, and ForeFlight's **Disable** button switches
 Compatibility Mode off. Turn on **Compatibility Mode** in Settings, and keep **Automatic restoration**
-on.
+on. On iPhone and iPad, this setting is called **Restore Compatibility Mode**.
 
 ## The Sentry switches itself off after about 30 minutes
 
@@ -32,7 +32,7 @@ ForeFlight is not required.
 
 ## My own aircraft appears as traffic
 
-Enter your aircraft's ICAO address in **Settings → Bridge settings → Ownship ICAO**. The bridge log
+On Windows or Android, enter your aircraft's ICAO address in **Settings → Bridge settings → Ownship ICAO**. The bridge log
 suggests the address when a target sits on top of your own position.
 
 ## An Android update will not install
@@ -44,3 +44,36 @@ uninstall the app, then install the new APK. Uninstalling removes the app's sett
 
 They appear only while the bridge is forwarding and the Sentry is reachable. After the Sentry restarts
 they return within about 15 seconds of it reconnecting.
+
+## iPhone or iPad stops forwarding when I switch to the EFB
+
+Open Sentry Bridge and check its status. If stopped, press **Start** again. Before switching apps,
+check **Settings → Background running**. Choose **Background audio** where offered. If your version
+uses **Bridge Session**, iOS can refuse it or end it early; read the message on the bridge screen.
+**Only while the app is open** stops when you switch apps or lock the screen.
+
+A phone call interrupts background audio. The app tries to resume it, but recovery on a real device
+has not yet been verified for the new background options. Check fresh data in the EFB afterward.
+See [iPhone and iPad limitations](Compatibility.md#iphone-and-ipad).
+
+## GPS cross-reference says it needs Always location
+
+In Sentry Bridge, tap **Open Settings** beside the note and set location access to **Always**.
+The note should update when you return. If you do not want to grant that access, stop the bridge
+and choose an option without GPS cross-reference in **Settings → Background running**.
+
+If the check is waiting for a phone or tablet position, that device may not have a usable GPS fix.
+The EFB continues to receive the Sentry's position. This check never substitutes the device's position.
+
+## I did not hear a stopped-bridge warning on iPhone or iPad
+
+Allow Sentry Bridge notifications in iOS Settings and in the Focus you use while flying. A free Apple
+ID installation cannot use Time Sensitive delivery, so a Focus can silence its normal notifications.
+The warning is intended to arrive about 30 seconds after updates stop, but actual delivery after iOS
+suspends or closes the app has not yet been verified on hardware. Check the EFB's data freshness too.
+
+## AltStore reports that permissions do not match
+
+See [installation troubleshooting](iOS-Sideload.md#if-altstore-reports-a-permission-mismatch).
+Refreshing the source may fetch a corrected listing. If it still fails, report the version and exact
+error; changing location access in iOS Settings will not repair the listing.

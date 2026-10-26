@@ -53,7 +53,8 @@ On iPhone or iPad, add the Sentry Bridge source to your sideloading app to insta
      or tap **Find EFB** to look it up.
 
    Not both, and not several devices.
-3. Press **Start**.
+3. On iPhone or iPad, answer the **Background running** prompt if shown. **Background audio** is
+   recommended where offered. Allow **Local Network** access and notifications. Then press **Start**.
 4. In your EFB, select a **Stratux** or **GDL90** device as the traffic source (UDP port 4000).
 5. Once, in **Settings → Open Sentry web settings**, turn off the Sentry's **Power Savings**.
    Otherwise the Sentry switches itself off after 30 minutes without ForeFlight connected.
@@ -71,6 +72,14 @@ The Sentry returns to ForeFlight mode every time it powers up. With **Automatic 
 - Testing so far covers the Sentry Plus with ForeFlight, Garmin Pilot, AvareX and FltPlan Go on an
   iPad, and the Windows app with a Sentry Plus. Details and known limits are in
   [Compatibility](docs/Compatibility.md).
+
+On iPhone and iPad, **GPS cross-reference** can compare this device's position with the Sentry's
+and show a warning in Sentry Bridge. It needs location access set to **Always** for background use.
+It never sends the device's position to the EFB or corrects the Sentry's position. Available background
+options depend on the installed version. iOS can still stop the bridge; check fresh data in the EFB
+after switching apps or reconnecting. Read the
+[iPhone and iPad limitations](docs/Compatibility.md#iphone-and-ipad), including the hardware checks
+that remain open for the new background options.
 
 **Safety:** Sentry Bridge gives advisory information only. It is not certified for navigation or
 collision avoidance and does not replace see-and-avoid, required equipment or a weather briefing.

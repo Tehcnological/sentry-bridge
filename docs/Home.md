@@ -2,9 +2,9 @@
 
 ## Using Sentry Bridge
 
+- [Compatibility and limitations](Compatibility.md): start here for supported setups and what still needs testing
 - [Android](Android.md), [Windows](Windows.md), [iPhone and iPad](iOS-Sideload.md): install and set up
 - [Small-board firmware](Firmware.md): run the bridge on a small WiFi board (experimental)
-- [Compatibility and limitations](Compatibility.md): what works, what was tested, what is not supported
 - [Controls](GUI-Controls.md): every setting and tool in the app
 - [Troubleshooting](Troubleshooting.md): common problems and fixes
 - [Privacy](Privacy.md), [Credits and legal](Credits-and-Legal.md)

@@ -1,7 +1,7 @@
 # Install on iPhone or iPad
 
 Sentry Bridge for iPhone and iPad is not in the App Store. Each release includes `sentry-bridge.ipa`, an
-app file with no developer signature: it gets one when you install it, with one of the options below. Read
+app file that your installation app signs for your Apple ID or certificate. Read
 [Compatibility](Compatibility.md#iphone-and-ipad) first.
 
 ## What you need
@@ -30,8 +30,11 @@ You can also download `sentry-bridge.ipa` from the release and open it in any of
 1. Set up [SideStore](https://sidestore.io) or [AltStore](https://altstore.io) with their own guides.
 2. Install Sentry Bridge from its source, or open `sentry-bridge.ipa` in the app.
 3. If iOS asks, turn on **Settings → Privacy & Security → Developer Mode** and restart.
-4. Open Sentry Bridge and choose how the bridge keeps running (**Background audio** is recommended), then
-   allow notifications and, when you start the bridge, **Local Network** access.
+4. Open Sentry Bridge. If asked, choose **Background audio** to keep forwarding while you use your EFB.
+   If your version offers **Bridge Session** instead, choose that and check its time limit. Allow
+   notifications and, when you start the bridge, **Local Network** access.
+5. If you choose **GPS cross-reference**, allow location and set it to **Always** for background use.
+   It checks the Sentry position; it does not supply your EFB with the phone or iPad position.
 
 With a free Apple ID the app works for **7 days** at a time. Refresh it in SideStore or AltStore before
 then, and before a flight. A free Apple ID allows 3 sideloaded apps at a time.
@@ -53,27 +56,34 @@ the certificate, the app stops opening.
 With the source added, SideStore, AltStore and Feather show new versions as updates. Otherwise install
 the IPA from the newer release the same way. Settings are kept.
 
-## Running in the background
+## Before using it with your EFB
 
-The release app keeps forwarding with the screen locked or another app open by playing silence, which
-does not interrupt EFB alerts or music. If iOS stops the app anyway, a notification says so within about
-30 seconds; open the app to start the bridge again. GPS cross-reference (optional) compares the phone's position
-with the Sentry's and warns on screen when they disagree; it needs Always location access. See
-[Compatibility](Compatibility.md#iphone-and-ipad) for the details.
+Connect to the Sentry's WiFi, start the bridge and check that your EFB receives fresh data. Then switch
+to the EFB and check again. If you plan to lock the screen, try that on the ground too.
+
+In **Settings → Background running**, choose the option you want before starting. Background audio
+plays silence to help keep forwarding while another app is open. A phone call interrupts it; the app
+tries to resume afterward. iOS can still stop the app. If it stops, reopen Sentry Bridge and press
+**Start** again. Allow its notifications in the Focus you use while flying.
+
+GPS cross-reference is optional, uses more battery, and needs **Always** location access for background
+use. It shows position warnings in Sentry Bridge only. See
+[Compatibility and limitations](Compatibility.md#iphone-and-ipad) for the choices, warnings and what
+still needs testing on a real device.
+
+## If AltStore reports a permission mismatch
+
+The download and its store listing must describe the same permissions. If AltStore says they do not
+match, refresh the source listing and try again. If the error remains, report the app version and the
+exact message in the [issue tracker](https://github.com/Tehcnological/sentry-bridge/issues).
+A corrected listing and matching download are needed; changing location permission in iOS Settings
+will not fix an installation-listing mismatch.
 
 ## Try it without a receiver
 
 **Diagnostics → Demo with sample data** plays simulated traffic in the app only. Nothing is sent to an
 EFB. Stop ends the demo.
 
-## For developers
+## Building the app yourself
 
-To build the app yourself, open `ios/SentryBridge.xcodeproj` in Xcode 26 or later on a Mac, choose your
-team under **Signing & Capabilities**, and run it on the device. `python3 tools/build_ios_ipa.py`
-builds the same `dist/sentry-bridge.ipa` the release uses. The build setting `SB_FLAVOR` picks
-the flavor: `Sideload` (the default and the release) keeps running with background audio; `Lite` has no
-silent audio and offers Bridge Session instead (`python3 tools/build_ios_ipa.py --flavor Lite` writes
-`dist/sentry-bridge-lite.ipa`, which is not released). Both flavors request the Time Sensitive notification
-capability; the IPA is ad-hoc signed only to declare it, with no team or profile. A free Apple ID cannot
-sign it: to build for a device with one in Xcode, run `python3 tools/generate_ios_project.py
---no-time-sensitive` first (don't commit that project file), and notifications arrive at the normal level.
+See [Building from source](Building.md#iphone-and-ipad).

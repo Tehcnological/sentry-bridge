@@ -1,8 +1,8 @@
 # Privacy
 
-Effective 2026-10-26. This policy describes the Android, Windows and Python
-Sentry Bridge applications in this source revision. iOS has a separate implementation
-and distribution review; its location and notification use is described below.
+Effective 2026-10-26. This policy describes Sentry Bridge on Android, Windows,
+iPhone and iPad, and the version run from Python. Features and stored files differ
+between platforms; iPhone and iPad location use is described below.
 The project does not operate a flight-data collection service.
 
 ## Receiver and EFB data
@@ -23,9 +23,10 @@ access and, while the bridge forwards, compares this device's position with the
 position the Sentry reports. The comparison runs on the device only. The phone's
 position is never stored, never written to diagnostics, never sent to the EFB or
 anywhere else, and never replaces or changes ownship or traffic data. Diagnostics
-note only that a warning appeared and the distance. Turning GPS cross-reference off stops
-location updates; you can also remove the permission in Settings → Privacy & Security
-→ Location Services.
+note only that a warning appeared and the distance. Stopping the bridge stops
+location updates. To run without the check, stop the bridge, choose an option without
+GPS cross-reference in Settings → Background running, then start again. You can also
+remove location permission in Settings → Privacy & Security → Location Services.
 
 Notifications are local: the app schedules them on the device to report a stopped
 bridge or background running that stopped. No push service is used and nothing
@@ -34,8 +35,13 @@ silence; it does not use the microphone or record anything.
 
 ## Local storage and retention
 
-Settings, destination addresses, appearance choices and session credentials are
-stored locally. Diagnostics can record flight tracks, aircraft identifiers,
+Settings and destination addresses are stored locally. The iPhone and iPad app keeps
+a short diagnostic log in memory while it runs; it does not have the recording and
+backup tools described in the next paragraphs. Its phone or tablet GPS position is
+not included in that log.
+
+On Android and desktop, appearance choices and session credentials are also stored
+locally. Their diagnostic tools can record flight tracks, aircraft identifiers,
 receiver settings, logs, captures, uploaded files and analysis reports. These can
 identify aircraft and locations even when a report omits its ownship summary.
 Recordings are not automatically sent to the project.

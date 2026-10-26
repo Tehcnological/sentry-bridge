@@ -1,8 +1,8 @@
 # Compatibility and limitations
 
-Sentry Bridge passes on what the Sentry sends in Compatibility Mode, as standard GDL90. It cannot add
-data the Sentry does not send in that mode, and it does not change the Sentry's firmware. Read the
-section for your platform before relying on it in flight.
+Sentry Bridge sends the Sentry's traffic and GPS to your EFB in a format it can read (GDL90).
+It uses the Sentry's Compatibility Mode and cannot provide data that mode leaves out. Read the
+section for your device to understand what works and what still needs testing.
 
 ## All platforms
 
@@ -11,26 +11,116 @@ section for your platform before relying on it in flight.
   several devices. With **This device**, only one EFB app on that device receives the traffic.
 - **EFBs receive traffic and GPS.** Weather data is passed on, but weather display in EFBs has not
   been confirmed yet.
-- **No AHRS, CO, temperature, barometric or battery data in the EFB.** Compatibility Mode does not
+- **No attitude (AHRS), CO, temperature, air-pressure or battery readings in the EFB.** Compatibility Mode does not
   include them, for any app, ForeFlight included. Sentry Bridge reads battery, CO and temperature
   separately and shows them on its own screen, with a warning at the Sentry's CO alarm level (at
   50 ppm on iPhone and iPad).
 - **Turn off Power Savings** in the Sentry's web settings. It switches the Sentry off after 30 minutes
   without ForeFlight connected. ForeFlight is not required.
-- **Compatibility Mode resets at every power-up.** Keep Automatic restoration on so the bridge switches
-  it back.
+- **Compatibility Mode resets at every power-up.** Keep **Automatic restoration** on
+  (**Restore Compatibility Mode** on iPhone and iPad) so the bridge switches it back.
 
 **Tested so far:** a Sentry Plus (WiFi firmware 1.0.32) with ForeFlight, Garmin Pilot, AvareX and
 FltPlan Go on an iPad, the Windows app with a Sentry Plus, including recovery after the Sentry
 restarts, and the Android app sending to an iPad, including following it to a new address after the
 Sentry restarts. Not yet tested: other EFB versions and other devices.
 
+## iPhone and iPad
+
+Requires iOS or iPadOS 26 or later. The app is installed outside the App Store; follow
+[Install on iPhone or iPad](iOS-Sideload.md). The choices below depend on the version you have installed.
+
+### Before departure
+
+1. Check that Sentry Bridge still opens. If you use a free Apple ID, refresh the app before its
+   seven-day expiry; do this while you have an internet connection.
+2. Join the Sentry's WiFi and allow **Local Network** access. Choose **This device** for an EFB on
+   this iPad or iPhone, or **Other device** for an EFB on another device on the same WiFi.
+3. In the EFB, select **Stratux** or **GDL90**, normally on port **4000**. Close other EFB apps on
+   that device. Start the bridge and confirm that the EFB is receiving fresh data.
+4. Switch to your EFB and check again. Test screen locking on the ground if you intend to use it.
+   Allow bridge notifications in the Focus you use while flying.
+
+### When you switch apps or lock the screen
+
+Newer versions let you choose in **Settings → Background running**, and ask the first time you open
+the app after the update. If your version has a **Bridge Session** switch instead, its background
+time is limited as explained below.
+
+- **Background audio** is the recommended choice where offered. The app plays silence to help it
+  keep running while you use your EFB or lock the screen. It is designed to mix with EFB alerts and
+  music. A phone call interrupts the audio; the app tries to restart it when the interruption ends.
+- **Background audio + GPS cross-reference** adds a check of the Sentry's position against this
+  device's GPS. Location updates also provide another way to keep the bridge running. This uses more
+  battery. See the position-check explanation below.
+- **Bridge Session**, if offered instead of Background audio, asks iOS for up to the chosen session
+  length, at most four hours. iOS can refuse it or end it early. If refused, forwarding continues
+  while the app is open. If an accepted session ends without GPS cross-reference running,
+  forwarding stops. Open the app and press **Start** again.
+- **Bridge Session + GPS cross-reference**, where offered, lets location updates support continued
+  forwarding after a session is refused or ends. It needs location permission; it is not a guarantee
+  that iOS will keep the app running.
+- **Only while the app is open**, where offered, stops forwarding when you leave the app or lock
+  the screen.
+
+Background audio has no four-hour timer, but iOS can still interrupt, pause or close the app. Returning to the app does not automatically restart a stopped bridge. Check its
+status and press **Start** when needed. Background running and recovery through a real phone call
+have not yet been verified on hardware for these new options.
+
+### What GPS cross-reference does
+
+This optional check warns on the bridge's main screen if the Sentry has no usable GPS fix, or if
+its position stays more than about **half a nautical mile** from this device's position for
+**30 seconds**. The allowance increases slightly with the device's reported GPS uncertainty.
+A poor or stale device position is not compared. Agreement must return for ten seconds before
+an existing disagreement warning clears.
+
+**Your EFB still receives the Sentry's position.** The iPhone or iPad position is only used for
+this check: it is not sent to the EFB, saved as a track, or used to change your aircraft's position
+or traffic reports. The check does not correct a bad Sentry position and has not been tested
+against a real receiver in flight. Its warning appears in Sentry Bridge, not in your EFB.
+
+Choose **Always** in the app's location permissions for background use. If the app says
+**GPS cross-reference needs location set to Always**, tap **Open Settings** and change the permission.
+Choosing the option alone does not grant permission. iOS shows a location indicator while it is in use.
+An iPad without its own usable GPS position may leave the check waiting for a device position.
+
+### Notifications and lost data
+
+Allow notifications so the app can warn you if it stops running. The warning is intended to appear
+about **30 seconds** after forwarding updates stop. Pressing **Stop** cancels it. A warning cannot
+confirm whether your EFB received data, and delivery after iOS pauses or closes the app has not yet
+been verified on hardware.
+
+A Focus or notification setting can delay or hide a warning. Time Sensitive delivery is requested
+where the installation allows it, but is not available with a free Apple ID. Allow Sentry Bridge
+explicitly in your flying Focus; do not depend on a warning always sounding. If you see a stopped
+bridge warning or stale data in the EFB, open Sentry Bridge, check the WiFi and press **Start** if stopped.
+
+### An EFB on another device
+
+**Find EFB** can show both named EFBs and entries labelled **Device**. A Device entry only means
+something answered on the WiFi; it does not prove that an EFB is running there. Confirm the selected
+address belongs to your EFB device.
+
+The bridge can follow a device whose address changes after it rejoins the Sentry's WiFi. It first
+needs to have received a reply from the selected device. After two missed checks, it searches again
+and switches only when there is one other answering device. That device might not be your EFB.
+With several devices, or if the EFB never answers, use **Find EFB** or enter its WiFi address yourself.
+Check reception in the EFB after a reconnection.
+
+### What still needs a real-device check
+
+The new background options have been built and tested on computers and simulators; the Sideload
+app has been installed on an iPad. That does not yet establish phone-call recovery, warning delivery
+when iOS stops the app, GPS cross-reference with a real Sentry, battery use over a flight, or
+installation and updating of the new release through SideStore. Time Sensitive warnings with a
+Focus also remain untested on hardware.
+
 ## Android
 
-- **The EFB must be on another device.** The Sentry always sends to UDP port 4000. Android lets two apps
-  share a port only if both allow it, and the Android EFBs tested (FltPlan Go, Garmin Pilot) do not. So
-  an EFB on the same phone cannot receive from the bridge. Use the Android app to feed an iPad or a
-  second tablet.
+- **The EFB must be on another device.** The Android bridge and the EFBs tested cannot share the
+  Sentry connection on one phone. Use the Android app to feed an iPad or a second tablet.
 - Garmin Pilot for Android does not accept GDL90 input at all. On Android, use an EFB with GDL90 input,
   such as FltPlan Go.
 - Keep the bridge's notification visible; battery savers that stop background apps also stop the bridge.
@@ -48,35 +138,6 @@ Sentry restarts. Not yet tested: other EFB versions and other devices.
 
 Unmaintained: there is no download, and the desktop app is not tested there. It may still run from
 source. If you would use it on macOS or Linux, [open an issue](https://github.com/Tehcnological/sentry-bridge/issues).
-
-## iPhone and iPad
-
-- Not in the App Store: download `sentry-bridge.ipa` from the release and sideload it; see
-  [Install on iPhone or iPad](iOS-Sideload.md). Requires iOS or iPadOS 26.
-- **Keeping the bridge running.** On first launch the app asks how the bridge should keep forwarding
-  when it is not on screen. Change the answer later in **Settings → Background running**.
-  - **Background audio** (recommended): the app plays silence alongside other audio, so iOS keeps it
-    running in the background with no time limit. EFB alerts and music still play. A phone call pauses it;
-    it resumes after the call when iOS allows.
-  - **Background audio + GPS cross-reference**: also compares this device's GPS with the Sentry's position and warns
-    on the main screen when the Sentry has no fix, or the two are more than 0.5 NM apart, for 30 seconds.
-    Needs Always location access, and iOS shows the location indicator. The phone's position is only
-    compared: it is never sent to the EFB and never changes ownship or traffic data.
-  - Builds without background audio (none released yet) offer **Bridge Session** instead: up to 4 hours
-    in the background. If iOS refuses or ends it, the bridge continues while the app is open and says so;
-    with GPS cross-reference on it keeps running in the background.
-- **Notifications**: allow them when asked; they are how the app reports a stopped bridge. You get one when
-  background running stops (audio cannot resume, location updates stop, a session is refused or ends) and,
-  if iOS suspends or closes the app while it forwards, "Sentry Bridge stopped forwarding" within about
-  30 seconds. Stop removes it. The app asks for Time Sensitive delivery, which breaks through a Focus,
-  but only a signing profile with that capability grants it; a free Apple ID cannot. Otherwise they are
-  normal notifications that a Focus can hold back: allow Sentry Bridge in the Focus you fly with.
-- Allow **Local Network** access when asked; without it the bridge cannot reach the Sentry or the EFB.
-- An EFB on the same iPad works: select a Stratux or GDL90 device in it. Only one EFB at a time receives
-  the traffic, so close other EFBs.
-- For an EFB on another device, **Find EFB** lists EFBs that announce themselves and other devices on the
-  Sentry's WiFi as "Device". If that EFB stops answering (it rejoined the WiFi with a new address) and
-  exactly one other device is on the WiFi, the bridge switches to it and saves the new address.
 
 ## Small boards (ESP32-C3, Pico W, Pico 2 W)
 
