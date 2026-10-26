@@ -18,6 +18,16 @@
       "category": "utilities",
       "versions": [
         {
+          "version": "0.3.1",
+          "buildVersion": "1",
+          "date": "2026-10-26",
+          "minOSVersion": "26.0",
+          "localizedDescription": "Release notes: https://github.com/Tehcnological/sentry-bridge/releases/tag/v0.3.1",
+          "downloadURL": "https://github.com/Tehcnological/sentry-bridge/releases/download/v0.3.1/sentry-bridge.ipa",
+          "size": 7125746,
+          "sha256": "261965e8f2f1a44b3de0fff66a522d2050ed4c47a7f0a34ea97bdf551edec6d1"
+        },
+        {
           "version": "0.3.0",
           "buildVersion": "1",
           "date": "2026-10-21",
@@ -29,16 +39,20 @@
         }
       ],
       "appPermissions": {
-        "entitlements": [],
+        "entitlements": [
+          "com.apple.developer.usernotifications.time-sensitive"
+        ],
         "privacy": {
-          "NSLocalNetworkUsageDescription": "Receive Sentry flight data and EFB announcements over WiFi, and forward GPS, traffic and weather to the EFB address you select."
+          "NSLocalNetworkUsageDescription": "Receive Sentry flight data and EFB announcements over WiFi, and forward GPS, traffic and weather to the EFB address you select.",
+          "NSLocationAlwaysAndWhenInUseUsageDescription": "GPS check keeps comparing this device's position with the Sentry's while the bridge runs in the background, and warns when they disagree. The position stays on this device: it is never stored, never sent to the EFB and never changes ownship or traffic data.",
+          "NSLocationWhenInUseUsageDescription": "GPS check compares this device's position with the Sentry's and warns on screen when they disagree. The position stays on this device: it is never stored, never sent to the EFB and never changes ownship or traffic data."
         }
       },
-      "version": "0.3.0",
-      "versionDate": "2026-10-21",
-      "versionDescription": "Release notes: https://github.com/Tehcnological/sentry-bridge/releases/tag/v0.3.0",
-      "downloadURL": "https://github.com/Tehcnological/sentry-bridge/releases/download/v0.3.0/sentry-bridge.ipa",
-      "size": 7042260
+      "version": "0.3.1",
+      "versionDate": "2026-10-26",
+      "versionDescription": "Release notes: https://github.com/Tehcnological/sentry-bridge/releases/tag/v0.3.1",
+      "downloadURL": "https://github.com/Tehcnological/sentry-bridge/releases/download/v0.3.1/sentry-bridge.ipa",
+      "size": 7125746
     }
   ],
   "news": []
