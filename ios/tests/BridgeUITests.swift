@@ -623,6 +623,18 @@ final class BridgeUITests: XCTestCase {
         reveal(start, in: app, upwards: false); start.tap()
         XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
     }
+    func testSessionRegistrationRefusalKeepsForegroundBridgeRunning() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession", "--refuse-session-registration"])
+        let start = app.buttons["bridge.startStop"]
+        reveal(start, in: app, upwards: false); start.tap()
+        XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'System could not register'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "bridge.mode", "Foreground bridge")).firstMatch.exists)
+        XCUIDevice.shared.press(.home)
+        sleep(2); app.activate()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5), "the fallback must stop when hidden")
+    }
     func testBackgroundAudioKeepsRunningWhenHidden() throws {
         try XCTSkipIf(lite, "Background audio is a Sideload option")
         let app = launch(extraArguments: ["--keep-running=backgroundAudio"])
@@ -644,9 +656,14 @@ final class BridgeUITests: XCTestCase {
         let sheet = app.descendants(matching: .any).matching(identifier: "chooser.sheet").firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))
         let ids = lite ? ["bridgeSession", "bridgeSession+gps", "appOpen"] : ["backgroundAudio", "backgroundAudio+gps"]
-        for id in ids { XCTAssertTrue(app.buttons["chooser.option." + id].exists, id) }
-        XCTAssertFalse(app.buttons["chooser.option." + (lite ? "backgroundAudio" : "bridgeSession")].exists)
         XCTAssertTrue(app.buttons["chooser.option." + ids[0]].isSelected, "the recommended option starts selected")
+        // On smaller phones the Form has not created the third Lite row until it is scrolled into view.
+        for id in ids {
+            let option = app.buttons["chooser.option." + id]
+            for _ in 0..<4 where !option.exists { sheet.swipeUp() }
+            XCTAssertTrue(option.exists, id)
+        }
+        XCTAssertFalse(app.buttons["chooser.option." + (lite ? "backgroundAudio" : "bridgeSession")].exists)
         XCTAssertFalse(app.buttons["chooser.cancel"].exists, "the first-run chooser needs an answer")
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Chooser (\(lite ? "Lite" : "Sideload"))"
         shot.lifetime = .keepAlways; add(shot)

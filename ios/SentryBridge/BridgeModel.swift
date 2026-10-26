@@ -348,9 +348,14 @@ enum RunMode { case foreground, audio, session }
         notify(.sessionEnded(gpsCheck: true))
     }
     private func requestSession(_ id: UUID) {
+        #if DEBUG
+        let refuseRegistration = testing && ProcessInfo.processInfo.arguments.contains("--refuse-session-registration")
+        #else
+        let refuseRegistration = false
+        #endif
         let identifier = (Bundle.main.bundleIdentifier ?? "io.github.tehcnological.sentrybridge") + ".bridge." + id.uuidString
         taskIdentifier = identifier
-        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { [weak self] backgroundTask in
+        let registered = !refuseRegistration && BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { [weak self] backgroundTask in
             MainActor.assumeIsolated {
                 guard let self, self.token == id, self.busy, self.state != "Stopping",
                       let continued = backgroundTask as? BGContinuedProcessingTask else {
@@ -372,8 +377,8 @@ enum RunMode { case foreground, audio, session }
             }
         }
         guard registered else {
-            busy = false; state = "Stopped"; message = "System could not register the Bridge Session."
-            taskIdentifier = nil; UIApplication.shared.isIdleTimerDisabled = false; return
+            taskIdentifier = nil
+            sessionRefused("System could not register the Bridge Session.", id: id); return
         }
         let minutes = settings.sessionMinutes
         let submission = SessionSubmission(); self.submission = submission
@@ -385,10 +390,7 @@ enum RunMode { case foreground, audio, session }
                 if let error {
                     self.record("Submission failed: \(error.localizedDescription)")
                     // Never stops the bridge: it continues in the foreground, or on GPS cross-reference's location updates.
-                    let fallback = KeepRunningPolicy.sessionRefused(error.localizedDescription, gpsCheck: self.gpsRunning)
-                    self.notify(fallback.notice); self.message = fallback.message
-                    self.runMode = .foreground; self.submission = nil
-                    if self.worker == nil { self.launchWorker(id, duration: nil) }
+                    self.sessionRefused(error.localizedDescription, id: id)
                 } else { self.record("Request submitted using immediate-start policy") }
             }
         }
@@ -406,6 +408,12 @@ enum RunMode { case foreground, audio, session }
             // Stop may race the scheduler accepting the request.
             if submission.isCancelled { BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier) }
         }
+    }
+    private func sessionRefused(_ error: String, id: UUID) {
+        let fallback = KeepRunningPolicy.sessionRefused(error, gpsCheck: gpsRunning)
+        notify(fallback.notice); message = fallback.message
+        runMode = .foreground; submission = nil
+        if worker == nil { launchWorker(id, duration: nil) }
     }
     private func launchWorker(_ id: UUID, duration: Double?) {
         let worker = BridgeWorker(); self.worker = worker; state = "Waiting for data"
