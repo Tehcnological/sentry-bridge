@@ -20,6 +20,7 @@ ASSETS = ("sentry-bridge-gui.exe", "sentry-ctl.exe", "sentry-bridge.apk", "sentr
 IPA_SOURCES, IPA_FILES = ("ios/", "core/"), ("LICENSE", "NOTICE.txt")
 CERTIFICATE = "1afa17aec207256b2352089f9d4e0a1417d09c859e11fa349aef8d45d0a019c5"
 DISTRIBUTION_ASSETS = ASSETS + ("sentry-bridge-source.zip", "LICENSE", "NOTICE.txt")
+IOS_DISTRIBUTION_ASSETS = ("sentry-bridge.ipa", "sentry-bridge-source.zip", "LICENSE", "NOTICE.txt")
 # Sources Git records as 100755. Listed because a release export (git archive) has no Git
 # metadata and Windows drops the bits; verify() checks them against the GitHub tree.
 EXECUTABLES = ("capture.py", "sentry_ctl.py", "sim.py")
@@ -270,13 +271,26 @@ def check_ipa(path, report, version, sources):
         raise ValueError("IPA must declare exactly the entitlements in " + IPA_ENTITLEMENTS.name)
 
 
-def prepare(root, tag):
+def prepare(root, tag, ios_only=False, validation=None):
     check_checkout(root)
     dist = root / "dist"
-    sources, hashes, tests, apk = validate_reports(root, dist, tag)
+    if ios_only:
+        if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?", tag):
+            raise ValueError("Use a version tag such as v0.3.1")
+        sources = source_snapshot(root)
+        tests = load(validation)
+        if tests.get("sources") != sources:
+            raise ValueError("Sources changed since the iOS validation")
+        ios_build = load(dist / "ios-build-report.json")
+        check_ipa(dist / "sentry-bridge.ipa", ios_build, tag[1:], sources)
+        hashes = {"sentry-bridge.ipa": sha256(dist / "sentry-bridge.ipa")}
+        binaries, distribution = ("sentry-bridge.ipa",), IOS_DISTRIBUTION_ASSETS
+    else:
+        sources, hashes, tests, apk = validate_reports(root, dist, tag)
+        binaries, distribution = ASSETS, DISTRIBUTION_ASSETS
     bundle = dist / "release" / tag
     bundle.mkdir(parents=True, exist_ok=True)
-    for name in ASSETS:
+    for name in binaries:
         shutil.copyfile(dist / name, bundle / name)
     for name in ("LICENSE", "NOTICE.txt"):
         shutil.copyfile(root / name, bundle / name)
@@ -291,11 +305,15 @@ def prepare(root, tag):
             info.external_attr = (0o100755 if name in EXECUTABLES else 0o100644) << 16
             archive.writestr(info, (root / name).read_bytes())
     hashes["sentry-bridge-source.zip"] = sha256(bundle / "sentry-bridge-source.zip")
-    (bundle / "SHA256SUMS").write_text("".join(f"{hashes[name]}  {name}\n" for name in DISTRIBUTION_ASSETS), encoding="ascii")
-    manifest = {"tag": tag, "versionCode": apk["versionCode"], "certificateSha256": CERTIFICATE,
-                "assets": hashes, "sources": sources, "validation": tests,
-                "hardwareValidated": False}
+    (bundle / "SHA256SUMS").write_text("".join(f"{hashes[name]}  {name}\n" for name in distribution), encoding="ascii")
+    manifest = {"tag": tag, "assets": hashes, "sources": sources, "validation": tests, "hardwareValidated": False}
+    if ios_only:
+        manifest.update(platforms=["ios"], versionName=tag[1:], iosBuild=ios_build)
+    else:
+        manifest.update(versionCode=apk["versionCode"], certificateSha256=CERTIFICATE)
     (bundle / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    if ios_only:
+        verify(bundle, tag=tag)
     return bundle
 
 
@@ -305,18 +323,34 @@ def verify(bundle, tree=None, tag=None):
         raise ValueError("Release manifest tag does not match the requested tag")
     validation = manifest.get("validation", {})
     if (not validation.get("passed") or validation.get("testsRun", 0) == 0
-            or validation.get("failures") or validation.get("errors") or validation.get("skipped")
-            or not validation.get("smokePassed") or not validation.get("controlSmokePassed")
-            or not validation.get("guiSmokePassed") or validation.get("fuzzIterations", 0) < 100000 or not validation.get("sanitizer")):
+            or validation.get("failures") or validation.get("errors") or validation.get("skipped")):
         raise ValueError("Release manifest does not contain complete passing validation")
-    if manifest.get("certificateSha256") != CERTIFICATE or validation.get("sources") != manifest.get("sources"):
+    ios_only = manifest.get("platforms") == ["ios"]
+    if "platforms" in manifest and not ios_only:
+        raise ValueError("Unsupported release platforms")
+    if ios_only:
+        if validation.get("hostModesPassed", 0) < 16 or validation.get("uiTestsPassed", 0) < 1:
+            raise ValueError("iOS release requires native host and simulator validation")
+        if manifest.get("versionName") != manifest["tag"][1:]:
+            raise ValueError("iOS release version differs from its tag")
+        distribution = IOS_DISTRIBUTION_ASSETS
+    else:
+        if (not validation.get("smokePassed") or not validation.get("controlSmokePassed")
+                or not validation.get("guiSmokePassed") or validation.get("fuzzIterations", 0) < 100000 or not validation.get("sanitizer")):
+            raise ValueError("Release manifest does not contain complete passing validation")
+        if manifest.get("certificateSha256") != CERTIFICATE:
+            raise ValueError("Release manifest certificate or tested sources do not match")
+        distribution = DISTRIBUTION_ASSETS
+    if validation.get("sources") != manifest.get("sources"):
         raise ValueError("Release manifest certificate or tested sources do not match")
-    if set(manifest["assets"]) != set(DISTRIBUTION_ASSETS):
+    if set(manifest["assets"]) != set(distribution):
         raise ValueError("Release manifest has an incomplete asset set")
     for name, expected in manifest["assets"].items():
         if sha256(bundle / name) != expected:
             raise ValueError(f"Release asset changed: {name}")
-    checksums = "".join(f"{manifest['assets'][name]}  {name}\n" for name in DISTRIBUTION_ASSETS)
+    if ios_only:
+        check_ipa(bundle / "sentry-bridge.ipa", manifest["iosBuild"], manifest["versionName"], manifest["sources"])
+    checksums = "".join(f"{manifest['assets'][name]}  {name}\n" for name in distribution)
     if (bundle / "SHA256SUMS").read_text() != checksums:
         raise ValueError("SHA256SUMS does not match the release assets")
     try:
@@ -353,6 +387,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     prep = commands.add_parser("prepare")
     prep.add_argument("tag")
+    ios = commands.add_parser("prepare-ios", help="prepare an iOS-only release without rebuilding other platforms")
+    ios.add_argument("tag")
+    ios.add_argument("--validation", type=Path, required=True)
     commands.add_parser("check-checkout", help="fail if line-ending conversion changed any source file")
     check = commands.add_parser("verify")
     check.add_argument("bundle", type=Path)
@@ -362,6 +399,8 @@ def main():
     try:
         if args.command == "prepare":
             print(prepare(ROOT, args.tag))
+        elif args.command == "prepare-ios":
+            print(prepare(ROOT, args.tag, ios_only=True, validation=args.validation))
         elif args.command == "check-checkout":
             check_checkout(ROOT)
             print("Sources match Git byte for byte")

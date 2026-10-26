@@ -77,18 +77,34 @@ availability checks. The review build used Xcode 27.1.
 
 ### Updating the AltStore source at release
 
-`altsource.json` describes the currently published IPA, not an unreleased branch. PR #13 adds the
-When In Use and Always location descriptions and the Time Sensitive notification entitlement.
-Until the next release updates the source, `test_published_source_matches_the_app` therefore fails
-when run against the new app sources. This is a known release-metadata mismatch, not evidence that
-AltStore has failed to install the existing published app.
-
-Build and validate the Sideload IPA from the final release sources, then use `tools/altsource.py update`
-with the prepared release bundle and tag (see `python3 tools/altsource.py --help`). Publish the matching
-IPA and source update together. Do not change the live permission listing early to match an IPA that
-has not been published. AltStore checks the listing against the downloaded app:
+`altsource.json` must describe the IPA offered for download. When an iOS update changes privacy
+permissions or entitlements, publish the matching IPA and source listing together. AltStore checks
+these permissions before installation:
 [AltStore source permissions](https://faq.altstore.io/developers/make-a-source#app-permissions).
-The source-match test must pass against the release sources before the release is considered complete.
+The source-match test must pass against the release sources before the release is complete.
+
+For an iOS-only patch, leave the native and Android versions unchanged. Bump the version in
+`ios/SentryBridge/Info.plist`, build the Sideload IPA, and validate the final sources. Then prepare the
+usual source archive, licenses, checksums and manifest without Windows or Android binaries:
+
+```bash
+python3 tools/release_bundle.py prepare-ios v0.3.1 --validation dist/ios-validation-report.json
+python3 tools/release_bundle.py verify dist/release/v0.3.1 --tag v0.3.1
+python3 tools/altsource.py update dist/release/v0.3.1 v0.3.1
+```
+
+The validation report must pin `source_snapshot()` hashes and record a passing Python suite with no
+skips/errors, at least 16 native host modes, and passing simulator UI checks. The bundle verifier also
+checks the IPA's source report, version, flavor and entitlements. Verify the bundle against the exact
+remote Git tree before uploading, then check the uploaded draft's file set, sizes and SHA-256 digests
+before publishing. `Publish-Release.ps1` remains the full-platform publisher; iOS-only publication uses
+GitHub's draft-release API with the same checks.
+
+Keep an iOS-only release out of GitHub's global Latest slot (`--latest=false`), because released
+Windows and Android apps use that slot to check for updates. Link the new iOS download explicitly in
+the README and update `altsource.json` on master immediately after the IPA becomes public. The source
+listing uses its own version order and does not depend on GitHub's Latest slot. Test
+`tests.test_altsource` against the staged listing before publication and against master afterward.
 
 ## Tests
 

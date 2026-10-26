@@ -199,6 +199,40 @@ class TestReleaseBundle(unittest.TestCase):
         for path in outside:
             self.assertTrue(path.startswith(rb.IPA_SOURCES) or path in rb.IPA_FILES, path)
 
+    def ios_validation(self, **changes):
+        report = {"passed": True, "testsRun": 1, "failures": 0, "errors": 0, "skipped": [],
+                  "hostModesPassed": 16, "uiTestsPassed": 3, "sources": rb.source_snapshot(self.root)}
+        report.update(changes)
+        path = self.dist / "ios-validation.json"
+        path.write_text(json.dumps(report))
+        return path
+
+    def test_ios_only_release_keeps_other_platform_versions_and_assets_out(self):
+        (self.root / "core/sbcore.h").write_text('#define SB_VERSION "0.1.2"\n')
+        (self.root / "android/app/build.gradle.kts").write_text('versionName = "0.1.2"\n')
+        for name in rb.ASSETS:
+            if name != "sentry-bridge.ipa": (self.dist / name).unlink()
+        self.write_ipa()
+        bundle = rb.prepare(self.root, "v0.1.3", ios_only=True, validation=self.ios_validation())
+        manifest = rb.verify(bundle, self.remote_tree(), "v0.1.3")
+        self.assertEqual(manifest["platforms"], ["ios"])
+        self.assertEqual(set(manifest["assets"]), set(rb.IOS_DISTRIBUTION_ASSETS))
+        self.assertNotIn("certificateSha256", manifest)
+        self.assertFalse((bundle / "sentry-bridge.apk").exists())
+        self.assertEqual((self.root / "core/sbcore.h").read_text(), '#define SB_VERSION "0.1.2"\n')
+        manifest["assets"]["sentry-bridge.apk"] = "0" * 64
+        (bundle / "release-manifest.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "incomplete asset set"): rb.verify(bundle)
+
+    def test_ios_only_release_requires_current_passing_host_and_ui_evidence(self):
+        for changes in ({"passed": False}, {"errors": 1}, {"skipped": ["case"]},
+                        {"hostModesPassed": 0}, {"uiTestsPassed": 0}, {"sources": {}}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                rb.prepare(self.root, "v0.1.3", ios_only=True, validation=self.ios_validation(**changes))
+        self.write_ipa(flavor="Lite", report_flavor="Lite")
+        with self.assertRaisesRegex(ValueError, "Sideload"):
+            rb.prepare(self.root, "v0.1.3", ios_only=True, validation=self.ios_validation())
+
     def write_reports(self):
         (self.dist / "test-report.json").write_text(json.dumps(self.tests))
         (self.dist / "android-build-report.json").write_text(json.dumps(self.apk))

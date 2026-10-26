@@ -25,13 +25,14 @@ Sentry (Compatibility Mode)  ──WiFi──▶  Sentry Bridge  ──WiFi─�
 
 ## Download
 
-Get the latest version from the [Releases page](https://github.com/Tehcnological/sentry-bridge/releases).
+**iPhone and iPad: 0.3.1. Windows and Android: 0.3.0.** This patch updates only the iPhone and iPad app.
+All downloads are on the [Releases page](https://github.com/Tehcnological/sentry-bridge/releases).
 
 | Platform | What to download | Guide |
 |---|---|---|
-| Android 8+ | `sentry-bridge.apk` | [Android](docs/Android.md) |
-| Windows 10/11 | `sentry-bridge-gui.exe` | [Windows](docs/Windows.md) |
-| iPhone, iPad (iOS 26+) | `sentry-bridge.ipa`, installed by sideloading | [iPhone and iPad](docs/iOS-Sideload.md) |
+| Android 8+ | [`sentry-bridge.apk`](https://github.com/Tehcnological/sentry-bridge/releases/download/v0.3.0/sentry-bridge.apk) | [Android](docs/Android.md) |
+| Windows 10/11 | [`sentry-bridge-gui.exe`](https://github.com/Tehcnological/sentry-bridge/releases/download/v0.3.0/sentry-bridge-gui.exe) | [Windows](docs/Windows.md) |
+| iPhone, iPad (iOS 26+) | [`sentry-bridge.ipa`](https://github.com/Tehcnological/sentry-bridge/releases/download/v0.3.1/sentry-bridge.ipa), installed by sideloading | [iPhone and iPad](docs/iOS-Sideload.md) |
 | macOS, Linux | no download; unmaintained ([open an issue](https://github.com/Tehcnological/sentry-bridge/issues) if you would use it) | |
 | Small WiFi boards (ESP32-C3, Pico W, Pico 2 W) | build from source; experimental | [Small-board firmware](docs/Firmware.md) |
 
@@ -89,6 +90,8 @@ collision avoidance and does not replace see-and-avoid, required equipment or a 
 No dates, and plans can change. To ask for something or to help,
 [open an issue](https://github.com/Tehcnological/sentry-bridge/issues).
 
+- **Sentry Bridge Lite on the App Store.** A version for iPhone and iPad that uses Bridge Session
+  instead of silent background audio. Not available on the App Store yet.
 - **Several EFBs at once.** Today the app sends to one EFB: on the same device, or on one other
   device. Next is feeding several at the same time, such as the EFB on this tablet plus one or two
   other tablets, on Windows, Android, iPhone and iPad.
