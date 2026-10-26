@@ -82,7 +82,9 @@ against a real receiver in flight. Its warning appears in Sentry Bridge, not in 
 
 Choose **Always** in the app's location permissions for background use. If the app says
 **GPS cross-reference needs location set to Always**, tap **Open Settings** and change the permission.
-Choosing the option alone does not grant permission. iOS shows a location indicator while it is in use.
+Choosing the option alone does not grant permission. If the bridge is still running, the check starts
+when access is granted; if it stopped while you were in Settings, press **Start** again. iOS shows a
+location indicator while it is in use.
 An iPad without its own usable GPS position may leave the check waiting for a device position.
 
 ### Notifications and lost data

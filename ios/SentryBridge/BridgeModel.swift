@@ -62,6 +62,8 @@ enum RunMode { case foreground, audio, session }
     private let location = PhoneLocation()
     private var gpsCheck = GPSCheck()
     private var locationStale = false
+    private var gpsRequestedForRun = false
+    private var gpsStartedAt: Double?
     #if !LITE
     private let audio = SilentAudio()
     #endif
@@ -147,14 +149,18 @@ enum RunMode { case foreground, audio, session }
                 : "Background audio stopped. Keep the app open to keep the bridge running."
         }
         #endif
+        #if DEBUG
+        if testing && ProcessInfo.processInfo.arguments.contains("--ui-test-location") {
+            location.useTestAuthorization(ProcessInfo.processInfo.arguments.contains("--ui-location-always") ? .authorizedAlways : .denied)
+        }
+        #endif
         locationStatus = location.status
         location.onAuthorization = { [weak self] in
-            guard let self else { return }
-            self.locationStatus = self.location.status; self.record("Location access: \(self.locationStatus.rawValue)")
+            self?.refreshLocationAuthorization()
         }
         location.onStopped = { [weak self] reason in
             guard let self, self.busy, self.gpsRunning else { return }
-            self.notify(.locationStopped(reason)); self.gpsWarning = "GPS cross-reference stopped: \(reason)"
+            self.stopGPS(reason: reason)
         }
     }
     /// The chooser's answer. Asks for notifications first, then, for GPS cross-reference, Always location access.
@@ -173,7 +179,7 @@ enum RunMode { case foreground, audio, session }
             guard picked.gpsCheck else { return }
             self.location.requestAlways { [weak self] allowed in
                 guard let self else { return }
-                self.locationStatus = self.location.status; self.record("Location access \(allowed ? "allowed" : "not allowed")")
+                self.refreshLocationAuthorization(); self.record("Location access \(allowed ? "allowed" : "not allowed")")
             }
         }
     }
@@ -295,11 +301,14 @@ enum RunMode { case foreground, audio, session }
         diagnosticLines = []; lastDiagnosticSample = -30
         runMode = mode; gpsCheck = GPSCheck(); gpsStatus = nil; gpsWarning = nil; locationStale = false
         // GPS cross-reference runs with a background method only, and only with location access.
-        gpsRunning = mode != .foreground && choice.gpsCheck && !demo
-        if gpsRunning && location.status != .authorizedAlways && location.status != .authorizedWhenInUse {
-            gpsRunning = false
+        gpsRequestedForRun = mode != .foreground && choice.gpsCheck && !demo
+        refreshLocationAuthorization()
+        if gpsRequestedForRun && !gpsRunning {
             record("GPS cross-reference skipped: no location access")
         }
+        // A pending session can already be hidden when GPS is enabled. Start location and arm its
+        // warning before submitting, not only after the scheduler eventually launches the worker.
+        if !demo { watchdog.tick(now: sbio_now()) }
         record("User Start; flavor=\(flavor.rawValue); mode=\(mode); gpsCheck=\(gpsRunning); requested minutes=\(settings.sessionMinutes)")
         let id = token
         if mode == .session {
@@ -315,13 +324,30 @@ enum RunMode { case foreground, audio, session }
             message = "Background audio could not start (\(error)). " + (gpsRunning ? "GPS cross-reference keeps the bridge running." : "The bridge runs only while the app is open.")
         } else if runMode == .audio { record("Background audio playing") }
         #endif
-        if gpsRunning { location.start() }
+    }
+    private func refreshLocationAuthorization() {
+        locationStatus = location.status
+        record("Location access: \(locationStatus.rawValue)")
+        guard busy, state != "Stopping", gpsRequestedForRun else { return }
+        let allowed = locationStatus == .authorizedAlways || locationStatus == .authorizedWhenInUse
+        if allowed && !gpsRunning {
+            location.start(); gpsRunning = true; gpsStartedAt = sbio_now()
+            gpsCheck = GPSCheck(); gpsStatus = "Starting"; gpsWarning = nil; locationStale = false
+            record("GPS cross-reference location updates started")
+        } else if !allowed && gpsRunning {
+            stopGPS(reason: "Location access was turned off.")
+        }
+    }
+    private func stopGPS(reason: String) {
+        location.stop(); gpsRunning = false; gpsStartedAt = nil; gpsStatus = nil; locationStale = false
+        notify(.locationStopped(reason)); gpsWarning = "GPS cross-reference stopped: \(reason)"
     }
     private func stopKeepAlive() {
         #if !LITE
         audio.stop()
         #endif
-        location.stop(); gpsRunning = false; gpsStatus = nil; gpsWarning = nil
+        location.stop(); gpsRunning = false; gpsRequestedForRun = false; gpsStartedAt = nil
+        gpsStatus = nil; gpsWarning = nil
         watchdog.stop()
     }
     /// Compares positions for the GPS cross-reference. The phone's position is only compared here: it never reaches
@@ -335,8 +361,8 @@ enum RunMode { case foreground, audio, session }
             gpsWarning = gpsCheck.warning
         }
         gpsStatus = gpsCheck.status
-        // Location updates stopped: no fix from iOS for 60 s, counted from the start of the run.
-        let silent = value.elapsed > 60 && (location.latest.map { now - $0.at > 60 } ?? true)
+        // A late permission grant starts a fresh 60 s grace period for location, not for the worker.
+        let silent = gpsStartedAt.map { now - $0 > 60 } == true && (location.latest.map { now - $0.at > 60 } ?? true)
         if silent && !locationStale { notify(.locationStopped("No position from iOS for 60 s.")) }
         locationStale = silent
     }
@@ -349,6 +375,12 @@ enum RunMode { case foreground, audio, session }
     }
     private func requestSession(_ id: UUID) {
         #if DEBUG
+        if testing && ProcessInfo.processInfo.arguments.contains("--hold-session-request") {
+            state = "Requesting session"; return
+        }
+        if testing && ProcessInfo.processInfo.arguments.contains("--accept-test-session") {
+            sessionActive = true; launchWorker(id, duration: gpsRequestedForRun ? nil : sessionLength); return
+        }
         let refuseRegistration = testing && ProcessInfo.processInfo.arguments.contains("--refuse-session-registration")
         #else
         let refuseRegistration = false
@@ -373,7 +405,9 @@ enum RunMode { case foreground, audio, session }
                     }
                 }
                 // With GPS cross-reference on the run outlasts the session; the session itself ends at its length.
-                self.launchWorker(id, duration: self.gpsRunning ? nil : Double(self.settings.sessionMinutes * 60))
+                // A run that requested GPS may gain permission later. Keep its worker untimed and
+                // apply the session limit in the model using the live location state.
+                self.launchWorker(id, duration: self.gpsRequestedForRun ? nil : self.sessionLength)
             }
         }
         guard registered else {
@@ -450,8 +484,13 @@ enum RunMode { case foreground, audio, session }
                 // Each update pushes the watchdog notification ahead; a suspended app stops doing so.
                 if !self.demo { self.watchdog.tick(now: sbio_now()) }
                 self.checkGPS(value)
-                if self.gpsRunning, self.sessionActive, value.elapsed >= Double(self.settings.sessionMinutes * 60) {
-                    self.endSessionKeepRunning("Bridge Session length reached")
+                if self.sessionActive, self.gpsRequestedForRun, value.elapsed >= self.sessionLength {
+                    if self.gpsRunning { self.endSessionKeepRunning("Bridge Session length reached") }
+                    else {
+                        self.task?.setTaskCompleted(success: true); self.task = nil; self.sessionActive = false
+                        self.notify(.sessionEnded(gpsCheck: false))
+                        self.stop(reason: "Bridge Session length reached; forwarding stopped.")
+                    }
                 }
                 if let continued = self.task as? BGContinuedProcessingTask {
                     continued.progress.completedUnitCount = min(Int64(value.elapsed), continued.progress.totalUnitCount)
@@ -491,6 +530,11 @@ enum RunMode { case foreground, audio, session }
         }
     }
     #if DEBUG
+    var keepAliveTestStatus: String { "location=\(location.running) gps=\(gpsRunning) watchdog=\(watchdog.armed) session=\(sessionActive)" }
+    func setTestLocationAllowed(_ allowed: Bool) {
+        guard testing, ProcessInfo.processInfo.arguments.contains("--ui-test-location") else { return }
+        location.useTestAuthorization(allowed ? .authorizedAlways : .denied)
+    }
     /// Intent outcomes, recorded only in UI-test mode so tests can check the dialog text.
     @Published private(set) var intentOutcomes: [String] = []
     #endif
@@ -537,7 +581,14 @@ enum RunMode { case foreground, audio, session }
         }
         UIApplication.shared.isIdleTimerDisabled = false
     }
-    func foregrounded() { record("Scene foregrounded"); locationStatus = location.status; UIApplication.shared.isIdleTimerDisabled = busy && settings.keepAwake }
+    private var sessionLength: Double {
+        #if DEBUG
+        if testing, let value = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--test-session-seconds=") }),
+           let seconds = Double(value.dropFirst("--test-session-seconds=".count)), seconds > 0 { return seconds }
+        #endif
+        return Double(settings.sessionMinutes * 60)
+    }
+    func foregrounded() { record("Scene foregrounded"); refreshLocationAuthorization(); UIApplication.shared.isIdleTimerDisabled = busy && settings.keepAwake }
     private func checkLocalNetwork() {
         guard let localHost = [settings.source, settings.destination].first(where: { !BridgeSettings.isLoopback($0) }) else { return }
         // UDP connect prompts for local network access without transmitting receiver commands.

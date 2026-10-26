@@ -635,6 +635,85 @@ final class BridgeUITests: XCTestCase {
         sleep(2); app.activate()
         XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5), "the fallback must stop when hidden")
     }
+    private func expectKeepAlive(_ app: XCUIApplication, _ value: String, timeout: TimeInterval = 5) {
+        let status = app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "debug.keepAlive", value)).firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: timeout), value)
+    }
+    func testPendingSessionStartsGPSBeforeHiding() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession+gps", "--ui-test-location", "--ui-location-always", "--hold-session-request"])
+        app.buttons["bridge.startStop"].tap()
+        XCTAssertTrue(app.staticTexts["Requesting session"].waitForExistence(timeout: 5))
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false")
+        XCUIDevice.shared.press(.home); sleep(2); app.activate()
+        XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5))
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false")
+        app.buttons["bridge.startStop"].tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=false session=false")
+    }
+    func testPendingSessionWithoutGPSStopsWhenHidden() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession", "--ui-test-location", "--hold-session-request"])
+        app.buttons["bridge.startStop"].tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=true session=false")
+        XCUIDevice.shared.press(.home); sleep(2); app.activate()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+        expectKeepAlive(app, "location=false gps=false watchdog=false session=false")
+    }
+    func testLocationGrantStartsAndRevocationStopsLiveCheck() {
+        let mode = lite ? "bridgeSession+gps" : "backgroundAudio+gps"
+        let app = launch(extraArguments: ["--keep-running=" + mode, "--ui-test-location", "--refuse-session-registration"])
+        app.buttons["bridge.startStop"].tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=true session=false")
+        let allow = app.buttons["debug.allowLocation"], deny = app.buttons["debug.denyLocation"]
+        reveal(allow, in: app); allow.tap()
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false")
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "bridge.alwaysLocation.")).count, 0)
+        reveal(deny, in: app); deny.tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=true session=false")
+        reveal(allow, in: app); allow.tap()
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false")
+        let start = app.buttons["bridge.startStop"]; reveal(start, in: app); start.tap()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+        expectKeepAlive(app, "location=false gps=false watchdog=false session=false")
+    }
+    func testLateLocationGrantOutlastsSessionLimit() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession+gps", "--ui-test-location", "--accept-test-session", "--test-session-seconds=10"])
+        app.buttons["bridge.startStop"].tap()
+        expectKeepAlive(app, "location=false gps=false watchdog=true session=true")
+        let allow = app.buttons["debug.allowLocation"]; reveal(allow, in: app); allow.tap()
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=true")
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false", timeout: 15)
+        XCTAssertTrue(app.buttons["Stop Bridge"].exists, "GPS gained during this run must outlast the session")
+        let start = app.buttons["bridge.startStop"]; reveal(start, in: app); start.tap()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+    }
+    func testSessionLimitWithoutLocationStillStops() throws {
+        try XCTSkipUnless(lite, "Bridge Session is a Lite option")
+        let app = launch(extraArguments: ["--keep-running=bridgeSession+gps", "--ui-test-location", "--accept-test-session", "--test-session-seconds=3"])
+        app.buttons["bridge.startStop"].tap()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Bridge Session length reached")).firstMatch.exists)
+        expectKeepAlive(app, "location=false gps=false watchdog=false session=false")
+    }
+    func testAlwaysLocationNoteHasOneVisibleContext() {
+        let mode = lite ? "bridgeSession+gps" : "backgroundAudio+gps"
+        let app = launch(extraArguments: ["--keep-running=" + mode, "--ui-test-location", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"])
+        let status = app.staticTexts["bridge.alwaysLocation.status"]
+        reveal(status, in: app); XCTAssertTrue(status.exists)
+        let settings = app.buttons["Settings"]; reveal(settings, in: app); settings.tap()
+        let note = app.staticTexts["bridge.alwaysLocation.settings"]
+        reveal(note, in: app, upwards: false); XCTAssertTrue(note.exists)
+        func assertSingleWarning() {
+            XCTAssertFalse(status.exists)
+            XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "bridge.alwaysLocation.")).count, 1)
+            XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "bridge.openLocationSettings.")).count, 1)
+        }
+        assertSingleWarning()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        assertSingleWarning()
+    }
     func testBackgroundAudioKeepsRunningWhenHidden() throws {
         try XCTSkipIf(lite, "Background audio is a Sideload option")
         let app = launch(extraArguments: ["--keep-running=backgroundAudio"])

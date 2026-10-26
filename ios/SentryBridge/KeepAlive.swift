@@ -127,7 +127,19 @@ final class PhoneLocation: NSObject, CLLocationManagerDelegate {
     private(set) var running = false
     private var waiting: ((Bool) -> Void)?
     override init() { super.init(); manager.delegate = self }
-    var status: CLAuthorizationStatus { manager.authorizationStatus }
+    #if DEBUG
+    // UI tests exercise real model transitions without prompting or using the simulator's location.
+    private var testAuthorization: CLAuthorizationStatus?
+    func useTestAuthorization(_ value: CLAuthorizationStatus) {
+        testAuthorization = value; onAuthorization()
+    }
+    #endif
+    var status: CLAuthorizationStatus {
+        #if DEBUG
+        if let testAuthorization { return testAuthorization }
+        #endif
+        return manager.authorizationStatus
+    }
     var hasAlways: Bool { status == .authorizedAlways }
     /// Asks for Always access. done(true) once location may be used; While Using also counts, with iOS
     /// asking later to allow it in the background.
@@ -142,6 +154,9 @@ final class PhoneLocation: NSObject, CLLocationManagerDelegate {
     func start() {
         guard !running else { return }
         running = true; latest = nil
+        #if DEBUG
+        if testAuthorization != nil { return }
+        #endif
         manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         manager.distanceFilter = kCLDistanceFilterNone
         manager.activityType = .airborne
@@ -153,6 +168,9 @@ final class PhoneLocation: NSObject, CLLocationManagerDelegate {
     func stop() {
         guard running else { return }
         running = false; latest = nil
+        #if DEBUG
+        if testAuthorization != nil { return }
+        #endif
         manager.stopUpdatingLocation(); manager.allowsBackgroundLocationUpdates = false
     }
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -169,6 +187,9 @@ final class PhoneLocation: NSObject, CLLocationManagerDelegate {
         if running { onStopped("iOS paused location updates.") }
     }
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        #if DEBUG
+        if testAuthorization != nil { return }
+        #endif
         onAuthorization()
         if let waiting, manager.authorizationStatus != .notDetermined {
             self.waiting = nil

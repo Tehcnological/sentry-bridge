@@ -140,6 +140,11 @@ struct BridgeView: View {
             .disabled(model.state == "Stopping").accessibilityIdentifier("bridge.startStop")
             if let message = model.message { Label(message, systemImage: "exclamationmark.triangle").font(.callout) }
             #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--ui-test-location") {
+                Text(model.keepAliveTestStatus).font(.caption2).accessibilityIdentifier("debug.keepAlive")
+                Button("Grant test Always location") { model.setTestLocationAllowed(true) }.accessibilityIdentifier("debug.allowLocation")
+                Button("Revoke test location") { model.setTestLocationAllowed(false) }.accessibilityIdentifier("debug.denyLocation")
+            }
             if !model.intentOutcomes.isEmpty {
                 Text(model.intentOutcomes.joined(separator: " | ")).font(.caption2).accessibilityIdentifier("debug.intentOutcomes")
             }
@@ -177,7 +182,7 @@ struct BridgeView: View {
                 Label(alert, systemImage: "location.slash").foregroundStyle(warning)
                     .accessibilityIdentifier("bridge.gpsWarning")
             }
-            if model.needsAlwaysLocation { alwaysLocationNote }
+            if model.needsAlwaysLocation && !showSettings { alwaysLocationNote(context: "status") }
             if model.snapshot.mode == 2 { Label(model.settings.restoreCompatibility ?? true ? "Encrypted receiver stream. Compatibility Mode is requested automatically." : "Encrypted receiver stream. Turn on Restore Compatibility Mode in Settings.", systemImage: "lock.trianglebadge.exclamationmark") }
             if let request = model.snapshot.compatibilityRequest { Text(request).font(.caption).accessibilityIdentifier("bridge.compatibilityRequest") }
             // Rebind results stay visible here; core log messages can replace the status detail.
@@ -187,12 +192,12 @@ struct BridgeView: View {
         }.listRowBackground(surface)
     }
     /// Shown while GPS cross-reference is chosen and location is not set to Always.
-    @ViewBuilder private var alwaysLocationNote: some View {
+    @ViewBuilder private func alwaysLocationNote(context: String) -> some View {
         Label("GPS cross-reference needs location set to Always.", systemImage: "location.slash").foregroundStyle(warning)
-            .accessibilityIdentifier("bridge.alwaysLocation")
+            .accessibilityIdentifier("bridge.alwaysLocation." + context)
         Button("Open Settings") {
             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-        }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.openLocationSettings")
+        }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.openLocationSettings." + context)
     }
     @ViewBuilder private var setupSections: some View {
         Section("EFB setup") {
@@ -247,7 +252,7 @@ Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this d
             }
             Text(keepRunningCaption).font(.caption).foregroundStyle(secondary)
             if let note = model.keepRunningNote { Text(note).font(.caption).foregroundStyle(warning) }
-            if model.needsAlwaysLocation { alwaysLocationNote }
+            if model.needsAlwaysLocation { alwaysLocationNote(context: "settings") }
             Toggle("Keep screen awake while visible", isOn: $model.settings.keepAwake).disabled(model.busy)
             NavigationLink("Licenses") { LicensesView() }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.licenses")
             Link("Compatibility and limitations", destination: Self.compatibilityURL).foregroundStyle(linkInk)
