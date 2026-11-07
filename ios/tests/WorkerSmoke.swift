@@ -58,7 +58,7 @@ import Foundation
         guard session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")) == "Receiver silent 8 s • 2/60 min" else { print("FAIL: silent subtitle \(session.sessionSubtitle(minutes: 60, locale: Locale(identifier: "en_US")))"); exit(1) }
         if mode == "keep-running" { keepRunningChecks(); return }
         if mode == "gps-isolation" { gpsIsolation(settings, phoneLat: Double(CommandLine.arguments[4])!, phoneLon: Double(CommandLine.arguments[5])!) }
-        if mode == "rules" { ruleChecks(fixtures: CommandLine.arguments[4]); return }
+        if mode == "rules" { routeChecks(); ruleChecks(fixtures: CommandLine.arguments[4]); return }
         if mode == "follow" { followChecks(settings); followChecks(settings, refused: true); return }
         if mode == "sweep" { sweepChecks(settings); discoveryListChecks(); return }
         if mode == "follow-end" { followEndChecks(settings); return }
@@ -320,6 +320,44 @@ import Foundation
     static func check(_ condition: Bool, _ message: @autoclosure () -> String) {
         if !condition { print("FAIL: \(message())"); exit(1) }
     }
+    /// Typed and saved EFB addresses. Every failing check is printed before the mode fails.
+    static func routeChecks() {
+        var failures: [String] = []
+        func expect(_ condition: Bool, _ message: String) { if !condition { failures.append(message) } }
+        // One device, one entry: Add stores the usual dotted form, so a device typed with leading zeros or pasted
+        // with a newline is the same entry, probed and followed like any other.
+        var typed = BridgeSettings()
+        expect(typed.addEFB("192.168.4.20\n") == nil, "a pasted trailing newline must be trimmed: \(typed.addresses ?? [])")
+        expect(typed.addEFB("192.168.004.021") == nil && typed.addresses?.last == "192.168.4.21", "leading zeros must be stored as 192.168.4.21: \(typed.addresses ?? [])")
+        expect(typed.addEFB("192.168.4.021") == "192.168.4.21: listed twice.", "the same device written with a leading zero must be refused as listed twice")
+        var zeros = BridgeSettings(); zeros.destination = "192.168.004.020"; zeros.thisDevice = nil; zeros.addresses = nil
+        zeros.upgradeRoute()
+        expect(zeros.addresses == ["192.168.4.20"], "a v0.3.x destination with leading zeros must upgrade to 192.168.4.20: \(zeros.addresses ?? [])")
+        // Only settings saved before several EFBs are rebuilt from their destination; a missing new field alone
+        // takes its default and keeps the other.
+        var noSwitch = BridgeSettings(); noSwitch.destination = nil; noSwitch.thisDevice = nil; noSwitch.addresses = ["192.168.4.30"]
+        noSwitch.upgradeRoute()
+        expect(noSwitch.thisDevice == true && noSwitch.addresses == ["192.168.4.30"], "addresses without thisDevice must be kept: \(String(describing: noSwitch.thisDevice)) \(noSwitch.addresses ?? [])")
+        var noList = BridgeSettings(); noList.destination = nil; noList.thisDevice = false; noList.addresses = nil
+        noList.upgradeRoute()
+        expect(noList.thisDevice == false && noList.addresses == [], "thisDevice off without addresses must stay off: \(String(describing: noList.thisDevice)) \(noList.addresses ?? [])")
+        // Saved settings still carry destination (the first destination), which builds before several EFBs need to
+        // read the saved settings at all; reading them back here changes nothing.
+        func savedDestination(_ settings: BridgeSettings) -> Any? {
+            (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as? [String: Any])?["destination"] as Any?
+        }
+        var other = BridgeSettings(); other.setThisDevice(false); _ = other.addEFB("192.168.4.40"); _ = other.addEFB("192.168.4.41")
+        var none = BridgeSettings(); none.setThisDevice(false)
+        expect(savedDestination(BridgeSettings()) as? String == "127.0.0.1", "This device saves destination 127.0.0.1: \(String(describing: savedDestination(BridgeSettings())))")
+        expect(savedDestination(other) as? String == "192.168.4.40", "other devices save the first address as destination: \(String(describing: savedDestination(other)))")
+        expect(savedDestination(none) as? String == "", "no destination saves an empty one: \(String(describing: savedDestination(none)))")
+        if var back = try? JSONDecoder().decode(BridgeSettings.self, from: JSONEncoder().encode(other)) {
+            back.upgradeRoute()
+            expect(back.thisDevice == false && back.addresses == ["192.168.4.40", "192.168.4.41"], "a saved route read back must not change: \(back.addresses ?? [])")
+        } else { expect(false, "saved settings must decode") }
+        guard failures.isEmpty else { failures.forEach { print("FAIL: \($0)") }; exit(1) }
+        print("PASS: typed addresses stored in dotted form, saved routes upgraded and kept, destination saved for older builds")
+    }
     /// Readings (tests/data/stats-cases.json, shared with desktop and Android), the /24 rule, the sweep with a
     /// stubbed probe and its cancellation, and the follow rule. Nothing here touches the network.
     static func ruleChecks(fixtures: String) {
@@ -415,10 +453,10 @@ import Foundation
         var settings = original
         settings.thisDevice = false; settings.addresses = ["192.0.2.10"]; settings.outputPort = "4000"; settings.discoveryPort = "0"
         let lock = NSLock()
-        var devices: Set<String> = ["192.0.2.10"], checks = 0, probes = 0, checked: [String] = []
+        var devices: Set<String> = ["192.0.2.10"], checks = 0, probes = 0, checked: [String] = [], kinds: [String] = []
         let worker = BridgeWorker(followCheckS: 0.2, local: "192.0.2.5", refusesSwitch: refused) { addresses, _ in
             lock.lock(); defer { lock.unlock() }
-            probes += 1
+            probes += 1; kinds.append(addresses.count == 1 ? "check" : "sweep")
             if addresses.count == 1 { checked.append(addresses[0]) }
             let answers = addresses.map { devices.contains($0) }
             if addresses.count == 1 { checks += 1; if checks == 1 { devices = ["192.0.2.20"] } }  // answered once, then moved
@@ -454,6 +492,12 @@ import Foundation
         lock.lock(); let checkCount = checks, lastChecked = checked.last; lock.unlock()
         check(checkCount >= 4, "the follower stopped checking after the switch")
         check(lastChecked == (refused ? "192.0.2.10" : "192.0.2.20"), "checked \(lastChecked ?? "nothing") after the switch")
+        if refused {
+            // A refused switch is not a switch: 192.0.2.10 is still silent, so every later check sweeps again
+            // instead of counting two new misses first.
+            lock.lock(); let order = Array(kinds.drop { $0 != "sweep" }); lock.unlock()
+            check(!zip(order, order.dropFirst()).contains { $0 == "check" && $1 == "check" }, "after a refused switch a check went without a sweep: \(order)")
+        }
         worker.stop()
         check(finished.wait(timeout: .now() + 1) == .success, "Stop timeout with a follower")
         lock.lock(); let after = probes; lock.unlock()

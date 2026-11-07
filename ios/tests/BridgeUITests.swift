@@ -42,14 +42,14 @@ final class BridgeUITests: XCTestCase {
             return false
         }
     }
-    /// Sets the This device switch, tapping the control itself (a tap on a Form row's centre may not toggle it).
+    /// Sets the This device switch with one tap on the switch control itself (a tap on a Form row's centre may
+    /// not toggle it), then waits for the value.
     private func setThisDevice(_ on: Bool, in app: XCUIApplication) {
-        let toggle = app.switches["bridge.thisDevice"]
+        let toggle = app.switches["bridge.thisDevice"], want = on ? "1" : "0"
         reveal(toggle, in: app)
-        for _ in 0..<3 where toggle.value as? String != (on ? "1" : "0") {
-            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
-        }
-        XCTAssertEqual(toggle.value as? String, on ? "1" : "0", "This device switch")
+        if toggle.value as? String != want { (toggle.switches.firstMatch.exists ? toggle.switches.firstMatch : toggle).tap() }
+        let set = expectation(for: NSPredicate(format: "value == %@", want), evaluatedWith: toggle)
+        wait(for: [set], timeout: 5)
     }
     /// Types an EFB address and taps Add (Return adds too; replaceText retries on a value mismatch, so it
     /// must not submit).
@@ -608,6 +608,13 @@ final class BridgeUITests: XCTestCase {
         XCTAssertTrue(listedEFB("192.0.2.10", in: app).waitForExistence(timeout: 5))
         addEFB("192.0.2.10", in: app)
         XCTAssertTrue(app.staticTexts["192.0.2.10: listed twice."].waitForExistence(timeout: 5))
+        // Closing Find EFB clears an Add error, so one from its list never stays under the address field.
+        let find = app.buttons["bridge.findEFB"]
+        reveal(find, in: app); find.tap()
+        XCTAssertTrue(app.buttons["Exit"].waitForExistence(timeout: 5))
+        app.buttons["Exit"].tap()
+        XCTAssertTrue(find.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["192.0.2.10: listed twice."].waitForNonExistence(timeout: 5), "Exit from Find EFB must clear the Add error")
         let field = app.textFields["EFB IPv4 address"]
         reveal(field, in: app)
         replaceText(in: field, with: "192.0.2.11", app: app)
