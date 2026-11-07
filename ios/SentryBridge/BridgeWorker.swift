@@ -3,13 +3,13 @@ import Foundation
 struct BridgeSettings: Codable {
     var source = "192.168.4.1"
     var inputPort = "4000"
-    /// Settings saved before several EFBs: the one destination. upgradeRoute() moves it into thisDevice and
-    /// addresses; nothing else reads it.
-    var destination: String?
+    /// The first destination, kept for builds before several EFBs (v0.3.x), which cannot read saved settings
+    /// without it. upgradeRoute() reads it from those builds' settings; nothing else does.
+    var destination: String? = "127.0.0.1"
     /// This device (loopback) and the EFB addresses on other devices; every one uses outputPort. Optional
     /// so older saved settings still decode; upgradeRoute() fills them.
-    var thisDevice: Bool? = true
-    var addresses: [String]? = []
+    var thisDevice: Bool? = true { didSet { destination = destinations.first ?? "" } }
+    var addresses: [String]? = [] { didSet { destination = destinations.first ?? "" } }
     var outputPort = "4000"
     static let sessionLengths = [60, 120, 180, 240]
     var sessionMinutes = 240
@@ -23,13 +23,18 @@ struct BridgeSettings: Codable {
     var restoreCompatibility: Bool? = true
     static let maxAddresses = 16
     /// Settings saved before several EFBs: a loopback destination becomes This device, any other a one-address
-    /// list (none when it was still empty).
+    /// list (none when it was still empty). Without a destination, a missing field takes its default.
     mutating func upgradeRoute() {
         guard addresses == nil || thisDevice == nil else { return }
-        let old = destination ?? "127.0.0.1"
+        guard let old = destination else { thisDevice = thisDevice ?? true; addresses = addresses ?? []; return }
         thisDevice = Self.isLoopback(old)
-        addresses = thisDevice == true || old.isEmpty ? [] : [old]
-        destination = nil
+        addresses = thisDevice == true || old.isEmpty ? [] : [Self.canonical(old) ?? old]
+    }
+    /// The usual dotted form of a numeric IPv4 address (no leading zeros), or nil when it is not one.
+    static func canonical(_ address: String) -> String? {
+        var ip: UInt32 = 0
+        guard sb_parse_ipv4(address, &ip) == 1 else { return nil }
+        return "\(ip >> 24).\(ip >> 16 & 255).\(ip >> 8 & 255).\(ip & 255)"
     }
     /// Where this route sends, This device first.
     var destinations: [String] { (thisDevice != false ? ["127.0.0.1"] : []) + (addresses ?? []) }
@@ -38,12 +43,12 @@ struct BridgeSettings: Codable {
     mutating func setThisDevice(_ on: Bool) { thisDevice = on; outputPort = on ? inputPort : "4000" }
     /// Adds an EFB address (typed or found); nil when added, else why not (tools/routes.py and web/app.js wording).
     mutating func addEFB(_ text: String) -> String? {
-        let address = text.trimmingCharacters(in: .whitespaces), list = addresses ?? []
-        if address.isEmpty { return "Enter the EFB device's IPv4 address." }
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines), list = addresses ?? []
+        if typed.isEmpty { return "Enter the EFB device's IPv4 address." }
+        let address = Self.canonical(typed) ?? typed
         if list.contains(address) { return "\(address): listed twice." }
         if list.count >= Self.maxAddresses { return "Up to \(Self.maxAddresses) EFB addresses." }
-        var ip: UInt32 = 0
-        guard sb_parse_ipv4(address, &ip) == 1 else { return "\(address): Enter a valid IPv4 address, not a hostname." }
+        guard Self.canonical(typed) != nil else { return "\(address): Enter a valid IPv4 address, not a hostname." }
         guard sbio_efb_candidate(address, UInt16(outputPort) ?? 0, source, UInt16(inputPort) ?? 0) != 0 else {
             return "\(address): Use the other EFB device's unicast IPv4 address."
         }

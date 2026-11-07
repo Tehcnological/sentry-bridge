@@ -133,6 +133,12 @@ import Foundation
         dispatchMain()
     }
     static func fail(_ message: String) -> Never { print("FAIL: \(message)"); exit(1) }
+    /// Settings as an app reads them back: default settings saved, then the JSON changed (nil removes a key).
+    static func saved(_ change: (inout [String: Any]) -> Void) -> BridgeSettings {
+        var json = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(BridgeSettings())) as! [String: Any]
+        change(&json)
+        return try! JSONDecoder().decode(BridgeSettings.self, from: JSONSerialization.data(withJSONObject: json))
+    }
     /// The keep-running chooser's triggers and settings migration, the refused-session fallback, the
     /// watchdog's scheduling and removal, and the GPS cross-reference rule.
     static func keepRunningChecks() {
@@ -148,11 +154,11 @@ import Foundation
         let v030 = Data(#"{"source":"192.168.4.1","inputPort":"4000","destination":"192.168.4.20","outputPort":"4000","sessionMinutes":120,"keepAwake":true,"experiment":false,"discoveryPort":"63093","restoreCompatibility":true}"#.utf8)
         guard var old = try? JSONDecoder().decode(BridgeSettings.self, from: v030), old.destination == "192.168.4.20", old.sessionMinutes == 120, !old.experiment else { fail("v0.3.0 settings must decode") }
         old.upgradeRoute()
-        guard old.thisDevice == false, old.addresses == ["192.168.4.20"], old.destination == nil else { fail("a v0.3.0 Other device route must become a one-address list") }
+        guard old.thisDevice == false, old.addresses == ["192.168.4.20"], old.destination == "192.168.4.20" else { fail("a v0.3.0 Other device route must become a one-address list") }
         for (destination, thisDevice) in [("127.0.0.1", true), ("", false)] {
-            var saved = BridgeSettings(); saved.destination = destination; saved.thisDevice = nil; saved.addresses = nil
-            saved.upgradeRoute()
-            guard saved.thisDevice == thisDevice, saved.addresses == [] else { fail("upgrade of destination '\(destination)'") }
+            var upgraded = saved { $0["destination"] = destination; $0["thisDevice"] = nil; $0["addresses"] = nil }
+            upgraded.upgradeRoute()
+            guard upgraded.thisDevice == thisDevice, upgraded.addresses == [] else { fail("upgrade of destination '\(destination)'") }
         }
         var current = BridgeSettings(); current.thisDevice = false; current.addresses = ["192.168.4.30"]; current.upgradeRoute()
         guard current.thisDevice == false, current.addresses == ["192.168.4.30"] else { fail("a current route must not be rewritten") }
@@ -330,15 +336,15 @@ import Foundation
         expect(typed.addEFB("192.168.4.20\n") == nil, "a pasted trailing newline must be trimmed: \(typed.addresses ?? [])")
         expect(typed.addEFB("192.168.004.021") == nil && typed.addresses?.last == "192.168.4.21", "leading zeros must be stored as 192.168.4.21: \(typed.addresses ?? [])")
         expect(typed.addEFB("192.168.4.021") == "192.168.4.21: listed twice.", "the same device written with a leading zero must be refused as listed twice")
-        var zeros = BridgeSettings(); zeros.destination = "192.168.004.020"; zeros.thisDevice = nil; zeros.addresses = nil
+        var zeros = saved { $0["destination"] = "192.168.004.020"; $0["thisDevice"] = nil; $0["addresses"] = nil }
         zeros.upgradeRoute()
         expect(zeros.addresses == ["192.168.4.20"], "a v0.3.x destination with leading zeros must upgrade to 192.168.4.20: \(zeros.addresses ?? [])")
         // Only settings saved before several EFBs are rebuilt from their destination; a missing new field alone
         // takes its default and keeps the other.
-        var noSwitch = BridgeSettings(); noSwitch.destination = nil; noSwitch.thisDevice = nil; noSwitch.addresses = ["192.168.4.30"]
+        var noSwitch = saved { $0["destination"] = nil; $0["thisDevice"] = nil; $0["addresses"] = ["192.168.4.30"] }
         noSwitch.upgradeRoute()
         expect(noSwitch.thisDevice == true && noSwitch.addresses == ["192.168.4.30"], "addresses without thisDevice must be kept: \(String(describing: noSwitch.thisDevice)) \(noSwitch.addresses ?? [])")
-        var noList = BridgeSettings(); noList.destination = nil; noList.thisDevice = false; noList.addresses = nil
+        var noList = saved { $0["destination"] = nil; $0["thisDevice"] = false; $0["addresses"] = nil }
         noList.upgradeRoute()
         expect(noList.thisDevice == false && noList.addresses == [], "thisDevice off without addresses must stay off: \(String(describing: noList.thisDevice)) \(noList.addresses ?? [])")
         // Saved settings still carry destination (the first destination), which builds before several EFBs need to
