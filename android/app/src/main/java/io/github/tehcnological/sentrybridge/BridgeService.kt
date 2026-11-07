@@ -108,10 +108,9 @@ class BridgeService : Service() {
         val discovered = java.util.concurrent.ConcurrentHashMap<InetSocketAddress, Pair<String, Long>>()
         /** True while the running bridge holds the discovery port. */
         @Volatile var announcing = false
-        /** The EFB on another device this run sends to (null for this device or when stopped). */
-        @Volatile var destination: InetSocketAddress? = null
-        /** Set by NativeGui when that EFB moved to a new address (see NativeGui.watchEfb); replaces destination. */
-        @Volatile var followed: InetSocketAddress? = null
+        /** Where this run sends: This device first, then the EFB addresses. Replaced as a whole under routeLock;
+         *  NativeGui.watchEfb replaces an EFB that moved to a new address. */
+        @Volatile var targets: List<InetSocketAddress> = emptyList()
         /** Counts Starts, so a follower only acts for the run it was started for. Changed under routeLock. */
         @Volatile var generation = 0
         val routeLock = Any()
@@ -187,22 +186,22 @@ class BridgeService : Service() {
         var lastSendError = 0L
 
         val saved = s.routes?.let { routes ->
-            runCatching { NativeGui.validateRoutes(org.json.JSONObject(routes), s).getJSONArray("routes").getJSONObject(0) }
+            runCatching { NativeGui.validateRoutes(org.json.JSONObject(routes), s).getJSONArray("routes") }
         }
         // Sharing: an EFB on this device on the receiver port (see bindShared). Receiver tools and
         // captures bind the same way, so they work while that EFB holds the port.
-        val shared = saved?.getOrNull()?.getBoolean("shared") == true
+        val shared = saved?.getOrNull()?.let { r -> (0 until r.length()).any { r.getJSONObject(it).getBoolean("shared") } } == true
         val fixed: List<InetSocketAddress> = if (!forwarding) {
             emptyList()  // receiver tools and captures never send, so they do not depend on EFB routes
         } else if (saved != null) {
             // Saved routes can stop validating (a network change, or a v0.1 broadcast route migrated
             // without an address). Report it instead of letting the exception end the process.
-            val route = saved.getOrElse { e ->
+            val routes = saved.getOrElse { e ->
                 SbCore.destroy(h)
-                fail("${e.message ?: "Invalid EFB route."} Check the EFB address and port in Settings, then start again.")
+                fail("${e.message ?: "Invalid EFB route."} Check the EFB addresses and port, then start again.")
                 return
             }
-            listOf(InetSocketAddress(route.getString("address"), route.getInt("port")))
+            (0 until routes.length()).map { routes.getJSONObject(it).let { r -> InetSocketAddress(r.getString("address"), r.getInt("port")) } }
         } else if (s.efbOnThisDevice) {
             listOf(InetSocketAddress(InetAddress.getLoopbackAddress(), s.efbPort))
         } else {
@@ -213,8 +212,7 @@ class BridgeService : Service() {
         val dests = fixed.joinToString(", ") { "${it.address.hostAddress}:${it.port}" }
         synchronized(routeLock) {
             generation++
-            followed = null
-            destination = fixed.singleOrNull()?.takeIf { !it.address.isLoopbackAddress }
+            targets = fixed
         }
 
         fun wifiSocket(): DatagramSocket? {
@@ -230,9 +228,9 @@ class BridgeService : Service() {
 
         fun send(frames: Array<ByteArray>) {
             if (!forwarding || frames.isEmpty()) return
-            for (dest in followed?.let { listOf(it) } ?: fixed) {
+            for (dest in targets) {
                 // A shared route is loopback on the receiver port by design; the rest must not loop back.
-                if (s.routes != null && !shared) {
+                if (s.routes != null && !(shared && dest.address.isLoopbackAddress)) {
                     try { NativeDiagnostics.checkEndpoint(dest.address, dest.port, s.listenPort) }
                     catch (_: IllegalArgumentException) { continue }
                 }
@@ -393,7 +391,7 @@ class BridgeService : Service() {
                         lastRxAgeS = if (lastRx < 0) -1.0 else now - lastRx,
                         heartbeatAgeS = if (lastHeartbeat < 0) -1.0 else now - lastHeartbeat,
                         warning = NativeGui.coWarning ?: NativeGui.powerWarning,
-                        destinations = followed?.let { "${it.address.hostAddress}:${it.port}" } ?: dests, apps = 0, wifi = NativeGui.simulator || wifi != null,
+                        destinations = targets.joinToString(", ") { "${it.address.hostAddress}:${it.port}" }, apps = 0, wifi = NativeGui.simulator || wifi != null,
                     )
                     NativeGui.tick()
                     if (SystemClock.elapsedRealtime() - lastNotify > 5000) {

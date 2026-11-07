@@ -76,6 +76,7 @@ def main():
         assert "contained" in run("disk").stdout
         assert "passed" in run("routes").stdout
         assert "passed" in run("settings").stdout
+        assert "passed" in run("routecases", ROOT / "tests/data/route-cases.json").stdout
         # The shared bind to this host's own address (it stands in for the Sentry) after a late WiFi callback.
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect(("192.0.2.1", 9))  # selects a route; sends nothing
@@ -133,7 +134,7 @@ def main():
         assert json.loads(run("weather", pcapng, pcapng, 4000, 4001).stdout) == compare(pcapng, pcapng)
         pcapng.write_bytes(body[:-5])
         assert run("analyze", pcapng, 4000, okay=False).returncode != 0
-        print("Android Kotlin diagnostics: receiver log names as sentry_ctl, GPS-only mode parity, notification warning, heartbeat GPS freshness, complete-heartbeat detection, Exit during jobs, a slow WebSocket handshake and a quiet WebSocket, shared receiver sensor cases, EFB follow rule, and contained disk failure; 100 CRC/framing comparisons; JSONL/pcap/pcapng weather parity; truncated capture rejection passed.")
+        print("Android Kotlin diagnostics: receiver log names as sentry_ctl, GPS-only mode parity, notification warning, heartbeat GPS freshness, complete-heartbeat detection, Exit during jobs, a slow WebSocket handshake and a quiet WebSocket, shared receiver sensor cases, shared route cases, EFB follow rule, and contained disk failure; 100 CRC/framing comparisons; JSONL/pcap/pcapng weather parity; truncated capture rejection passed.")
 
 
 if __name__ == "__main__":
