@@ -6,9 +6,10 @@ section for your device to understand what works and what still needs testing.
 
 ## All platforms
 
-- **One EFB at a time.** Sentry Bridge sends to one destination: an EFB on the same device, or one
-  other device on the Sentry's WiFi. It cannot feed this device and another device together, or
-  several devices. With **This device**, only one EFB app on that device receives the traffic.
+- **Several EFBs on Windows and Android.** The bridge sends to up to 16 other devices on the Sentry's
+  WiFi at once, plus, on Windows, an EFB on the same computer (**This device**), all on one EFB port.
+  With **This device**, only one EFB app on that device receives the traffic. The iPhone and iPad app
+  still feeds one EFB at a time: on the same device, or one other device.
 - **EFBs receive traffic and GPS.** Weather data is passed on, but weather display in EFBs has not
   been confirmed yet.
 - **No attitude (AHRS), CO, temperature, air-pressure or battery readings in the EFB.** Compatibility Mode does not
@@ -126,12 +127,15 @@ Focus also remain untested on hardware.
 - Garmin Pilot for Android does not accept GDL90 input at all. On Android, use an EFB with GDL90 input,
   such as FltPlan Go.
 - Keep the bridge's notification visible; battery savers that stop background apps also stop the bridge.
-- If the EFB device rejoins the WiFi with a new address, the bridge switches to it when it is the only
-  other device on the WiFi. Otherwise the bridge log says so; choose the EFB with **Find EFB**.
+- The bridge checks each listed EFB every 30 seconds. If one EFB device rejoins the WiFi with a new
+  address, the bridge replaces its address when exactly one unlisted device answers on the WiFi. With
+  none or several, or when several listed EFBs stop answering at once, nothing changes and the bridge
+  log says so; choose the EFB with **Find EFB**.
 
 ## Windows
 
-- Enter the EFB's address and port (Custom GDL90).
+- Add each EFB's address, and set the EFB port in Settings (Custom GDL90). Several EFBs are followed
+  to new addresses the same way as on Android.
 - Allow Sentry Bridge through the firewall on the Sentry's WiFi network. Windows usually treats that
   network as Public.
 - An EFB on the same computer shares UDP port 4000 with the bridge.

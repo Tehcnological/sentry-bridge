@@ -1,7 +1,7 @@
 # Android
 
 Requires Android 8 or newer. The app runs in the background with a notification and sends traffic to
-one EFB on **another device**, such as an iPad. It feeds one device at a time. An EFB on the same phone cannot receive from it; see
+EFBs on **other devices**, such as an iPad, up to 16 at once. An EFB on the same phone cannot receive from it; see
 [Compatibility](Compatibility.md#android).
 
 ## Install
@@ -14,18 +14,18 @@ Updates install over the previous version and keep your settings.
 ## Set up
 
 1. Connect this phone and the EFB device to the Sentry's WiFi (named like `SentryPlus_XXXX`).
-2. Open **Sentry Bridge**. Enter the EFB device's IP address, or tap **Find EFB** and then **Use** next
-   to your EFB.
+2. Open **Sentry Bridge**. Add each EFB device's IP address, or tap **Find EFB** and then **Add** next
+   to each EFB.
 3. Tap **Start**.
 4. In the EFB, select a **Stratux** or **GDL90** device on UDP port 4000.
 
 **Find EFB** lists EFBs that announce themselves on the WiFi, and other devices on it as "Device". If
 yours does not appear, find its IP address in the EFB device's WiFi details.
 
-The EFB device's address can change when it rejoins the WiFi, for example after the Sentry restarts. The
-bridge checks the EFB every 30 seconds. If it stops answering and exactly one other device is on the
-Sentry's WiFi, the bridge switches to that device by itself and notes it in the log. With several
-devices, choose the right one with **Find EFB**.
+An EFB device's address can change when it rejoins the WiFi, for example after the Sentry restarts. The
+bridge checks every listed EFB every 30 seconds and shows each as answering, not answering or not seen
+yet. If one stops answering and exactly one unlisted device answers on the Sentry's WiFi, the bridge
+replaces that address by itself and notes it in the log. Otherwise, choose the right one with **Find EFB**.
 
 ## Settings
 
