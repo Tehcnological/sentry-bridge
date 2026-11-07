@@ -25,9 +25,10 @@ const document = { activeElement: null, querySelectorAll: () => [], body: { clas
 $("host").value = "windows";
 let live = true, checked = false, revision = 0, shownRoute = "", status = null, pending = false, discoveryRoute;
 const MAX_EFBS = 16;
-let efbAddresses = [], routeLocked = false, lastFound = [];
+let efbAddresses = [], routeLocked = false, lastFound = [], shownEfbs = "";
 function element(tag, text, className) { return {tag, text, className, children: [], dataset: {}, disabled: false,
-  append(...c) { this.children.push(...c); }, addEventListener(type, fn) { this["on" + type] = fn; }}; }
+  append(...c) { this.children.push(...c); }, addEventListener(type, fn) { this["on" + type] = fn; },
+  setAttribute(name, value) { this[name] = value; }}; }
 const LIMITS_DOC = "", LIMITS_SECTION = {};
 function appearance() {} function sampleState() {}
 const settingsFields = SETTINGS_FIELDS;
@@ -77,6 +78,10 @@ out.summary = $("route-summary").textContent;
 status = {...s, running: true, efbs: [{address: "192.168.4.20", state: "answering"}, {address: "192.168.4.21", state: "not seen yet"}]};
 renderEfbList();
 out.states = $("efb-list").children.map(row => row.children[1].text);
+// An unchanged list keeps its rows between polls, so a tap on Remove is not lost.
+const firstRow = $("efb-list").children[0];
+renderEfbList(); poll(status);
+out.stable = {same: firstRow === $("efb-list").children[0], label: firstRow.children[2]["aria-label"]};
 // Check setup errors that name an address go under the field.
 showAddressError("192.168.4.21: listed twice."); out.checkError = $("address-error").textContent;
 // Reload while forwarding to a saved route: the first poll is not a change.
@@ -166,6 +171,7 @@ class TestWebRouteSync(unittest.TestCase):
         self.assertEqual(out["request"], {"host": "windows", "thisDevice": True, "addresses": ["192.168.4.20", "192.168.4.21"]})
         self.assertEqual(out["summary"], "UDP 4000 · This device + 2 others · shared")
         self.assertEqual(out["states"], ["answering", "not seen yet"])
+        self.assertEqual(out["stable"], {"same": True, "label": "Remove 192.168.4.20"})
         self.assertEqual(out["checkError"], "192.168.4.21: listed twice.")
         self.assertTrue(out["reload"]["checked"], out["reload"])  # restored route, unchanged poll: nothing invalidated
         self.assertEqual(out["reload"]["addresses"], ["192.168.4.30"])

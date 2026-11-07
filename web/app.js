@@ -5,7 +5,7 @@ let discoveryRoute;  // the route shown when Find EFB started; null after a rout
 let live = false, status = null, pending = false, uiError = "", filesRevision = "", jobRevision = "";
 // The EFB setup: This device (127.0.0.1) and up to MAX_EFBS Other device addresses, all on the EFB port.
 const MAX_EFBS = 16;
-let efbAddresses = [], routeLocked = false, lastFound = [];
+let efbAddresses = [], routeLocked = false, lastFound = [], shownEfbs = "";
 function element(tag, text, className) {
   const el = document.createElement(tag);
   if (text !== undefined) el.textContent = text;
@@ -133,14 +133,21 @@ function removeEfb(address) { efbAddresses = efbAddresses.filter(a => a !== addr
 // The list with each address's state while running (from the bridge's checks), and Remove.
 function renderEfbList() {
   const states = status?.running ? status.efbs || [] : [];
-  $("efb-list").replaceChildren(...efbAddresses.map(address => {
-    const row = element("li"), remove = element("button","Remove");
-    row.dataset.address = address;
-    remove.disabled = routeLocked;
-    remove.addEventListener("click",() => removeEfb(address));
-    row.append(element("span",address), element("span",states.find(efb => efb.address === address)?.state ?? "","efb-state"), remove);
-    return row;
-  }));
+  const rows = efbAddresses.map(address => [address, states.find(efb => efb.address === address)?.state ?? ""]);
+  const key = JSON.stringify([rows, routeLocked]);
+  // Rebuilt only on a change: a poll replacing the rows would swallow a tap on Remove and re-announce the list.
+  if (key !== shownEfbs) {
+    shownEfbs = key;
+    $("efb-list").replaceChildren(...rows.map(([address, state]) => {
+      const row = element("li"), remove = element("button","Remove");
+      row.dataset.address = address;
+      remove.disabled = routeLocked;
+      remove.setAttribute("aria-label","Remove "+address);
+      remove.addEventListener("click",() => removeEfb(address));
+      row.append(element("span",address), element("span",state,"efb-state"), remove);
+      return row;
+    }));
+  }
   $("add-efb").disabled = routeLocked || efbAddresses.length >= MAX_EFBS;
   $("efb-limit").hidden = efbAddresses.length < MAX_EFBS;
 }
