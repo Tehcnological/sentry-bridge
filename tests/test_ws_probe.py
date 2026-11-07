@@ -200,7 +200,12 @@ class TestProbe(unittest.TestCase):
             listener.listen(1)
             with self.assertRaisesRegex(ws_probe.WSError, "cancelled"):
                 ws_probe.connect("127.0.0.1", listener.getsockname()[1], "/", cancelled=lambda: True)
-            conn, _ = listener.accept()
+            listener.settimeout(2)
+            try:
+                conn, _ = listener.accept()
+            except socket.timeout:
+                return  # macOS: the cancelled connect never completed, so nothing was sent
+
             with conn:
                 conn.settimeout(.5)
                 self.assertEqual(conn.recv(1024), b"")  # closed without an upgrade request
