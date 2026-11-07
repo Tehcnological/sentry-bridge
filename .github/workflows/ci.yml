@@ -241,7 +241,12 @@ jobs:
       - name: Swift worker on the host
         run: python tools/validate_ios_host.py
       - name: UI tests on the simulator
-        run: xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath build/ios-ui CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
+        run: |
+          # Boot first: a cold simulator can miss the test runner's accessibility deadline.
+          udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name == "iPhone 17")][0].udid')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
 
   # The one required check. Skipped platforms pass here, so docs-only changes can merge.
   ci:
