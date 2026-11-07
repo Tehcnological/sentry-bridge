@@ -6,10 +6,9 @@ section for your device to understand what works and what still needs testing.
 
 ## All platforms
 
-- **Several EFBs on Windows and Android.** The bridge sends to up to 16 other devices on the Sentry's
-  WiFi at once, plus, on Windows, an EFB on the same computer (**This device**), all on one EFB port.
-  With **This device**, only one EFB app on that device receives the traffic. The iPhone and iPad app
-  still feeds one EFB at a time: on the same device, or one other device.
+- **Several EFBs at once.** The bridge sends to up to 16 other devices on the Sentry's WiFi at once,
+  plus, on Windows, iPhone and iPad, an EFB on the same device (**This device**), all on one EFB port.
+  With **This device**, only one EFB app on that device receives the traffic.
 - **EFBs receive traffic and GPS.** Weather data is passed on, but weather display in EFBs has not
   been confirmed yet.
 - **No attitude (AHRS), CO, temperature, air-pressure or battery readings in the EFB.** Compatibility Mode does not
@@ -35,8 +34,8 @@ Requires iOS or iPadOS 26 or later. The app is installed outside the App Store; 
 
 1. Check that Sentry Bridge still opens. If you use a free Apple ID, refresh the app before its
    seven-day expiry; do this while you have an internet connection.
-2. Join the Sentry's WiFi and allow **Local Network** access. Choose **This device** for an EFB on
-   this iPad or iPhone, or **Other device** for an EFB on another device on the same WiFi.
+2. Join the Sentry's WiFi and allow **Local Network** access. Turn on **This device** for an EFB on
+   this iPad or iPhone, and add the address of each EFB on another device on the same WiFi.
 3. In the EFB, select **Stratux** or **GDL90**, normally on port **4000**. Close other EFB apps on
    that device. Start the bridge and confirm that the EFB is receiving fresh data.
 4. Switch to your EFB and check again. Test screen locking on the ground if you intend to use it.
@@ -100,17 +99,18 @@ where the installation allows it, but is not available with a free Apple ID. All
 explicitly in your flying Focus; do not depend on a warning always sounding. If you see a stopped
 bridge warning or stale data in the EFB, open Sentry Bridge, check the WiFi and press **Start** if stopped.
 
-### An EFB on another device
+### EFBs on other devices
 
 **Find EFB** can show both named EFBs and entries labelled **Device**. A Device entry only means
-something answered on the WiFi; it does not prove that an EFB is running there. Confirm the selected
+something answered on the WiFi; it does not prove that an EFB is running there. Confirm each added
 address belongs to your EFB device.
 
-The bridge can follow a device whose address changes after it rejoins the Sentry's WiFi. It first
-needs to have received a reply from the selected device. After two missed checks, it searches again
-and switches only when there is one other answering device. That device might not be your EFB.
-With several devices, or if the EFB never answers, use **Find EFB** or enter its WiFi address yourself.
-Check reception in the EFB after a reconnection.
+The bridge checks each listed EFB every 30 seconds and can follow one whose address changes after it
+rejoins the Sentry's WiFi. It first needs to have received a reply from that device. After two missed
+checks, it searches again and replaces that address only when exactly one unlisted device answers.
+That device might not be your EFB. With none or several, when several listed EFBs stop answering at
+once, or if an EFB never answers, nothing changes; use **Find EFB** or enter its WiFi address yourself.
+Check reception in each EFB after a reconnection.
 
 ### What still needs a real-device check
 

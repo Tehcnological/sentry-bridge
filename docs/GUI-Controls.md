@@ -50,9 +50,10 @@ The iPhone and iPad app uses these controls. The available background choices de
 
 | Control | What it does |
 |---|---|
-| Start / Stop | Starts or stops forwarding to the selected EFB. Stop also ends background audio and location updates |
-| This device / Other device | Chooses an EFB on this iPhone or iPad, or one other device on the Sentry's WiFi |
-| Find EFB | Helps choose the other device. A result called Device is not necessarily an EFB; confirm its address |
+| Start / Stop | Starts or stops forwarding to the listed EFBs. Stop also ends background audio and location updates |
+| This device | Sends to an EFB on this iPhone or iPad as well |
+| EFB addresses | Up to 16 EFB addresses on the Sentry's WiFi, all fed at once. **Add** (or Return) puts an address on the list, **Remove** takes it off. While forwarding, each shows answering, not answering or not seen yet |
+| Find EFB | Lists devices on the Sentry's WiFi; **Add** puts one on the list. A result called Device is not necessarily an EFB; confirm its address |
 | Restore Compatibility Mode | Requests the Sentry mode the bridge needs. Leave it on |
 | Background running | Chooses what keeps forwarding when you switch apps. Stop before changing it |
 | Background audio | Plays silence to help keep the bridge running alongside your EFB; phone calls interrupt it |
