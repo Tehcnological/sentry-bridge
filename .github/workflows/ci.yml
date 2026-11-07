@@ -247,6 +247,12 @@ jobs:
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
           xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
+      - name: UI test failure messages
+        if: failure()
+        run: |
+          # -quiet names the failing tests only; the result bundle has each failure's message and line.
+          result=$(ls -dt build/ios-ui/Logs/Test/*.xcresult | head -1)
+          xcrun xcresulttool get test-results summary --path "$result"
 
   # The one required check. Skipped platforms pass here, so docs-only changes can merge.
   ci:
