@@ -286,6 +286,7 @@ enum RunMode { case foreground, audio, session }
         discoveryToken = UUID(); discoveryWorker?.stop(); discoveryWorker = nil
         discoveryTask?.cancel(); discoveryTask = nil
         findingEFBs = false; discoveryVisible = false; discoveredEFBs = []; discoveryList = DiscoveryList()
+        addressError = nil  // an Add from the list must not leave its error under the address field
     }
     /// mode overrides the chooser's method for this run (Shortcuts, UI tests).
     func start(mode override: RunMode? = nil) {
