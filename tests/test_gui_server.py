@@ -1508,9 +1508,9 @@ class TestGUIHTTP(unittest.TestCase):
         busy = next(line for line in script.splitlines() if 'button.disabled = pending || s.job.state === "running"' in line)
         self.assertNotIn("#quit", busy)
         self.assertIn('$("quit").disabled = pending;', script)
-        # Find EFB only reads announcements: usable while forwarding; Use stays under the route lock.
+        # Find EFB only reads announcements: usable while forwarding; Add stays under the route lock.
         self.assertIn('$("find-efb").disabled = pending || s.job.state === "running";', script)
-        self.assertIn('$("discovered").querySelectorAll("button").forEach(button => button.disabled = locked);', script)
+        self.assertIn('$("discovered").querySelectorAll("button").forEach(button => button.disabled = locked || button.textContent === "Added");', script)
         # Pressing Exit mid-job reaches the adapter, which accepts it and cancels the job.
         def job():
             while True:

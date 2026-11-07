@@ -69,11 +69,12 @@
       <section class="destination-section" aria-labelledby="destination-heading">
         <h2 id="destination-heading" class="group-title">EFB setup</h2>
         <div class="group">
-          <div class="destination-options segmented">
-            <label><input type="radio" name="topology" value="same" id="same"><span>This device</span></label>
-            <label><input type="radio" name="topology" value="network" id="network" checked><span>Other device</span></label>
-          </div>
-          <label class="field" id="address-field">IP address<input id="address" type="text" inputmode="decimal" placeholder="192.168.x.x" maxlength="15" autocomplete="off"></label>
+          <label class="setting-row" id="same-label"><span>This device <small>An EFB on this device</small></span><input id="same" type="checkbox" role="switch"></label>
+          <h3 class="subhead">Other devices</h3>
+          <ul id="efb-list" class="efb-list" aria-live="polite"></ul>
+          <div class="add-row"><label class="field" id="address-field">EFB device IP address<input id="address" type="text" inputmode="decimal" placeholder="192.168.x.x" maxlength="15" autocomplete="off"></label><button id="add-efb">Add</button></div>
+          <p id="address-error" class="field-error" role="alert" hidden></p>
+          <p id="efb-limit" class="note" hidden>Up to 16 EFB addresses.</p>
           <div class="discovery live-controls" id="discovery" hidden><button id="find-efb">Find EFB</button><ul id="discovered" class="discovered" aria-live="polite"></ul></div>
           <details class="setup-details"><summary>Connection details</summary><div><p id="topology-help"></p><p>In the EFB, choose a Stratux or GDL90 device. Ports are in Settings.</p></div></details>
           <div class="route-footer"><span id="route-summary">UDP 4000</span><button id="check">Check setup</button></div>
