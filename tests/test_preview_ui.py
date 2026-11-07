@@ -59,7 +59,7 @@ class TestPreviewUi(unittest.TestCase):
         self.assertEqual(self.request("/api/validate", "POST", "{}", {"Origin": "https://attacker.example", "Content-Type": "application/json"})[0], 403)
 
     def test_validation_api_never_applies_changes(self):
-        request = dict(host="android", topology="same")
+        request = dict(host="android", thisDevice=True, addresses=[])
         status, _, body = self.request("/api/validate", "POST", json.dumps(request), {"Content-Type": "application/json"})
         result = json.loads(body)
         self.assertEqual(status, 200)

@@ -167,6 +167,7 @@ class Controller:
         self.sensors, self.sensors_at, self.sensor_thread = {}, None, None
         self.sensor_session, self.sensor_cancel = None, threading.Event()
         self.follow_session, self.follow_cancel, self.follow_thread = None, threading.Event(), None
+        self.efb_states = {}  # Other device address -> answering / not answering (absent: not seen yet)
         self.runtime = Runtime(settings, self._auto_enable, self._stream, self._contact)
         if upgrade_note:
             self.runtime.log(upgrade_note)
@@ -328,6 +329,7 @@ class Controller:
         if session != self.follow_session or self.follow_thread is None or not self.follow_thread.is_alive():
             self.follow_cancel.set()
             self.follow_session, self.follow_cancel = session, threading.Event()
+            self.efb_states = {}  # each Start begins afresh
             self.follow_thread = threading.Thread(target=self._follow_efb, name="gui-follow", daemon=True,
                                                   args=(self.follow_cancel, session, self.follow_thread))
             self.follow_thread.start()
@@ -361,55 +363,82 @@ class Controller:
         return local
 
     def _follow_efb(self, cancel, session, previous=None):
-        """While forwarding to an EFB on another device, check it still answers. When an EFB that answered
-        before stops answering twice in a row (it rejoined the WiFi with a new address, for example after the
-        receiver restarted), sweep the receiver's network and switch to the one other device that answers.
-        With none or several, only log: the user chooses with Find EFB. It acts only while receiver data
-        arrives, so the computer is on the receiver's network, and starts after the follower it replaces."""
+        """While forwarding to EFBs on other devices, check every listed address at once and keep its state.
+        When exactly one EFB that answered before stops answering twice in a row (it rejoined the WiFi with a
+        new address, for example after the receiver restarted), sweep the receiver's network and replace that
+        address with the one other device that answers and is not listed already. With none or several, or
+        when several listed EFBs are silent at once, only log: the user chooses with Find EFB. It acts only
+        while receiver data arrives, so the computer is on the receiver's network, and starts after the
+        follower it replaces."""
         if previous is not None:
             previous.join()
         forwarding = lambda: (not cancel.is_set() and self.runtime.forwarding and self.runtime.active()
                               and getattr(self.runtime, "started_at", None) == session and not self.closing.is_set())
         receiving = lambda: self.runtime.last_rx is not None and time.monotonic() - self.runtime.last_rx < 10
-        seen, misses, reported = False, 0, None
+        seen, misses, reported, several = set(), {}, set(), False
         while forwarding():
             cancel.wait(EFB_CHECK_S)
             routes = list(getattr(self.runtime, "routes", ()))
-            if (not forwarding() or not receiving() or len(routes) != 1
-                    or ipaddress.IPv4Address(routes[0][0]).is_loopback):
+            others = [(address, port) for address, port in routes if not ipaddress.IPv4Address(address).is_loopback]
+            if not forwarding() or not receiving() or not others:
                 continue
-            current, port = routes[0]
-            if discovery.answers(current):
-                seen, misses, reported = True, 0, None
+            up = discovery.answering([address for address, _ in others], cancelled=lambda: not forwarding())
+            if not forwarding():
                 continue
-            misses += 1
-            if not seen or misses < EFB_MISSES or not forwarding():
-                continue  # never answered (a firewall, perhaps) or only once: keep sending as configured
+            for address, _ in others:
+                if address in up:
+                    seen.add(address)
+                    misses[address] = 0
+                    reported.discard(address)
+                    self.efb_states[address] = "answering"
+                else:
+                    misses[address] = misses.get(address, 0) + 1
+                    if address in seen:  # one that never answered (a firewall, perhaps) stays "not seen yet"
+                        self.efb_states[address] = "not answering"
+            silent = [(address, port) for address, port in others if address in seen and misses[address] >= EFB_MISSES]
+            if len(silent) != 1:
+                if len(silent) > 1 and not several:
+                    self.runtime.log(f"The EFBs at {', '.join(address for address, _ in silent)} stopped answering. "
+                                     "Nothing was changed. Choose one with Find EFB.")
+                several = len(silent) > 1
+                continue
+            several = False
+            current, port = silent[0]
             try:
                 found = discovery.sweep(self.local_address(), exclude={self.runtime.settings["sentryIp"]},
                                         cancelled=lambda: not forwarding())
             except (OSError, ValueError):
                 continue
-            target = discovery.follow_choice([a for a in found if self.efb_candidate(a, port)], current)
-            if target == current:
-                seen, misses, reported = True, 0, None  # it answered again: a short interruption
+            listed = {address for address, _ in routes}
+            target = discovery.follow_choice([a for a in found if self.efb_candidate(a, port)], current, listed)
+            if target == current:  # it answered again: a short interruption
+                misses[current] = 0
+                self.efb_states[current] = "answering"
                 continue
             if target is None:
-                if reported != current and forwarding():
-                    reported = current
+                if current not in reported and forwarding():
+                    reported.add(current)
                     self.runtime.log(f"The EFB at {current} stopped answering. Devices on the receiver's WiFi: "
                                      f"{', '.join(found) or 'none'}. Choose one with Find EFB.")
                 continue
             with self.lock:  # the session and route this decision was made for, or nothing
-                if not forwarding() or list(self.runtime.routes) != [(current, port)]:
+                routes = list(self.runtime.routes)
+                if not forwarding() or (current, port) not in routes or any(address == target for address, _ in routes):
                     continue
-                self.runtime.routes = [(target, port)]
-                if self.routes_request and self.routes_request.get("address") == current:
-                    self.routes_request = {**self.routes_request, "address": target}
+                self.runtime.routes = [(target, port) if route == (current, port) else route for route in routes]
+                addresses = (self.routes_request or {}).get("addresses")
+                if isinstance(addresses, list) and current in addresses:
+                    self.routes_request = {**self.routes_request,
+                                           "addresses": [target if address == current else address for address in addresses]}
                     self.save()
+                seen.discard(current)
+                seen.add(target)
+                misses[target] = 0
+                self.efb_states.pop(current, None)
+                self.efb_states[target] = "answering"
             self.runtime.log(f"The EFB at {current} stopped answering; now sending to {target}, the only other "
                              "device on the receiver's WiFi.")
-            misses, reported = 0, None
+            reported.discard(current)
 
     def _read_sensors(self, cancel, host, port, previous=None):
         """While forwarding, listen to the receiver's /stats WebSocket for battery, CO and temperature.
@@ -463,11 +492,18 @@ class Controller:
         fresh = self.runtime.forwarding and at is not None and time.monotonic() - at <= SENSORS_STALE_S
         return dict(self.sensors) if fresh else None
 
+    def current_efbs(self):
+        """Each Other device address this run sends to, in list order, with its state; none while stopped."""
+        if not self.runtime.forwarding:
+            return []
+        return [{"address": address, "state": self.efb_states.get(address, "not seen yet")}
+                for address, _ in getattr(self.runtime, "routes", ()) if not ipaddress.IPv4Address(address).is_loopback]
+
     def input_shared(self):
         """Whether the saved route shares the receiver port with an EFB on this device, so receiver
         tools (captures, mode checks) bind the port the same way while that EFB holds it."""
         try:
-            return bool(self.routes_request) and validate_route(self.routes_request, self.runtime.settings)["routes"][0]["shared"]
+            return bool(self.routes_request) and any(route["shared"] for route in validate_route(self.routes_request, self.runtime.settings)["routes"])
         except ValueError:
             return False
 
@@ -664,6 +700,7 @@ class Controller:
                      routesRequest=deepcopy(self.routes_request), device=deepcopy(self.device),
                      modeObservation=deepcopy(self.mode_observation), modeRequested=self.mode_requested,
                      update=self.current_update(), updateSupported=True, sensors=self.current_sensors(),
+                     efbs=self.current_efbs(),
                      deviceLogs=list(self.device_logs), job=deepcopy(self.job),
                      artifacts=[dict(id=token, name=item["name"], kind=item["kind"],
                                      ready=item.get("complete", False) and item["path"].is_file() and not (token == self.capture_id and v["recording"]))
@@ -953,7 +990,7 @@ class Controller:
                 settings = validate_settings(request)
                 # This device's route depends only on the ports, so check it with them; another device's
                 # address is checked at Start (it may need the receiver's WiFi).
-                if (self.routes_request or {}).get("topology") == "same":
+                if (self.routes_request or {}).get("thisDevice") is True:
                     validate_route(self.routes_request, settings)
                 self.runtime.settings = settings
                 self.save()
