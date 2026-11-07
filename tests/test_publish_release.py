@@ -149,7 +149,7 @@ class TestPublishRelease(unittest.TestCase):
             shim.chmod(0o755)
         (fake / 'tree.json').write_text(json.dumps({'tree':[
             {'type':'blob','path':p,'sha':s} for p,s in rb.source_snapshot(self.root).items()]}))
-        for name,text in (('workflow','on:\n  workflow_dispatch:\n'), ('bad-workflow','on:\n  push:\n')):
+        for name,text in (('workflow','on:\n  push:\n    branches: [master]\n  pull_request:\n  workflow_dispatch:\n'), ('bad-workflow','on:\n  push:\n')):
             (fake / (name+'.json')).write_text(json.dumps({'content':base64.b64encode(text.encode()).decode()}))
         (self.root / 'notes.md').write_text('Simulated publication test.\n')
         self.fake = fake
@@ -258,7 +258,7 @@ class TestPublishRelease(unittest.TestCase):
     def test_automatic_ci_prevents_any_upload(self):
         result,state = self.run_publisher('automatic')
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('manual-only',result.stderr)
+        self.assertIn('can start on a release or tag',result.stderr)
         self.assertFalse(state.get('created'))
 
     def test_a_repository_without_workflows_can_publish(self):

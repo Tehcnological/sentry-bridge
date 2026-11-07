@@ -12,6 +12,6 @@
 ## How it works and development
 
 - [How it works](How-It-Works.md): what the Sentry sends and what the bridge does with it
-- [Building from source](Building.md), [Command-line tools](Command-Line.md)
+- [Building from source](Building.md), [Continuous integration](CI.md), [Command-line tools](Command-Line.md)
 - [Sentry protocol notes](Sentry-Protocol.md): the Sentry's network interface, as observed
 - [Decoder specification](Decoder-Spec.md), [Reproducible Android builds](Reproducible-Builds.md)

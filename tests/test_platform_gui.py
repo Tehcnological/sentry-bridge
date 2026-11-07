@@ -1,13 +1,7 @@
 """The standalone diagnostic worker of the packaged desktop app."""
-import base64
-from http.client import HTTPConnection
-from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
-import socket
 import tempfile
-import threading
-import time
 import unittest
 
 from tools.desktop_app import tool_worker

@@ -1,4 +1,4 @@
-"""Build and validate the bridge locally on Linux or macOS, without GitHub Actions.
+"""Build and validate the bridge on Linux or macOS, locally or in CI.
 
 Run with the Python environment containing requirements-dev.txt:
     .venv/bin/python tools/test_posix.py
