@@ -187,6 +187,8 @@ final class BridgeWorker: @unchecked Sendable {
     // Where this run sends, This device first. The follower only requests a switch; the UDP loop changes it after
     // the adapter accepted the new address, so a refused switch leaves the route, checks and settings as they were.
     private var targets: [String] = [], pendingDestination: (from: String, to: String)?
+    /// A switch the adapter accepted, for the follow rule to record on its next check; a refused one is never here.
+    private var acceptedSwitch: (from: String, to: String)?
     private var followedAddresses: [String]?, followMessage: String?, efbStates: [String: String] = [:]
     private var compatibilityResult: String?
     private var contactResult: String?
@@ -342,6 +344,7 @@ final class BridgeWorker: @unchecked Sendable {
                 let accepted = !refusesSwitch && sbio_replace_destination(io, next.from, next.to) == 0
                 lock.lock()
                 if accepted {
+                    acceptedSwitch = next
                     targets = targets.map { $0 == next.from ? next.to : $0 }
                     followedAddresses = targets.filter { !BridgeSettings.isLoopback($0) }
                     efbStates[next.from] = nil; efbStates[next.to] = "answering"
@@ -395,7 +398,8 @@ final class BridgeWorker: @unchecked Sendable {
         while helpersRun {
             let wake = sbio_now() + followCheckS
             while helpersRun && sbio_now() < wake { Thread.sleep(forTimeInterval: 0.05) }
-            lock.lock(); let listed = targets, heard = lastReceive; lock.unlock()
+            lock.lock(); let listed = targets, heard = lastReceive, accepted = acceptedSwitch; acceptedSwitch = nil; lock.unlock()
+            if let accepted { rule.followed(from: accepted.from, to: accepted.to) }
             let others = listed.filter { !BridgeSettings.isLoopback($0) }
             guard helpersRun, !others.isEmpty, let heard, sbio_now() - heard < 10 else { continue }
             guard let answers = probe(others), answers.count == others.count, helpersRun else { continue }
@@ -419,7 +423,6 @@ final class BridgeWorker: @unchecked Sendable {
                 guard !stopped, !ended, targets == listed, pendingDestination == nil else { lock.unlock(); continue }
                 pendingDestination = (current, target)
                 lock.unlock()
-                rule.followed(from: current, to: target)
             }
         }
     }
