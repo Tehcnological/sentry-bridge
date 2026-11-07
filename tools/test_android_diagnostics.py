@@ -24,8 +24,8 @@ from tools.check_weather import compare
 
 def main():
     env = json.loads((TOOLS / "android-environment.json").read_text(encoding="utf-8-sig"))
-    java = Path(env["javaHome"]) / "bin/java.exe"
-    javac = Path(env["javaHome"]) / "bin/javac.exe"
+    java = Path(env["javaHome"]) / "bin/java"
+    javac = Path(env["javaHome"]) / "bin/javac"
     stdlib = next((Path(env["gradleUserHome"]) / "caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/2.0.21").rglob("*.jar"))
     dependencies = [ROOT / "android/app/build/tmp/kotlin-classes/release", stdlib,
                     Path(env["sdkRoot"]) / "platforms/android-34/android.jar", TOOLS / "test-deps/json-20240303.jar"]

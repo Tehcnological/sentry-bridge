@@ -382,9 +382,31 @@ def verify(bundle, tree=None, tag=None):
     return manifest
 
 
+def workflow_runs_on_release(text):
+    """True if an Actions workflow can start when a release or its tag is created."""
+    import yaml  # development requirement; only the publisher reaches this
+    workflow = yaml.safe_load(text)
+    triggers = workflow.get("on", workflow.get(True))  # YAML 1.1 reads a bare "on" key as true
+    if isinstance(triggers, str):
+        triggers = [triggers]
+    if isinstance(triggers, list):
+        triggers = dict.fromkeys(triggers)
+    if not isinstance(triggers, dict):
+        return True
+    if {"release", "create"} & triggers.keys():
+        return True
+    if "push" not in triggers:
+        return False
+    # A push filter without a branch filter also matches tags.
+    push = triggers["push"] or {}
+    return bool({"tags", "tags-ignore"} & push.keys()) or not {"branches", "branches-ignore"} & push.keys()
+
+
 def main():
     parser = argparse.ArgumentParser(__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    workflow = commands.add_parser("check-workflow", help="fail if a workflow file can start on a release or tag")
+    workflow.add_argument("path", type=Path)
     prep = commands.add_parser("prepare")
     prep.add_argument("tag")
     ios = commands.add_parser("prepare-ios", help="prepare an iOS-only release without rebuilding other platforms")
@@ -404,6 +426,9 @@ def main():
         elif args.command == "check-checkout":
             check_checkout(ROOT)
             print("Sources match Git byte for byte")
+        elif args.command == "check-workflow":
+            if workflow_runs_on_release(args.path.read_text(encoding="utf-8-sig")):
+                raise ValueError(f"{args.path.name} can start on a release or tag")
         else:
             verify(args.bundle, load(args.tree_json) if args.tree_json else None, args.tag)
             print("Release bundle verified")

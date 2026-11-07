@@ -79,8 +79,8 @@ if (-not $AllowUnmergedCommit) {
     $publishStatus = (($publishCompare.Stdout -join [Environment]::NewLine) | ConvertFrom-Json).status
     if ($publishStatus -notin @('identical', 'ahead')) { throw 'The release commit is not on master. Merge it first, or pass -AllowUnmergedCommit.' }
 }
-# Require manual-only triggers in every workflow on master and the target commit:
-# GitHub can consult the default branch when a new tag is created.
+# No workflow on master or the target commit may start on the release or its tag: releases are built
+# and verified locally. GitHub can consult the default branch when a new tag is created.
 foreach ($publishRef in @('master', $Commit)) {
     $publishListing = Invoke-CapturedNative -FilePath $publishGh -Arguments @('api', "repos/$Repository/contents/.github/workflows?ref=$publishRef")
     if ($publishListing.ExitCode -ne 0) {
@@ -98,9 +98,8 @@ foreach ($publishRef in @('master', $Commit)) {
         $publishWorkflowText = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($publishWorkflowJson.content))
         $publishWorkflowPath = Join-Path $SbScratch 'release-workflow.yml'
         $publishWorkflowText | Set-Content -LiteralPath $publishWorkflowPath -Encoding UTF8
-        # No double quotes in the program: Windows PowerShell 5.1 strips them from native arguments.
-        & $publishPython -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1],encoding=''utf-8-sig'')); triggers=d.get(''on'',d.get(True)); sys.exit(0 if isinstance(triggers,dict) and set(triggers)=={''workflow_dispatch''} else 1)' $publishWorkflowPath
-        if ($LASTEXITCODE -ne 0) { throw "Merge the manual-only Actions workflow before publishing a local release ($($publishEntry.name) has automatic triggers)." }
+        & $publishPython (Join-Path $PSScriptRoot 'release_bundle.py') check-workflow $publishWorkflowPath
+        if ($LASTEXITCODE -ne 0) { throw "$($publishEntry.name) can start on a release or tag; remove that trigger before publishing a local release." }
     }
 }
 $publishArguments = @('release','create',$Tag,'--repo',$Repository,'--target',$Commit,'--draft','--title',$Tag,'--notes-file',(Resolve-Path -LiteralPath $NotesFile).Path)

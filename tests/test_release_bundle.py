@@ -46,6 +46,20 @@ PRIVATE_IOS_FILES = {
 }
 
 
+class TestWorkflowTriggers(unittest.TestCase):
+    def test_workflows_that_can_start_on_a_release_or_tag(self):
+        for text in ("on: push", "on: [push, pull_request]", "on: release", "on: {create: }", "on:\n  push:\n",
+                     "on:\n  push:\n    tags: ['v*']\n", "on:\n  push:\n    branches: [master]\n    tags: ['v*']\n",
+                     "on:\n  push:\n    paths: ['src/**']\n", "name: no triggers\n"):
+            self.assertTrue(rb.workflow_runs_on_release(text), text)
+
+    def test_workflows_that_cannot(self):
+        for text in ("on: workflow_dispatch", "on: [pull_request, workflow_dispatch]",
+                     "on:\n  push:\n    branches: [master]\n  pull_request:\n  workflow_dispatch:\n",
+                     "on:\n  push:\n    branches-ignore: [wip]\n"):
+            self.assertFalse(rb.workflow_runs_on_release(text), text)
+
+
 class TestReleaseBundle(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
