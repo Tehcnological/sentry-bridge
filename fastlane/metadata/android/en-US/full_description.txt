@@ -3,7 +3,7 @@ in Compatibility Mode to GDL90 for compatible EFBs. It relays available GPS,
 heartbeat and weather frames over the receiver's WiFi.
 
 <ul>
-<li>Run beside one EFB on the same Android device, or send to an EFB on another device.</li>
+<li>Send to EFBs on other devices, up to 16 at once, and follow one that rejoins the WiFi.</li>
 <li>Request Compatibility Mode again after receiver power cycles.</li>
 <li>Receiver settings, backups, logs, capture analysis and a loopback simulator.</li>
 <li>Local processing, with optional GitHub update notifications disabled by default.</li>

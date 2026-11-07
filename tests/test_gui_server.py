@@ -293,29 +293,104 @@ class TestGUI(unittest.TestCase):
                     self.forward_to(peer)
                     wait_for(lambda: peer["connections"] >= 2)
 
-    def follow(self, answering, swept):
-        """Forwarding to 192.168.4.19 with fast checks; answering() says whether the EFB answers each time."""
+    def follow(self, answering, swept, addresses=("192.168.4.19",), this_device=False):
+        """Forwarding to addresses with fast checks; answering(address) says whether that EFB answers each time."""
         self.c.http = lambda *args, **kwargs: {}
         self.c._read_sensors = lambda *args: None  # no sensor connection to the default receiver
         self.c.local_address = lambda: "192.168.4.4"
-        self.c.routes_request = dict(host="windows", topology="network", address="192.168.4.19")
-        self.c.runtime.routes = [("192.168.4.19", 4000)]
+        self.c.routes_request = dict(host="windows", thisDevice=this_device, addresses=list(addresses))
+        self.c.runtime.routes = [("127.0.0.1", 4000)] * this_device + [(address, 4000) for address in addresses]
         self.c.runtime.forwarding = True
         self.c.runtime.active = lambda: True
         self.c.runtime.last_rx = time.monotonic() + 3600  # receiver data keeps arriving
         self.c.runtime.started_at = getattr(self.c.runtime, "started_at", 0) + 1  # a new session (monotonic ticks are 16 ms on Windows)
+        sweep = swept if callable(swept) else (lambda *args, **kwargs: list(swept))
         return (patch.object(gui_server, "EFB_CHECK_S", .05), patch.object(gui_server, "EFB_MISSES", 2),
                 patch.object(gui_server.discovery, "answers", side_effect=lambda address: answering(address)),
-                patch.object(gui_server.discovery, "sweep", return_value=swept))
+                patch.object(gui_server.discovery, "sweep", side_effect=sweep))
+
+    def logs(self):
+        return "\n".join(self.c.runtime.logs)
 
     def test_an_efb_that_moved_is_followed_to_the_only_other_device(self):
         calls = []
         patches = self.follow(lambda address: calls.append(address) or len(calls) <= 2, ["192.168.4.6"])
         with patches[0], patches[1], patches[2], patches[3]:
             self.c._contact()
-            wait_for(lambda: "now sending to 192.168.4.6" in "\n".join(self.c.runtime.logs))  # logged last
+            wait_for(lambda: "now sending to 192.168.4.6" in self.logs())  # logged last
         self.assertEqual(self.c.runtime.routes, [("192.168.4.6", 4000)])
-        self.assertEqual(self.c.routes_request["address"], "192.168.4.6")  # the screen and the next Start
+        self.assertEqual(self.c.routes_request["addresses"], ["192.168.4.6"])  # the screen and the next Start
+
+    def test_one_silent_efb_of_two_is_replaced_in_place(self):
+        calls = []
+
+        def answering(address):
+            if address == "192.168.4.20":
+                return True
+            calls.append(address)
+            return len(calls) <= 1
+        patches = self.follow(answering, ["192.168.4.6", "192.168.4.20"], ("192.168.4.19", "192.168.4.20"), this_device=True)
+        with patches[0], patches[1], patches[2], patches[3]:
+            self.c._contact()
+            wait_for(lambda: "now sending to 192.168.4.6" in self.logs())
+        self.assertEqual(self.c.runtime.routes, [("127.0.0.1", 4000), ("192.168.4.6", 4000), ("192.168.4.20", 4000)])
+        self.assertEqual(self.c.routes_request["addresses"], ["192.168.4.6", "192.168.4.20"])
+
+    def test_two_silent_efbs_move_nothing_and_are_reported_once(self):
+        calls = []
+        patches = self.follow(lambda address: calls.append(address) or len(calls) <= 2, ["192.168.4.6"],
+                              ("192.168.4.19", "192.168.4.20"))
+        with patches[0], patches[1], patches[2], patches[3] as sweep:
+            self.c._contact()
+            wait_for(lambda: len(calls) >= 12)
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000), ("192.168.4.20", 4000)])
+        self.assertEqual(sweep.call_count, 0)
+        self.assertEqual(self.logs().count("Choose one with Find EFB"), 1, self.logs())
+
+    def test_a_sweep_that_finds_only_listed_devices_moves_nothing(self):
+        state = {"silent": False}
+        answering = lambda address: address == "192.168.4.20" or not state["silent"]
+        patches = self.follow(answering, ["192.168.4.20"], ("192.168.4.19", "192.168.4.20"))
+        with patches[0], patches[1], patches[2], patches[3]:
+            self.c._contact()
+            wait_for(lambda: self.c.efb_states.get("192.168.4.19") == "answering")
+            state["silent"] = True
+            wait_for(lambda: "stopped answering" in self.logs())
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000), ("192.168.4.20", 4000)])
+
+    def test_a_route_changed_before_the_move_is_left_alone(self):
+        calls = []
+
+        def sweep(*args, **kwargs):  # Start again with another list while the sweep runs
+            self.c.runtime.routes = [("192.168.4.30", 4000)]
+            return ["192.168.4.6"]
+        answering = lambda address: address != "192.168.4.19" or calls.append(address) or len(calls) <= 1
+        patches = self.follow(answering, sweep)
+        with patches[0], patches[1], patches[2], patches[3] as swept:
+            self.c._contact()
+            wait_for(lambda: swept.call_count >= 1)
+            time.sleep(.3)
+        self.assertEqual(self.c.runtime.routes, [("192.168.4.30", 4000)])
+        self.assertEqual(self.c.routes_request["addresses"], ["192.168.4.19"])
+        self.assertNotIn("now sending", self.logs())
+
+    def test_each_efb_shows_its_state_while_forwarding(self):
+        state = {"silent": False}
+        answering = lambda address: address == "192.168.4.19" and not state["silent"]
+        patches = self.follow(answering, [], ("192.168.4.19", "192.168.4.20"), this_device=True)
+        with patches[0], patches[1], patches[2], patches[3]:
+            self.c._contact()
+            self.assertEqual(self.c.status()["efbs"], [{"address": "192.168.4.19", "state": "not seen yet"},
+                                                       {"address": "192.168.4.20", "state": "not seen yet"}])
+            wait_for(lambda: self.c.efb_states.get("192.168.4.19") == "answering")
+            self.assertEqual(self.c.status()["efbs"][1]["state"], "not seen yet")  # never answered: not "not answering"
+            state["silent"] = True
+            wait_for(lambda: self.c.efb_states.get("192.168.4.19") == "not answering")
+            self.c.runtime.started_at += 1  # Start again: states begin afresh
+            self.c._contact()
+            self.assertEqual({efb["state"] for efb in self.c.status()["efbs"]}, {"not seen yet"})
+        self.c.runtime.forwarding = False
+        self.assertEqual(self.c.status()["efbs"], [])
 
     def test_an_efb_is_not_moved_when_several_devices_answer_or_it_never_answered(self):
         for answered_before, swept in ((True, ["192.168.4.6", "192.168.4.7"]), (False, ["192.168.4.6"])):
@@ -328,7 +403,7 @@ class TestGUI(unittest.TestCase):
                     self.c._contact()
                     wait_for(lambda: len(calls) >= 6)
                 self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
-                self.assertEqual("stopped answering" in "\n".join(self.c.runtime.logs), answered_before)
+                self.assertEqual("stopped answering" in self.logs(), answered_before)
 
     def test_an_efb_that_answers_the_sweep_again_is_kept(self):
         calls = []
@@ -337,7 +412,7 @@ class TestGUI(unittest.TestCase):
             self.c._contact()
             wait_for(lambda: sweep.call_count >= 2)
         self.assertEqual(self.c.runtime.routes, [("192.168.4.19", 4000)])
-        self.assertNotIn("stopped answering", "\n".join(self.c.runtime.logs))
+        self.assertNotIn("stopped answering", self.logs())
 
     def test_exit_during_a_probe_starts_no_sweep_and_waits_for_the_follower(self):
         calls, probing = [], threading.Event()
@@ -466,7 +541,7 @@ class TestGUI(unittest.TestCase):
     def route(self, port):
         """This device on port: the EFB port is a setting; the route only says where the EFB runs."""
         self.c.runtime.settings = {**self.c.runtime.settings, "efbPort": port}
-        return dict(host="windows", topology="same", address="127.0.0.1")
+        return dict(host="windows", thisDevice=True, addresses=[])
 
     def test_receiver_switches_backup_and_packet_verification(self):
         self.synchronized_simulator()
@@ -824,7 +899,7 @@ class TestGUI(unittest.TestCase):
             address = probe.getsockname()[0]
         self.c.action("settings", {"sentryIp": "", "listenPort": free_port()})
         self.c.runtime.settings = {**self.c.runtime.settings, "efbPort": self.c.runtime.settings["listenPort"]}
-        request = dict(host="windows", topology="network", address=address)
+        request = dict(host="windows", thisDevice=False, addresses=[address])
         with self.assertRaisesRegex(ValueError, "ports must differ"):
             self.c.action("start", request)
         self.assertFalse(self.c.runtime.active())
@@ -1044,7 +1119,9 @@ class TestGUI(unittest.TestCase):
         self.simulator()
         self.assertFalse(self.c.config_path.exists())
         with self.assertRaisesRegex(ValueError, "This device"):
-            self.c.action("start", dict(host="windows", topology="network", address="192.168.4.3"))
+            self.c.action("start", dict(host="windows", thisDevice=False, addresses=["192.168.4.3"]))
+        with self.assertRaisesRegex(ValueError, "This device"):
+            self.c.action("start", dict(host="windows", thisDevice=True, addresses=["192.168.4.3"]))
         self.c.action("simulator", {"enabled": False})
         self.assertEqual(self.c.runtime.settings, original)
 
@@ -1108,20 +1185,27 @@ class TestGUI(unittest.TestCase):
     def test_settings_save_keeps_the_saved_route_startable(self):
         clash = {**DEFAULTS, "sentryIp": "192.0.2.1", "ownshipHex": "ABCDEF", "efbPort": 63093, "announcePort": 63093}
         # This device: the clash would make the saved route unstartable, so the save is refused.
-        self.c.routes_request = {"host": "windows", "topology": "same"}
+        self.c.routes_request = {"host": "windows", "thisDevice": True, "addresses": []}
         self.c.save()
         with self.assertRaisesRegex(ValueError, "discovery port"):
             self.c.action("settings", clash)
         self.assertEqual(self.c.runtime.settings["efbPort"], 4000)
         # Other device: the EFB port is on that device, so the same ports save and survive a restart.
-        self.c.routes_request = {"host": "windows", "topology": "network", "address": "192.0.2.10"}
+        self.c.routes_request = {"host": "windows", "thisDevice": False, "addresses": ["192.0.2.10"]}
         self.assertEqual(self.c.action("settings", clash), {"saved": True})
         other = Controller(self.tmp.name)
         try:
             self.assertEqual(other.runtime.settings["efbPort"], 63093)
-            self.assertEqual(other.routes_request["address"], "192.0.2.10")
+            self.assertEqual(other.routes_request["addresses"], ["192.0.2.10"])
         finally:
             other.close()
+
+    def test_a_route_saved_before_several_efbs_loads_as_a_list(self):
+        self.c.close()
+        (Path(self.tmp.name) / "gui-settings.json").write_text(json.dumps(
+            {"settings": DEFAULTS, "routes": {"host": "windows", "topology": "network", "address": "192.0.2.10"}}), encoding="utf-8")
+        self.c = Controller(self.tmp.name)
+        self.assertEqual(self.c.routes_request, {"host": "windows", "thisDevice": False, "addresses": ["192.0.2.10"]})
 
     def test_unusable_saved_route_keeps_the_receiver_settings(self):
         self.c.close()
@@ -1424,9 +1508,9 @@ class TestGUIHTTP(unittest.TestCase):
         busy = next(line for line in script.splitlines() if 'button.disabled = pending || s.job.state === "running"' in line)
         self.assertNotIn("#quit", busy)
         self.assertIn('$("quit").disabled = pending;', script)
-        # Find EFB only reads announcements: usable while forwarding; Use stays under the route lock.
+        # Find EFB only reads announcements: usable while forwarding; Add stays under the route lock.
         self.assertIn('$("find-efb").disabled = pending || s.job.state === "running";', script)
-        self.assertIn('$("discovered").querySelectorAll("button").forEach(button => button.disabled = locked);', script)
+        self.assertIn('$("discovered").querySelectorAll("button").forEach(button => button.disabled = locked || button.textContent === "Added");', script)
         # Pressing Exit mid-job reaches the adapter, which accepts it and cancels the job.
         def job():
             while True:

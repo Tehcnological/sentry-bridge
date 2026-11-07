@@ -47,13 +47,14 @@ On iPhone or iPad, add the Sentry Bridge source to your sideloading app to insta
 ## Quick start
 
 1. Connect the device running Sentry Bridge to the Sentry's WiFi (named like `SentryPlus_XXXX`).
-2. Open Sentry Bridge and choose where your EFB runs. Sentry Bridge feeds **one EFB at a time**:
-   - **This device**: the EFB is on the same phone, tablet or computer (not available on Android).
+2. Open Sentry Bridge and choose where your EFBs run:
+   - **This device**: the EFB is on the same tablet or computer (not available on Android).
      Only one EFB app on it receives the traffic; close the others.
-   - **Other device**: the EFB is on one other device on the Sentry's WiFi. Enter its IP address,
-     or tap **Find EFB** to look it up.
+   - **Other devices**: EFBs on other devices on the Sentry's WiFi. Add each IP address, or tap
+     **Find EFB** to look them up.
 
-   Not both, and not several devices.
+   Windows and Android feed up to 16 other devices at once, and Windows this device too. iPhone and
+   iPad feed one EFB: this device or one other device.
 3. On iPhone or iPad, answer the **Background running** prompt if shown. **Background audio** is
    recommended where offered. Allow **Local Network** access and notifications. Then press **Start**.
 4. In your EFB, select a **Stratux** or **GDL90** device as the traffic source (UDP port 4000).
@@ -92,9 +93,8 @@ No dates, and plans can change. To ask for something or to help,
 
 - **Sentry Bridge Lite on the App Store.** A version for iPhone and iPad that uses Bridge Session
   instead of silent background audio. Not available on the App Store yet.
-- **Several EFBs at once.** Today the app sends to one EFB: on the same device, or on one other
-  device. Next is feeding several at the same time, such as the EFB on this tablet plus one or two
-  other tablets, on Windows, Android, iPhone and iPad.
+- **Several EFBs on iPhone and iPad.** Windows and Android already feed several EFBs at once; the
+  iPhone and iPad app is next.
 - **Small WiFi boards.** Firmware for the ESP32-C3, Pico W and Pico 2 W is in the source but not yet
   tested with a Sentry. Once it is, it becomes a release download. A board with a screen and a case,
   the LilyGO T-Dongle, is the next target.

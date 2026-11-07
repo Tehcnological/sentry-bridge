@@ -3,7 +3,9 @@ const $ = id => document.getElementById(id);
 let ready = false, checked = false, checking = false, revision = 0, shownRoute = "";
 let discoveryRoute;  // the route shown when Find EFB started; null after a route change
 let live = false, status = null, pending = false, uiError = "", filesRevision = "", jobRevision = "";
-const topology = () => document.querySelector('input[name="topology"]:checked').value;
+// The EFB setup: This device (127.0.0.1) and up to MAX_EFBS Other device addresses, all on the EFB port.
+const MAX_EFBS = 16;
+let efbAddresses = [], routeLocked = false, lastFound = [], shownEfbs = "";
 function element(tag, text, className) {
   const el = document.createElement(tag);
   if (text !== undefined) el.textContent = text;
@@ -82,9 +84,9 @@ function invalidate() {
   $("output-summary").textContent = "Not configured";
   if (!live && $("scenario").value !== "stopped") { $("scenario").value = "stopped"; sampleState(); }
 }
-// One GDL90 route: This device (127.0.0.1) or Other device (its address), on the EFB port from Settings.
 function efbPort() { return status?.settings?.efbPort ?? 4000; }
-function shared() { return topology() === "same" && efbPort() === (status?.settings?.listenPort ?? 4000); }
+function thisDevice() { return $("same").checked && !noThisDevice(); }
+function shared() { return thisDevice() && efbPort() === (status?.settings?.listenPort ?? 4000); }
 // Compatibility and limitations: one section per platform in docs/Compatibility.md, linked from the bottom of
 // Settings and from a dialog before each Start until "Don't show again" is saved with Start.
 const LIMITS_DOC = "https://github.com/Tehcnological/sentry-bridge/blob/master/docs/Compatibility.md";
@@ -107,36 +109,76 @@ function confirmLimits() {
     dialog.oncancel = event => { event.preventDefault(); finish(false); };  // Escape
   });
 }
-// No EFB on ESP32; Android EFBs hold UDP 4000 without sharing, so only the simulator uses This device there.
+// No EFB on ESP32; Android and Linux EFBs hold UDP 4000 without sharing, so only the simulator uses This device on Android.
 function noThisDevice() {
   const host = $("host").value;
-  return host === "esp32" || host === "android" && !status?.simulator;
+  return host === "esp32" || host === "linux" || host === "android" && !status?.simulator;
+}
+function efbSummary() {
+  const others = efbAddresses.length, parts = thisDevice() ? ["This device"] : [];
+  if (others) parts.push(others === 1 ? "1 other" : others+" others");
+  return ["UDP "+efbPort(), parts.join(" + "), shared() ? "shared" : ""].filter(Boolean).join(" · ");
+}
+function showAddressError(text) { $("address-error").textContent = text; $("address-error").hidden = !text; }
+function addEfb(value) {
+  const address = String(value ?? "").trim();
+  if (!address) { showAddressError("Enter the EFB device's IPv4 address."); return; }
+  if (efbAddresses.includes(address)) { showAddressError(address+": listed twice."); return; }
+  if (efbAddresses.length >= MAX_EFBS) { showAddressError("Up to "+MAX_EFBS+" EFB addresses."); return; }
+  efbAddresses = [...efbAddresses, address];
+  $("address").value = ""; showAddressError("");
+  updateDestination();
+}
+function removeEfb(address) { efbAddresses = efbAddresses.filter(a => a !== address); showAddressError(""); updateDestination(); }
+// The list with each address's state while running (from the bridge's checks), and Remove.
+function renderEfbList() {
+  const states = status?.running ? status.efbs || [] : [];
+  const rows = efbAddresses.map(address => [address, states.find(efb => efb.address === address)?.state ?? ""]);
+  const key = JSON.stringify([rows, routeLocked]);
+  // Rebuilt only on a change: a poll replacing the rows would swallow a tap on Remove and re-announce the list.
+  if (key !== shownEfbs) {
+    shownEfbs = key;
+    $("efb-list").replaceChildren(...rows.map(([address, state]) => {
+      const row = element("li"), remove = element("button","Remove");
+      row.dataset.address = address;
+      remove.disabled = routeLocked;
+      remove.setAttribute("aria-label","Remove "+address);
+      remove.addEventListener("click",() => removeEfb(address));
+      row.append(element("span",address), element("span",state,"efb-state"), remove);
+      return row;
+    }));
+  }
+  $("add-efb").disabled = routeLocked || efbAddresses.length >= MAX_EFBS;
+  $("efb-limit").hidden = efbAddresses.length < MAX_EFBS;
 }
 function updateDestination() {
   const host = $("host").value;
   document.querySelectorAll(".limits-link").forEach(link => link.href = LIMITS_DOC+"#"+(LIMITS_SECTION[host] || "all-platforms"));
   $("same").disabled = noThisDevice();
   $("same").closest("label").hidden = noThisDevice();
-  if ($("same").disabled) $("network").checked = true;
-  const local = topology() === "same";
-  $("address-field").hidden = local;
-  if (live) $("discovery").hidden = local || !status?.settings?.announcePort;
-  $("topology-help").textContent = local ? (shared() ? "EFB output: 127.0.0.1 on UDP "+efbPort()+", shared with the EFB. One EFB at a time receives it." : "EFB output: 127.0.0.1 on UDP "+efbPort()+".") : "Use the EFB device's IPv4 address on the receiver WiFi, UDP "+efbPort()+".";
-  $("route-summary").textContent = "UDP "+efbPort()+(shared() ? " · shared" : "");
+  if (live) $("discovery").hidden = !status?.settings?.announcePort;
+  $("topology-help").textContent = (thisDevice() ? (shared() ? "This device: 127.0.0.1 on UDP "+efbPort()+", shared with the EFB. One EFB at a time receives it. " : "This device: 127.0.0.1 on UDP "+efbPort()+". ") : "")+"Other devices: each EFB device's IPv4 address on the receiver WiFi, UDP "+efbPort()+".";
+  $("route-summary").textContent = efbSummary();
+  renderEfbList();
+  renderDiscovered(lastFound);
   $("expressive-row").hidden = host !== "android";
   document.body.classList.toggle("mobile",host === "android");
   shownRoute = routeState();
   invalidate();
   appearance();
 }
-for (const id of ["host","same","network"]) $(id).addEventListener("change",updateDestination);
-$("address").addEventListener("input",invalidate);
-$("find-efb").addEventListener("click",() => { $("discovered").replaceChildren(); discoveryRoute = shownRoute; act("discover",{seconds:6}); });
+for (const id of ["host","same"]) $(id).addEventListener("change",updateDestination);
+$("address").addEventListener("input",() => showAddressError(""));
+$("address").addEventListener("keydown",event => { if (event.key === "Enter") { event.preventDefault(); addEfb($("address").value); } });
+$("add-efb").addEventListener("click",() => addEfb($("address").value));
+$("find-efb").addEventListener("click",() => { $("discovered").replaceChildren(); lastFound = []; discoveryRoute = shownRoute; act("discover",{seconds:6}); });
 function renderDiscovered(efbs) {
+  if (efbs === lastFound && !efbs.length) return;  // nothing searched yet, or the list was cleared
+  lastFound = efbs;
   const rows = efbs.map(efb => {
-    const use = element("button","Use");
-    use.disabled = pending || !!status?.monitoring || status?.job.state === "running";
-    use.addEventListener("click",() => { $("address").value = efb.address; invalidate(); });
+    const listed = efbAddresses.includes(efb.address), use = element("button",listed ? "Added" : "Add");
+    use.disabled = listed || pending || !!status?.monitoring || status?.job?.state === "running";
+    use.addEventListener("click",() => addEfb(efb.address));
     const row = element("li");
     row.append(element("span",`${efb.app} · ${efb.address} · port ${efb.port}`),use);
     return row;
@@ -158,6 +200,7 @@ async function checkSetup() {
   $("check").disabled = true; $("start").disabled = true;
   const view = $("validation");
   view.replaceChildren(); view.hidden = false; view.classList.remove("error"); view.textContent = "Checking…";
+  showAddressError("");
   try {
     const response = await fetch("/api/validate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(routeRequest())});
     const result = await response.json();
@@ -172,7 +215,8 @@ async function checkSetup() {
     checked = true;
     return true;
   } catch (error) {
-    if (before === revision) { view.hidden = false; view.classList.add("error"); view.textContent = error.message; }
+    // An error that names an address belongs under the address field.
+    if (before === revision) { view.hidden = false; view.classList.add("error"); view.textContent = error.message; if (/^\S+: /.test(error.message)) showAddressError(error.message); }
     return false;
   } finally {
     checking = false; $("check").disabled = !ready; $("start").disabled = !ready;
@@ -180,14 +224,14 @@ async function checkSetup() {
 }
 $("check").addEventListener("click",checkSetup);
 function routeRequest() {
-  return {host:$("host").value,topology:topology(),address:topology() === "same" ? "127.0.0.1" : $("address").value.trim()};
+  return {host:$("host").value,thisDevice:thisDevice(),addresses:[...efbAddresses]};
 }
 const settingsFields = {sentryIp:"sentry-ip",listenPort:"listen-port",efbPort:"efb-port",httpPort:"http-port",announcePort:"announce-port",ownshipHex:"ownship",staleSeconds:"stale",intervalSeconds:"interval",statsSeconds:"stats-interval"};
 const synced = {};
 function snapshotForm() {
-  for (const id of [...Object.values(settingsFields), "ref-lat", "ref-lon", "address"]) synced[id] = $(id).value;
-  for (const id of ["auto-restore", "relay", "update-check"]) synced[id] = $(id).checked;
-  synced.topology = topology();
+  for (const id of [...Object.values(settingsFields), "ref-lat", "ref-lon"]) synced[id] = $(id).value;
+  for (const id of ["auto-restore", "relay", "update-check", "same"]) synced[id] = $(id).checked;
+  synced.addresses = JSON.stringify(efbAddresses);
 }
 function pullValue(id, value) {
   const el = $(id);
@@ -211,10 +255,10 @@ function pullForm(s) {
   pullSettings(s, settings);
   // Another browser, or the bridge following a moved EFB, changed the route: show it, and drop stale
   // validation and Find EFB results (they may list the old address).
-  if (routeState() !== shownRoute) { $("discovered").replaceChildren(); discoveryRoute = null; updateDestination(); }
+  if (routeState() !== shownRoute) { $("discovered").replaceChildren(); lastFound = []; discoveryRoute = null; updateDestination(); }
 }
 function routeState() {
-  return [$("host").value, topology(), synced.address ?? "", efbPort(), status?.settings?.listenPort, status?.settings?.announcePort].join("|");
+  return [$("host").value, thisDevice(), synced.addresses ?? "[]", efbPort(), status?.settings?.listenPort, status?.settings?.announcePort].join("|");
 }
 function pullSettings(s, settings) {
   for (const [key, id] of Object.entries(settingsFields)) pullValue(id, settings[key]);
@@ -225,14 +269,16 @@ function pullSettings(s, settings) {
   pullValue("ref-lon", settings.reference?.[1] ?? "");
   const request = s.routesRequest;
   if (!request) return;
-  const nextTopo = request.topology === "same" ? "same" : "network";
-  const address = nextTopo === "same" ? "" : (request.address || "");
-  const routeFocus = document.activeElement === $("address") || document.activeElement === $("same") || document.activeElement === $("network");
-  if (!routeFocus && (synced.topology === undefined || topology() === synced.topology || topology() === nextTopo)) {
-    $(nextTopo === "same" ? "same" : "network").checked = true;
-    synced.topology = nextTopo;
-    pullValue("address", address);
-  }
+  pullCheck("same", request.thisDevice === true);
+  pullAddresses(Array.isArray(request.addresses) ? request.addresses : []);
+}
+// Like pullValue for the list: an untouched list shows the saved one; a local edit stays until saved or matched.
+function pullAddresses(next) {
+  const text = JSON.stringify(next), mine = JSON.stringify(efbAddresses);
+  if (synced.addresses !== undefined && mine !== synced.addresses && mine !== text) return;
+  efbAddresses = [...next];
+  synced.addresses = text;
+  renderEfbList();
 }
 function fillSettings(s) {
   for (const [key,id] of Object.entries(settingsFields)) $(id).value = s[key];
@@ -336,7 +382,7 @@ function renderLive(s) {
   // Before the running output and the route locks below: a refreshed route resets both.
   const routeBefore = shownRoute;
   if (!pending) pullForm(s);
-  if (s.running && s.routesRequest) $("output-summary").textContent = s.routesRequest.address+":"+s.settings.efbPort;
+  if (s.running && s.routesRequest) $("output-summary").textContent = [...(s.routesRequest.thisDevice ? ["127.0.0.1"] : []), ...(s.routesRequest.addresses || [])].map(address => address+":"+s.settings.efbPort).join(", ");
   const currentMode = s.monitoring && s.lastPacketSeconds !== null && s.lastPacketSeconds < 10 ? s.mode : null;
   // Running but the receiver is silent: an earlier result says nothing about it now (it resets to ForeFlight mode at power-up).
   const silent = s.monitoring && !currentMode;
@@ -351,10 +397,12 @@ function renderLive(s) {
   receiverWeb.hidden = s.simulator || !s.settings.sentryIp;
   receiverWeb.href = "http://"+s.settings.sentryIp+":"+s.settings.httpPort+"/settings/";
   const locked = pending || s.monitoring || s.job.state === "running";
-  $("discovery").hidden = topology() === "same" || !s.settings.announcePort;
-  // Find EFB only reads announcements, so it works while forwarding; Use edits the route and stays locked.
+  $("discovery").hidden = !s.settings.announcePort;
+  // Find EFB only reads announcements, so it works while forwarding; Add edits the route and stays locked.
   $("find-efb").disabled = pending || s.job.state === "running";
-  $("discovered").querySelectorAll("button").forEach(button => button.disabled = locked);
+  $("discovered").querySelectorAll("button").forEach(button => button.disabled = locked || button.textContent === "Added");
+  routeLocked = locked;
+  renderEfbList();
   for (const id of [...Object.values(settingsFields),"auto-restore","relay","update-check","ref-lat","ref-lon","save-settings","simulator","sim-gps","sim-uat","sim-weather"]) $(id).disabled = locked;
   if (!pending) $("simulator").checked = s.simulator;
   // Routing is immutable while the UDP worker is running.
@@ -363,7 +411,7 @@ function renderLive(s) {
   }
   $("same").disabled = locked || noThisDevice();
   $("same").closest("label").hidden = noThisDevice();
-  if (!locked && noThisDevice() && $("same").checked) { $("network").checked = true; updateDestination(); }
+  if (!locked && noThisDevice() && $("same").checked) { $("same").checked = false; updateDestination(); }
   $("check").disabled = locked;
   $("capture-start").disabled = pending || s.recording || s.job.state === "running";
   $("capture-stop").disabled = pending || !s.recording || s.job.state === "running";
@@ -429,7 +477,7 @@ $("simulator").addEventListener("change",async () => {
   if (result) {
     fillSettings(status.settings);
     $("analysis-port").value = status.settings.listenPort;
-    if (status.simulator) { $("same").checked = true; updateDestination(); }
+    if (status.simulator) { $("same").checked = true; efbAddresses = []; updateDestination(); }
     else { updateDestination(); restoreRoutes(status.routesRequest); }
   }
 });
@@ -456,8 +504,9 @@ $("quit").addEventListener("click",async () => {
 });
 function restoreRoutes(request) {
   if (!request) return;
-  $(request.topology === "same" ? "same" : "network").checked = true;
-  $("address").value = request.topology === "same" ? "" : request.address || "";
+  $("same").checked = request.thisDevice === true;
+  efbAddresses = Array.isArray(request.addresses) ? [...request.addresses] : [];
+  $("address").value = "";
   snapshotForm();  // before updateDestination, which records the route it shows from the snapshot
   updateDestination();
 }

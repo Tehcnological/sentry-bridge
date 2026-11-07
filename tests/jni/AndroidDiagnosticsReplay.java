@@ -1,5 +1,6 @@
 import io.github.tehcnological.sentrybridge.NativeDiagnostics;
 import io.github.tehcnological.sentrybridge.NativeGui;
+import io.github.tehcnological.sentrybridge.Routes;
 import io.github.tehcnological.sentrybridge.BridgeService;
 import io.github.tehcnological.sentrybridge.Settings;
 import io.github.tehcnological.sentrybridge.StatusText;
@@ -31,6 +32,12 @@ public class AndroidDiagnosticsReplay {
             check(d.followChoice(java.util.List.of(), ipad) == null, "stays with none");
             check(d.followChoice(java.util.List.of(other, "192.168.4.7"), ipad) == null, "stays with several");
             check(ipad.equals(d.followChoice(java.util.List.of(other, ipad), ipad)), "keeps an EFB that answers again");
+            // Several EFBs: a device already listed is never picked.
+            check(other.equals(d.followChoice(java.util.List.of(other, "192.168.4.7"), ipad, java.util.Set.of(ipad, "192.168.4.7"))), "skips a listed device");
+            check(d.followChoice(java.util.List.of("192.168.4.7"), ipad, java.util.Set.of(ipad, "192.168.4.7")) == null, "only listed devices: stays");
+            var listed = java.util.List.of(java.net.InetAddress.getByName(ipad), java.net.InetAddress.getByName(other));
+            check(java.util.Set.of(other).equals(d.answering(listed, () -> false, address -> address.getHostAddress().equals(other))), "checks each address");
+            check(d.answering(listed, () -> true, address -> true).isEmpty(), "a cancelled check finds nothing");
             var local = (java.net.Inet4Address) java.net.InetAddress.getByName("192.168.4.4");
             check(d.onNetwork(local, "192.168.4.1"), "same network");
             check(!d.onNetwork((java.net.Inet4Address) java.net.InetAddress.getByName("10.0.0.7"), "192.168.4.1"), "other network");
@@ -118,13 +125,40 @@ public class AndroidDiagnosticsReplay {
             var old = new JSONObject().put("host", "android").put("platform", "android").put("topology", "same").put("selections", selections);
             var migrated = Settings.Companion.fromGui(gui, old.toString(), 4000);
             var route = new JSONObject(migrated.getRoutes());
-            if (migrated.getEfbPort() != 4001 || route.has("selections") || !route.getString("address").equals("127.0.0.1")
-                || !route.getString("topology").equals("same")) throw new AssertionError("Old route not migrated: " + route);
+            if (migrated.getEfbPort() != 4001 || !route.similar(new JSONObject("{\"host\":\"android\",\"thisDevice\":true,\"addresses\":[]}"))
+                || !migrated.getEfbOnThisDevice()) throw new AssertionError("Old route not migrated: " + route);
+            // A route saved before several EFBs becomes This device plus a list of addresses.
+            String[][] upgrades = {
+                {"{\"host\":\"android\",\"topology\":\"same\",\"address\":\"127.0.0.1\"}", "{\"host\":\"android\",\"thisDevice\":true,\"addresses\":[]}"},
+                {"{\"host\":\"android\",\"topology\":\"network\",\"address\":\" 192.168.4.20 \"}", "{\"host\":\"android\",\"thisDevice\":false,\"addresses\":[\"192.168.4.20\"]}"},
+                {"{\"host\":\"android\",\"topology\":\"network\",\"address\":\"\"}", "{\"host\":\"android\",\"thisDevice\":false,\"addresses\":[]}"},
+            };
+            for (String[] upgrade : upgrades) {
+                var upgraded = Settings.Companion.fromGui(gui, upgrade[0], 4000);
+                if (!new JSONObject(upgraded.getRoutes()).similar(new JSONObject(upgrade[1])))
+                    throw new AssertionError("Upgraded " + upgrade[0] + " to " + upgraded.getRoutes());
+                if (upgraded.getEfbOnThisDevice() != upgrade[1].contains("true")) throw new AssertionError("This device lost: " + upgrade[0]);
+            }
+            var current = "{\"host\":\"android\",\"thisDevice\":false,\"addresses\":[\"192.168.4.20\"]}";
+            if (!current.equals(Settings.Companion.fromGui(gui, current, 4000).getRoutes())) throw new AssertionError("A current route was rewritten");
             if (!BridgeService.Companion.logSnapshot().toString().contains("127.0.0.1:43211")) throw new AssertionError("Dropped EFB not logged");
             var portless = new JSONObject(old.toString());
             portless.getJSONArray("selections").getJSONObject(0).remove("port");
             if (Settings.Companion.fromGui(gui, portless.toString(), 4001).getEfbPort() != 4001) throw new AssertionError("Portless route left the legacy port");
             System.out.println("Settings migration passed");
+        } else if (args[0].equals("routecases")) {
+            // tests/data/route-cases.json: the same routes and errors as tools/routes.py validate_route.
+            var cases = new JSONArray(java.nio.file.Files.readString(java.nio.file.Path.of(args[1])));
+            for (int i = 0; i < cases.length(); i++) {
+                var item = cases.getJSONObject(i);
+                var settings = Settings.Companion.fromGui(item.getJSONObject("settings"), null, 4000);
+                String error = null; JSONArray routes = null;
+                try { routes = Routes.INSTANCE.validate(item.getJSONObject("request"), settings).getJSONArray("routes"); }
+                catch (IllegalArgumentException e) { error = e.getMessage(); }
+                if (item.has("error") ? error == null || !error.contains(item.getString("error")) : routes == null || !routes.similar(item.getJSONArray("routes")))
+                    throw new AssertionError(item.getString("name") + ": " + (error != null ? error : routes));
+            }
+            System.out.println("Route cases passed: " + cases.length());
         } else if (args[0].equals("newer")) {
             System.out.println(NativeGui.INSTANCE.newer(args[1], args[2]));
         } else if (args[0].equals("rebind")) {

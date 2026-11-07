@@ -75,7 +75,7 @@ def main():
             # The simulator keeps the EFB port from Settings: this test's listener.
             call("/api/actions/settings", {"efbPort": efb.getsockname()[1]})
             call("/api/actions/simulator", {"enabled": True})
-            call("/api/actions/start", {"host": "windows", "topology": "same", "address": "127.0.0.1"})
+            call("/api/actions/start", {"host": "windows", "thisDevice": True, "addresses": []})
             # Automatic restoration switches the simulated receiver to Compatibility Mode first.
             seen = set()
             deadline = time.monotonic() + 45

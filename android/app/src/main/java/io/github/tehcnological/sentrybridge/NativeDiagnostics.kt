@@ -177,10 +177,24 @@ object NativeDiagnostics {
     fun onNetwork(local: Inet4Address, receiver: String): Boolean =
         runCatching { ipv4(receiver, false).address.copyOf(3).contentEquals(local.address.copyOf(3)) }.getOrDefault(false)
 
+    /** The listed EFB addresses that answer, checked at once (tools/discovery.py answering). Cancelled before or
+     *  after the probes, it gives none. */
+    fun answering(addresses: List<InetAddress>, cancelled: () -> Boolean = { false }, probe: (InetAddress) -> Boolean): Set<String> {
+        if (addresses.isEmpty() || cancelled()) return emptySet()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(addresses.size)
+        try {
+            val results = addresses.map { address -> pool.submit<Boolean> { !cancelled() && probe(address) } }
+            val up = addresses.zip(results).filter { it.second.get() }.map { it.first.hostAddress!! }.toSet()
+            return if (cancelled()) emptySet() else up
+        } finally { pool.shutdownNow() }
+    }
+
     /** After the EFB at current missed its checks: current itself when it answers the sweep (it recovered), else the
-     *  one other device that answers, or null for none or several (the user chooses then). Same rule as desktop. */
-    fun followChoice(candidates: List<String>, current: String): String? =
-        if (current in candidates) current else candidates.singleOrNull()
+     *  one other device that answers and is not listed already, or null for none or several (the user chooses then).
+     *  Same rule as desktop. */
+    @JvmOverloads
+    fun followChoice(candidates: List<String>, current: String, listed: Set<String> = emptySet()): String? =
+        if (current in candidates) current else candidates.filter { it !in listed }.singleOrNull()
 
     /** Whether an announcing device can be an Other device destination (same rules as desktop). */
     fun efbCandidate(address: InetAddress, port: Int, sentryIp: String, listenPort: Int): Boolean {

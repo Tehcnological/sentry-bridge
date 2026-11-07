@@ -247,6 +247,16 @@ details[open] > summary::after { transform:rotate(45deg); }
 .discovered { list-style:none; padding:0; margin:8px 0 0; }
 .discovered li { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-top:1px solid var(--line); }
 .discovered li.note { display:block; color:var(--muted); border-top:0; }
+.subhead { margin:10px 0 0; font-size:13px; font-weight:600; color:var(--muted); }
+.efb-list { list-style:none; padding:0; margin:4px 0 0; }
+.efb-list li { display:flex; align-items:center; gap:12px; padding:8px 0; border-top:1px solid var(--line); font-variant-numeric:tabular-nums; }
+.efb-list li > span:first-child { flex:1; min-width:0; overflow-wrap:anywhere; }
+.efb-state { font-size:13px; color:var(--muted); }
+.add-row { display:flex; align-items:flex-end; gap:8px; }
+.add-row .field { flex:1; min-width:0; }
+.add-row button { margin-bottom:12px; }
+.field-error { margin:0 0 8px; font-size:14px; color:var(--warning); }
+.note { margin:0 0 8px; font-size:13px; color:var(--muted); }
 .route-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 0; font-size:14px; color:var(--muted); font-variant-numeric:tabular-nums; }
 .validation { padding:12px 0; font-size:14px; }
 .validation.error { color:var(--warning); }

@@ -6,9 +6,9 @@ import org.json.JSONArray
 
 /** User settings, persisted in SharedPreferences. */
 data class Settings(
-    /** true: the EFB runs on this tablet (bridge feeds 127.0.0.1:efbPort). false: other devices on the Sentry WiFi. */
+    /** The saved route's This device (the bridge feeds 127.0.0.1:efbPort); routes hold the other devices' addresses. */
     val efbOnThisDevice: Boolean = true,
-    /** The one GDL90 route's port; equal to listenPort on this device, the bridge shares that port with the EFB. */
+    /** The port for every GDL90 route; equal to listenPort on this device, the bridge shares that port with the EFB. */
     val efbPort: Int = 4000,
     val ownshipHex: String = "",
     val autoEnable: Boolean = true,
@@ -71,17 +71,17 @@ data class Settings(
             val ref = j.optJSONArray("reference")
             val request = routes?.let { runCatching { JSONObject(it) }.getOrNull() }
             // v0.1.6 and earlier saved per-EFB selections: keep the first one's address and, when the
-            // settings have no EFB port yet, its port.
+            // settings have no EFB port yet, its port. Older routes become This device plus a list of addresses.
             val selections = request?.optJSONArray("selections")
             val first = selections?.optJSONObject(0)
-            val route = if (first == null) routes else JSONObject().put("host", "android")
-                .put("topology", request?.optString("topology", "same") ?: "same").put("address", first.optString("address", "")).toString()
+            val upgraded = Routes.upgrade(request)
+            val route = if (upgraded === request) routes else upgraded?.toString()
             if (selections != null && selections.length() > 1) {
                 val dropped = (1 until selections.length()).mapNotNull { selections.optJSONObject(it) }
                     .joinToString(", ") { "${it.optString("address", "?")}:${it.opt("port") ?: "?"}" }
                 BridgeService.log("Saved EFBs upgraded to one route; no longer sent to: $dropped.")
             }
-            return Settings(efbOnThisDevice = request?.optString("topology", "same") != "network",
+            return Settings(efbOnThisDevice = upgraded?.opt("thisDevice") != false,
                 efbPort = j.optInt("efbPort", first?.optInt("port", legacyPort) ?: legacyPort),
                 ownshipHex = j.optString("ownshipHex", ""), autoEnable = j.optBoolean("autoRestore", true),
                 sentryIp = j.optString("sentryIp", "192.168.4.1"), listenPort = j.optInt("listenPort", 4000),

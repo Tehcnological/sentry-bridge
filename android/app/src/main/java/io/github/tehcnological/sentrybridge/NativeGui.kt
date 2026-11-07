@@ -163,11 +163,9 @@ object NativeGui {
         update = prefs.getString("update", null)?.let { runCatching { JSONObject(it) }.getOrNull() }
         updateDue = prefs.getLong("updateChecked", 0L) + UPDATE_INTERVAL_MS
         if (config.routes == null && prefs.contains("efbPort")) {
-            val r = JSONObject().put("host", "android")
-                .put("topology", if (config.efbOnThisDevice) "same" else "network")
-                // v0.1 "other device" mode broadcast to 192.168.4.255:4000. Output is unicast now, so that route
-                // keeps port 4000 but needs the EFB device's address before the bridge can start.
-                .put("address", if (config.efbOnThisDevice) "127.0.0.1" else "")
+            // v0.1 "other device" mode broadcast to 192.168.4.255:4000. Output is unicast now, so that route
+            // keeps port 4000 but needs an EFB device's address before the bridge can start.
+            val r = JSONObject().put("host", "android").put("thisDevice", config.efbOnThisDevice).put("addresses", JSONArray())
             config = config.copy(routes = r.toString(), efbPort = if (config.efbOnThisDevice) config.efbPort else 4000)
             config.save(context)
         } else if (config.routes != prefs.getString("routes", null)) {
@@ -454,50 +452,92 @@ object NativeGui {
 
     private var followThread: Thread? = null
     private var followGeneration = -1
-    /** While forwarding to an EFB on another device, check it still answers (tools/gui_server.py _follow_efb). When an
-     *  EFB that answered before stops answering twice in a row, sweep the receiver's WiFi and switch to the one other
-     *  device that answers; with none or several, only log. One follower per Start (BridgeService.generation): an older
-     *  one stops at its next check and can never change a later run's destination. It acts only while receiver data
+    /** Each EFB address's state for one run (BridgeService.generation): answering or not answering; absent: not seen yet. */
+    @Volatile private var efbStates = -1 to java.util.concurrent.ConcurrentHashMap<String, String>()
+    /** While forwarding to EFBs on other devices, check every listed address at once (tools/gui_server.py _follow_efb).
+     *  When exactly one EFB that answered before stops answering twice in a row, sweep the receiver's WiFi and replace
+     *  its address with the one other device that answers and is not listed already; with none or several, or when
+     *  several listed EFBs are silent at once, only log. One follower per Start (BridgeService.generation): an older
+     *  one stops at its next check and can never change a later run's addresses. It acts only while receiver data
      *  arrives, so the phone is on the receiver's network. */
     private fun watchEfb() {
         val generation = BridgeService.generation
         if (simulator || followThread?.isAlive == true && followGeneration == generation) return
         followGeneration = generation
+        val states = java.util.concurrent.ConcurrentHashMap<String, String>()
+        efbStates = generation to states
         followThread = Thread({
             val forwarding = { BridgeService.status.running && !closing && BridgeService.generation == generation }
-            var seen = false; var misses = 0; var reported: String? = null
+            val seen = HashSet<String>(); val misses = HashMap<String, Int>(); val reported = HashSet<String>()
+            var several = false
             while (forwarding()) {
                 for (i in 0 until 30) { if (!forwarding()) return@Thread; Thread.sleep(1000) }
                 if (BridgeService.status.lastRxAgeS !in 0.0..10.0) continue
-                val current = BridgeService.followed ?: BridgeService.destination ?: continue
+                val targets = BridgeService.targets
+                val others = targets.filter { !it.address.isLoopbackAddress }
+                if (others.isEmpty()) continue
                 val network = wifi() ?: continue
-                if (NativeDiagnostics.answers(network, current.address)) { seen = true; misses = 0; reported = null; continue }
-                misses++
-                if (!seen || misses < 2 || !forwarding()) continue  // never answered (a firewall, perhaps) or only once
-                val found = runCatching { sweepDevices(network, current.port) { !forwarding() } }.getOrNull() ?: continue
+                val up = NativeDiagnostics.answering(others.map { it.address }, { !forwarding() }) { NativeDiagnostics.answers(network, it) }
+                if (!forwarding()) continue
+                for (efb in others) {
+                    val address = efb.address.hostAddress!!
+                    if (address in up) { seen += address; misses[address] = 0; reported -= address; states[address] = "answering" }
+                    else {
+                        misses[address] = (misses[address] ?: 0) + 1
+                        if (address in seen) states[address] = "not answering"  // one that never answered (a firewall, perhaps) stays "not seen yet"
+                    }
+                }
+                val silent = others.filter { it.address.hostAddress!! in seen && (misses[it.address.hostAddress!!] ?: 0) >= 2 }
+                if (silent.size != 1) {
+                    if (silent.size > 1 && !several) BridgeService.log("The EFBs at ${silent.joinToString(", ") { it.address.hostAddress!! }} " +
+                        "stopped answering. Nothing was changed. Choose one with Find EFB.")
+                    several = silent.size > 1
+                    continue
+                }
+                several = false
+                val current = silent[0]
                 val old = current.address.hostAddress!!
-                val target = NativeDiagnostics.followChoice(found, old)
-                if (target == old) { seen = true; misses = 0; reported = null; continue }  // it answered again
+                val found = runCatching { sweepDevices(network, current.port) { !forwarding() } }.getOrNull() ?: continue
+                val target = NativeDiagnostics.followChoice(found, old, targets.map { it.address.hostAddress!! }.toSet())
+                if (target == old) { misses[old] = 0; states[old] = "answering"; continue }  // it answered again
                 if (target == null) {
-                    if (reported != old && forwarding()) {
-                        reported = old
+                    if (old !in reported && forwarding()) {
+                        reported += old
                         BridgeService.log("The EFB at $old stopped answering. Devices on the receiver's WiFi: " +
                             "${found.joinToString(", ").ifEmpty { "none" }}. Choose one with Find EFB.")
                     }
                     continue
                 }
-                synchronized(BridgeService.routeLock) {  // the run and destination this decision was made for, or nothing
-                    if (!forwarding() || (BridgeService.followed ?: BridgeService.destination) != current) return@Thread
-                    BridgeService.followed = InetSocketAddress(target, current.port)
-                    config.routes?.let { routes ->
-                        val route = JSONObject(routes)
-                        if (route.optString("address") == old) { config = config.copy(routes = route.put("address", target).toString()); save() }
+                val moved = synchronized(BridgeService.routeLock) {  // the run and addresses this decision was made for, or nothing
+                    val now = BridgeService.targets
+                    if (!forwarding() || current !in now || now.any { it.address.hostAddress == target }) false else {
+                        BridgeService.targets = now.map { if (it == current) InetSocketAddress(target, current.port) else it }
+                        config.routes?.let { routes ->
+                            val route = JSONObject(routes)
+                            val addresses = route.optJSONArray("addresses")
+                            val index = addresses?.let { list -> (0 until list.length()).firstOrNull { list.opt(it) == old } }
+                            if (addresses != null && index != null) { addresses.put(index, target); config = config.copy(routes = route.toString()); save() }
+                        }
+                        true
                     }
                 }
+                if (!moved) continue
+                seen -= old; seen += target; misses[target] = 0
+                states.remove(old); states[target] = "answering"
                 BridgeService.log("The EFB at $old stopped answering; now sending to $target, the only other device on the receiver's WiFi.")
-                misses = 0; reported = null
+                reported -= old
             }
         }, "sentry-follow").apply { isDaemon = true; start() }
+    }
+
+    /** Each EFB address this run sends to, in list order, with its state; none while stopped. */
+    private fun currentEfbs(): JSONArray {
+        if (!BridgeService.status.running) return JSONArray()
+        val (generation, states) = efbStates
+        return JSONArray(BridgeService.targets.filter { !it.address.isLoopbackAddress }.map {
+            val address = it.address.hostAddress!!
+            JSONObject().put("address", address).put("state", states[address].takeIf { generation == BridgeService.generation } ?: "not seen yet")
+        })
     }
 
     /** Called on the bridge thread. False when another operation is running; the caller keeps the request. */
@@ -672,23 +712,8 @@ object NativeGui {
         return Settings.fromGui(merged, config.routes)
     }
 
-    /** The one GDL90 route (tools/routes.py validate_route): This device or Other device, on the EFB port from Settings. */
-    fun validateRoutes(j: JSONObject, settings: Settings = config): JSONObject {
-        require(j.optString("host") == "android") { "Android bridge host required." }
-        val topology = j.optString("topology")
-        require(topology in listOf("same", "network")) { "Choose where the EFB runs." }
-        val port = settings.efbPort
-        val shared = topology == "same" && port == settings.listenPort
-        // On this device the bridge's discovery listener would take the output; another device's port is its own.
-        require(topology != "same" || port != settings.announcePort) { "On this device the EFB port must differ from the discovery port." }
-        val address = if (topology == "same") "127.0.0.1" else NativeDiagnostics.ipv4(j.optString("address").trim(), true).hostAddress!!
-        if (!shared) NativeDiagnostics.checkEndpoint(InetAddress.getByName(address), port, settings.listenPort)
-        val warnings = JSONArray()
-        if (shared) warnings.put("Shares UDP $port with the EFB on this device. One EFB at a time receives it; close other EFBs. " +
-            "The EFB must allow port sharing; otherwise set another EFB port in Settings and in the EFB.")
-        return JSONObject().put("routes", JSONArray().put(JSONObject().put("address", address).put("port", port).put("shared", shared)))
-            .put("warnings", warnings).put("displayVerified", false).put("appliedToBridge", false)
-    }
+    /** The GDL90 routes (Routes.validate): This device and the EFB addresses, on the EFB port from Settings. */
+    fun validateRoutes(j: JSONObject, settings: Settings = config): JSONObject = Routes.validate(j, settings)
 
     fun action(name: String, j: JSONObject): JSONObject = commands.withLock {
         // Stop and Exit never wait for a receiver job.
@@ -709,14 +734,15 @@ object NativeGui {
                 require(!simulator) { "Turn off the simulator before saving receiver settings." }; require(!BridgeService.status.monitoring)
                 val next = validateSettings(j)
                 // This device's route depends only on the ports: keep a save from making it unstartable.
-                config.routes?.let { r -> runCatching { JSONObject(r) }.getOrNull() }?.takeIf { it.optString("topology") == "same" }?.let { validateRoutes(it, next) }
+                config.routes?.let { r -> runCatching { JSONObject(r) }.getOrNull() }?.takeIf { it.opt("thisDevice") == true }?.let { validateRoutes(it, next) }
                 config = next; save(); device = null; observation = null; requested = null; return JSONObject().put("saved", true)
             }
             "start" -> {
                 require(!BridgeService.status.monitoring) { "Stop the bridge or capture first." }
-                val route = validateRoutes(j).getJSONArray("routes").getJSONObject(0)
-                require(!simulator || route.getString("address") == "127.0.0.1") { "Simulator output is limited to this device." }
-                config = config.copy(routes = j.toString(), efbOnThisDevice = j.getString("topology") == "same")
+                val routes = validateRoutes(j).getJSONArray("routes")
+                require(!simulator || (0 until routes.length()).all { routes.getJSONObject(it).getString("address") == "127.0.0.1" }) {
+                    "Simulator output is limited to this device." }
+                config = config.copy(routes = j.toString(), efbOnThisDevice = j.getBoolean("thisDevice"))
                 save(); service(BridgeService.ACTION_START); return JSONObject().put("started", true)
             }
             "capture-start" -> {
@@ -917,6 +943,7 @@ object NativeGui {
             .put("job", job).put("deviceLogs", receiverLogs).put("artifacts", artifacts).put("logs", JSONArray(BridgeService.logSnapshot().takeLast(120)))
             .put("error", st.error ?: captureError ?: JSONObject.NULL)
             .put("updateSupported", updateSupported).put("update", currentUpdate() ?: JSONObject.NULL)
+            .put("efbs", currentEfbs())
             .put("sensors", sensors?.takeIf { st.running && SystemClock.elapsedRealtime() - sensorsAt <= 5000 } ?: JSONObject.NULL)
     }
 }

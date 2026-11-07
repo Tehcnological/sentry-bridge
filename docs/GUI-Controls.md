@@ -8,9 +8,10 @@ The Windows and Android apps share the same three screens: **Bridge**, **Setting
 | Control | What it does |
 |---|---|
 | Start / Stop | Starts or stops forwarding traffic to the EFB |
-| This device / Other device | Where the one EFB runs: on this device, or on one other device at an IP address you enter. The bridge feeds one EFB at a time. Android offers Other device only |
-| Find EFB | Lists EFBs that announce themselves on the WiFi, and the other devices that answer on it ("Device"); **Use** fills in the address |
-| Check setup | Checks the chosen address and port before you start |
+| This device | Sends to an EFB on this computer as well. Not offered on Android or Linux, where an EFB cannot share the Sentry's connection |
+| Other devices | Up to 16 EFB addresses on the Sentry's WiFi, all fed at once. **Add** puts an address on the list, **Remove** takes it off. While forwarding, each shows answering, not answering or not seen yet |
+| Find EFB | Lists EFBs that announce themselves on the WiFi, and the other devices that answer on it ("Device"); **Add** puts one on the list, a listed one shows **Added** |
+| Check setup | Checks the addresses and port before you start |
 | Status | Receiver state, GPS, traffic count, weather frames and time since the last packet |
 | Battery, CO, Temperature | The Sentry's own readings, while forwarding. CO turns red at the Sentry's alarm level |
 

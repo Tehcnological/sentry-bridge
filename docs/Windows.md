@@ -8,10 +8,11 @@ Requires Windows 10 or 11.
    Windows SmartScreen may warn about an unrecognized app. You can check the file against the
    `SHA256SUMS` file on the same release page.
 2. Connect the computer to the Sentry's WiFi.
-3. Open the app and choose where your EFB runs. The bridge feeds one EFB at a time, so pick one:
+3. Open the app and choose where your EFBs run. The bridge feeds all of them at once:
    - **This device**: an EFB on this computer. It shares UDP port 4000 with the bridge, and only one
      EFB app on the computer receives the traffic.
-   - **Other device**: enter the one EFB device's IP address, or use **Find EFB**.
+   - **Other devices**: add each EFB device's IP address (up to 16), or use **Find EFB** and **Add**.
+     While forwarding, each address shows whether its device answers.
 4. Press **Start**. In the EFB, select a Stratux or GDL90 (Custom GDL90) device on UDP port 4000.
 
 Once, in **Settings → Open Sentry web settings**, turn off the Sentry's **Power Savings**.
