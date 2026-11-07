@@ -22,6 +22,19 @@ class TestSweep(unittest.TestCase):
         # The EFB answers the sweep again: a short interruption, so it is kept.
         self.assertEqual(discovery.follow_choice(["192.168.4.19", "192.168.4.6"], "192.168.4.19"), "192.168.4.19")
 
+    def test_follow_never_picks_an_address_already_listed(self):
+        listed = {"192.168.4.19", "192.168.4.20"}
+        self.assertEqual(discovery.follow_choice(["192.168.4.6", "192.168.4.20"], "192.168.4.19", listed), "192.168.4.6")
+        self.assertIsNone(discovery.follow_choice(["192.168.4.20"], "192.168.4.19", listed))
+        self.assertIsNone(discovery.follow_choice(["192.168.4.6", "192.168.4.7"], "192.168.4.19", listed))
+        self.assertEqual(discovery.follow_choice(["192.168.4.19", "192.168.4.6"], "192.168.4.19", listed), "192.168.4.19")
+
+    def test_answering_probes_every_listed_address(self):
+        with patch.object(discovery, "answers", side_effect=lambda address: address == "192.168.4.20"):
+            self.assertEqual(discovery.answering(["192.168.4.19", "192.168.4.20"]), {"192.168.4.20"})
+            self.assertEqual(discovery.answering(["192.168.4.20"], cancelled=lambda: True), set())
+            self.assertEqual(discovery.answering([]), set())
+
     def test_a_cancelled_sweep_finds_nothing(self):
         self.assertEqual(discovery.sweep("192.168.4.4", probe=lambda address: True, cancelled=lambda: True), [])
 

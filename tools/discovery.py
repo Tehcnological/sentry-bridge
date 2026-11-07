@@ -39,13 +39,23 @@ def on_network(local, receiver):
     return ipaddress.IPv4Address(local) in ipaddress.IPv4Network(f"{receiver}/24", strict=False)
 
 
-def follow_choice(candidates, current):
+def answering(addresses, cancelled=lambda: False):
+    """The listed addresses that answer, probed at once (one probe timeout); none when cancelled."""
+    if not addresses or cancelled():
+        return set()
+    with ThreadPoolExecutor(max_workers=len(addresses)) as pool:
+        up = list(pool.map(lambda address: not cancelled() and answers(address), addresses))
+    return set() if cancelled() else {address for address, ok in zip(addresses, up) if ok}
+
+
+def follow_choice(candidates, current, listed=()):
     """Where to send after the EFB at current missed its checks: current itself when it answers the
-    sweep (it recovered), else the one other device that answers, or None for none or several (the
-    user chooses then)."""
+    sweep (it recovered), else the one other device that answers and is not already listed, or None for
+    none or several (the user chooses then)."""
     if current in candidates:
         return current
-    return candidates[0] if len(candidates) == 1 else None
+    others = [address for address in candidates if address not in listed]
+    return others[0] if len(others) == 1 else None
 
 
 def parse_announce(data):
