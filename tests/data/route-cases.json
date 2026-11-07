@@ -1,0 +1,426 @@
+[
+ {
+  "name": "this device on the receiver port shares it",
+  "request": {
+   "host": "android",
+   "thisDevice": true,
+   "addresses": []
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "routes": [
+   {
+    "address": "127.0.0.1",
+    "port": 4000,
+    "shared": true
+   }
+  ]
+ },
+ {
+  "name": "this device on another port",
+  "request": {
+   "host": "android",
+   "thisDevice": true,
+   "addresses": []
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4001,
+   "announcePort": 63093
+  },
+  "routes": [
+   {
+    "address": "127.0.0.1",
+    "port": 4001,
+    "shared": false
+   }
+  ]
+ },
+ {
+  "name": "two addresses in list order",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": [
+    "192.0.2.10",
+    "192.0.2.11"
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "routes": [
+   {
+    "address": "192.0.2.10",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.11",
+    "port": 4000,
+    "shared": false
+   }
+  ]
+ },
+ {
+  "name": "this device first, then the addresses",
+  "request": {
+   "host": "android",
+   "thisDevice": true,
+   "addresses": [
+    "192.0.2.10",
+    "192.0.2.11"
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "routes": [
+   {
+    "address": "127.0.0.1",
+    "port": 4000,
+    "shared": true
+   },
+   {
+    "address": "192.0.2.10",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.11",
+    "port": 4000,
+    "shared": false
+   }
+  ]
+ },
+ {
+  "name": "addresses are trimmed",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": [
+    " 192.0.2.7 "
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "routes": [
+   {
+    "address": "192.0.2.7",
+    "port": 4000,
+    "shared": false
+   }
+  ]
+ },
+ {
+  "name": "sixteen addresses",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": [
+    "192.0.2.1",
+    "192.0.2.2",
+    "192.0.2.3",
+    "192.0.2.4",
+    "192.0.2.5",
+    "192.0.2.6",
+    "192.0.2.7",
+    "192.0.2.8",
+    "192.0.2.9",
+    "192.0.2.10",
+    "192.0.2.11",
+    "192.0.2.12",
+    "192.0.2.13",
+    "192.0.2.14",
+    "192.0.2.15",
+    "192.0.2.16"
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "routes": [
+   {
+    "address": "192.0.2.1",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.2",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.3",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.4",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.5",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.6",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.7",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.8",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.9",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.10",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.11",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.12",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.13",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.14",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.15",
+    "port": 4000,
+    "shared": false
+   },
+   {
+    "address": "192.0.2.16",
+    "port": 4000,
+    "shared": false
+   }
+  ]
+ },
+ {
+  "name": "seventeen addresses",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": [
+    "192.0.2.1",
+    "192.0.2.2",
+    "192.0.2.3",
+    "192.0.2.4",
+    "192.0.2.5",
+    "192.0.2.6",
+    "192.0.2.7",
+    "192.0.2.8",
+    "192.0.2.9",
+    "192.0.2.10",
+    "192.0.2.11",
+    "192.0.2.12",
+    "192.0.2.13",
+    "192.0.2.14",
+    "192.0.2.15",
+    "192.0.2.16",
+    "192.0.2.17"
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "error": "Up to 16 EFB addresses."
+ },
+ {
+  "name": "the same address twice",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": [
+    "192.0.2.5",
+    " 192.0.2.5 "
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "error": "192.0.2.5: listed twice."
+ },
+ {
+  "name": "no destination",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": []
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "error": "Turn on This device or add an EFB address."
+ },
+ {
+  "name": "an invalid address is named",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": [
+    "192.0.2.10",
+    "192.0.2.300"
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "error": "192.0.2.300: "
+ },
+ {
+  "name": "a multicast address is named",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": [
+    "224.0.0.1"
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "error": "224.0.0.1: "
+ },
+ {
+  "name": "an empty entry",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": [
+    ""
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "error": "Enter the EFB device's IPv4 address."
+ },
+ {
+  "name": "addresses must be a list",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": "192.0.2.5"
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "error": "EFB addresses must be a list."
+ },
+ {
+  "name": "addresses are required",
+  "request": {
+   "host": "android",
+   "thisDevice": true
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "error": "EFB addresses must be a list."
+ },
+ {
+  "name": "this device must be on or off",
+  "request": {
+   "host": "android",
+   "thisDevice": "yes",
+   "addresses": []
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 4000,
+   "announcePort": 63093
+  },
+  "error": "This device must be on or off."
+ },
+ {
+  "name": "discovery port clash on this device",
+  "request": {
+   "host": "android",
+   "thisDevice": true,
+   "addresses": []
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 63093,
+   "announcePort": 63093
+  },
+  "error": "discovery port"
+ },
+ {
+  "name": "discovery port is fine for other devices",
+  "request": {
+   "host": "android",
+   "thisDevice": false,
+   "addresses": [
+    "192.0.2.10"
+   ]
+  },
+  "settings": {
+   "listenPort": 4000,
+   "efbPort": 63093,
+   "announcePort": 63093
+  },
+  "routes": [
+   {
+    "address": "192.0.2.10",
+    "port": 63093,
+    "shared": false
+   }
+  ]
+ }
+]

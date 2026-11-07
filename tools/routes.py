@@ -1,8 +1,8 @@
-"""The one GDL90 route and its validation; does not change or start a bridge.
+"""GDL90 routes and their validation; does not change or start a bridge.
 
-EFBs take a Stratux or GDL90 device on UDP 4000. There are no per-EFB profiles: This device sends
-to 127.0.0.1 and Other device to its IPv4 address, both on the EFB port from Settings. On this
-device an EFB port equal to the receiver port shares that port with the EFB (see udp_listener)."""
+EFBs take a Stratux or GDL90 device on UDP 4000. A route is {host, thisDevice, addresses}: This device
+sends to 127.0.0.1 and each listed EFB address to that address, all on the EFB port from Settings. On
+this device an EFB port equal to the receiver port shares that port with the EFB (see udp_listener)."""
 import ipaddress
 import errno
 import socket
@@ -10,6 +10,7 @@ import sys
 
 HOSTS = {"android", "ios", "windows", "macos", "linux", "esp32"}
 NO_EFB_HOSTS = {"esp32"}  # no EFB runs on these, so only Other device
+MAX_ADDRESSES = 16
 
 
 def interface_broadcasts():
@@ -120,51 +121,78 @@ def port_number(value):
     return value
 
 
-def validate_route(request, settings):
-    """The single endpoint for {host, topology, address}, on settings["efbPort"]."""
-    if not isinstance(request, dict):
-        raise ValueError("Configuration must be a JSON object.")
-    host, topology = request.get("host"), request.get("topology")
-    if not isinstance(host, str) or host not in HOSTS:
-        raise ValueError("Choose a bridge host.")
-    if topology not in ("same", "network"):
-        raise ValueError("Choose where the EFB runs.")
-    port = port_number(settings["efbPort"])
-    if topology == "same":
-        if host in NO_EFB_HOSTS:
-            raise ValueError("No EFB runs on this host. Choose Other device.")
-        address, shared = "127.0.0.1", port == settings["listenPort"]
-        if port == settings.get("announcePort"):  # this device's discovery listener would take the output
-            raise ValueError("On this device the EFB port must differ from the discovery port.")
-    else:
-        address = request.get("address")
-        if not isinstance(address, str):
-            raise ValueError("Enter the EFB device's IPv4 address.")
+def efb_address(value, port, listen_port):
+    """One Other device address, normalized; errors name it."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Enter the EFB device's IPv4 address.")
+    text = value.strip()
+    try:
         try:
-            ip = ipaddress.IPv4Address(address.strip())
+            ip = ipaddress.IPv4Address(text)
         except ipaddress.AddressValueError as error:
             raise ValueError("Enter a valid IPv4 address, not a hostname.") from error
         if ip.is_loopback or ip.is_multicast or ip.is_unspecified or ip.is_reserved or int(ip) < 0x01000000 or int(ip) == 0xffffffff:
             raise ValueError("Use the other EFB device's unicast IPv4 address.")
-        address, shared = str(ip), False
-        check_endpoint(address, port, settings["listenPort"])
-    warnings = [f"Shares UDP {port} with the EFB on this device. One EFB at a time receives it; close other EFBs."] if shared else []
-    return {"routes": [{"address": address, "port": port, "shared": shared}], "warnings": warnings,
-            "displayVerified": False, "appliedToBridge": False}
+        check_endpoint(str(ip), port, listen_port)
+    except ValueError as error:
+        raise ValueError(f"{text}: {error}") from None
+    return str(ip)
+
+
+def validate_route(request, settings):
+    """The endpoints for {host, thisDevice, addresses} on settings["efbPort"]: This device first, then the
+    addresses in list order."""
+    if not isinstance(request, dict):
+        raise ValueError("Configuration must be a JSON object.")
+    host, this_device, addresses = request.get("host"), request.get("thisDevice"), request.get("addresses")
+    if not isinstance(host, str) or host not in HOSTS:
+        raise ValueError("Choose a bridge host.")
+    if not isinstance(this_device, bool):
+        raise ValueError("This device must be on or off.")
+    if not isinstance(addresses, list):
+        raise ValueError("EFB addresses must be a list.")
+    if this_device and host in NO_EFB_HOSTS:
+        raise ValueError("No EFB runs on this host. Turn off This device.")
+    if not this_device and not addresses:
+        raise ValueError("Turn on This device or add an EFB address.")
+    if len(addresses) > MAX_ADDRESSES:
+        raise ValueError(f"Up to {MAX_ADDRESSES} EFB addresses.")
+    port = port_number(settings["efbPort"])
+    routes, warnings = [], []
+    if this_device:
+        if port == settings.get("announcePort"):  # this device's discovery listener would take the output
+            raise ValueError("On this device the EFB port must differ from the discovery port.")
+        shared = port == settings["listenPort"]
+        routes.append({"address": "127.0.0.1", "port": port, "shared": shared})
+        if shared:
+            warnings.append(f"Shares UDP {port} with the EFB on this device. One EFB at a time receives it; close other EFBs.")
+    for value in addresses:
+        address = efb_address(value, port, settings["listenPort"])
+        if any(r["address"] == address for r in routes):
+            raise ValueError(f"{address}: listed twice.")
+        routes.append({"address": address, "port": port, "shared": False})
+    return {"routes": routes, "warnings": warnings, "displayVerified": False, "appliedToBridge": False}
 
 
 def migrate(request, settings):
-    """A route saved by v0.1.6 or earlier (per-EFB selections) as the one route, and its first
-    selection's port as the EFB port when Settings has none. Returns (request, settings, note):
-    note says which saved EFBs are no longer sent to, or is None."""
-    if not isinstance(request, dict) or "selections" not in request:
+    """A route saved before several EFBs ({topology, address}, or v0.1.6 per-EFB selections) as
+    {host, thisDevice, addresses}; v0.1.6's first selection port becomes the EFB port when Settings has
+    none. Returns (request, settings, note): note says which saved EFBs are no longer sent to, or is None."""
+    if not isinstance(request, dict):
         return request, settings, None
-    selections = [s for s in request.get("selections") or [] if isinstance(s, dict)] or [{}]
-    first = selections[0]
-    route = {"host": request.get("host"), "topology": request.get("topology"), "address": first.get("address", "")}
-    if "efbPort" not in settings and type(first.get("port")) is int:
-        settings = {**settings, "efbPort": first["port"]}
-    dropped = [f"{s.get('address') or '?'}:{s.get('port', '?')}" for s in selections[1:]]
-    note = (f"Saved EFBs upgraded to one route ({route['address'] or 'address needed'}); no longer sent to: "
-            + ", ".join(dropped) + ".") if dropped else None
-    return route, settings, note
+    note = None
+    if "selections" in request:
+        selections = [s for s in request.get("selections") or [] if isinstance(s, dict)] or [{}]
+        first = selections[0]
+        if "efbPort" not in settings and type(first.get("port")) is int:
+            settings = {**settings, "efbPort": first["port"]}
+        dropped = [f"{s.get('address') or '?'}:{s.get('port', '?')}" for s in selections[1:]]
+        note = (f"Saved EFBs upgraded to one route ({first.get('address') or 'address needed'}); no longer sent to: "
+                + ", ".join(dropped) + ".") if dropped else None
+        request = {"host": request.get("host"), "topology": request.get("topology"), "address": first.get("address", "")}
+    if "topology" in request:
+        same = request.get("topology") == "same"
+        address = request.get("address")
+        request = {"host": request.get("host"), "thisDevice": same,
+                   "addresses": [] if same or not isinstance(address, str) or not address.strip() else [address.strip()]}
+    return request, settings, note
