@@ -7,7 +7,7 @@
 [![Last commit](https://img.shields.io/github/last-commit/Tehcnological/sentry-bridge)](https://github.com/Tehcnological/sentry-bridge/commits/master)
 [![Open issues](https://img.shields.io/github/issues/Tehcnological/sentry-bridge)](https://github.com/Tehcnological/sentry-bridge/issues)
 
-Sentry Bridge lets you see traffic from a uAvionix **Sentry** or **Sentry Plus** ADS-B receiver in
+Sentry Bridge lets you see traffic from a uAvionix/ForeFlight **Sentry** or **Sentry Plus** ADS-B receiver in
 EFB apps other than ForeFlight, such as Garmin Pilot, FltPlan Go or AvareX.
 
 Normally the Sentry talks only to ForeFlight, over an encrypted link. It also has a little-known
