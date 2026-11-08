@@ -106,6 +106,7 @@ No dates, and plans can change. To ask for something or to help,
 - [Documentation index](docs/Home.md)
 - [Privacy](docs/Privacy.md): traffic is processed on your device; nothing is sent to the project.
 - [Building from source](docs/Building.md)
+- [Contributing](CONTRIBUTING.md): issues, pull requests and the ground rules.
 
 ## License
 
