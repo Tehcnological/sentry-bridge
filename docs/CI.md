@@ -13,7 +13,8 @@ are free for public repositories, and no secrets.
 | Windows | `windows-latest` | `tools/Test-Local.ps1`: MSVC build, full test suite, packaged control tool and GUI smoke tests, 100,000 corruption inputs under ASan |
 | macOS | `macos-latest` | `tools/test_posix.py` |
 | Android | `ubuntu-latest` | Unsigned release APK with the pinned SDK, NDK and Gradle; package name and JNI exports in all three ABIs; `tools/test_android_diagnostics.py` |
-| iOS | `xcode-27` | Generated project is current; unsigned Sideload and Lite IPAs; adapter tests; Swift worker on the host; UI tests on the simulator |
+| iOS | `xcode-27` | Generated project is current; unsigned Sideload and Lite IPAs; adapter tests; Swift worker on the host; UI tests on the simulator (Sideload build; fails unless exactly the 7 Lite-only tests skip) |
+| iOS Lite UI | `xcode-27` | UI tests on the simulator, Lite build, in parallel with iOS (fails unless exactly the 1 Sideload-only test skips) |
 | CI | `ubuntu-latest` | Passes only if everything above passed or was skipped as docs-only |
 
 No test may be skipped on any runner: `tools/ci_report.py` fails the job if one is, and shows failed
