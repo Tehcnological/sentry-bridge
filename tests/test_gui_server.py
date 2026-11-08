@@ -243,10 +243,9 @@ class TestGUI(unittest.TestCase):
         self.forward_to(peer)
         wait_for(lambda: peer["pongs"] > 0)
         self.c.close()
-        self.assertFalse(self.c.sensor_thread.is_alive())
-        pongs = peer["pongs"]
-        time.sleep(.5)
-        self.assertEqual(peer["pongs"], pongs)  # nothing sent after Exit returned
+        self.assertFalse(self.c.sensor_thread.is_alive())  # the only sender of pongs is gone
+        # Comparing pong counts raced: a pong sent before Exit could reach the peer's count after it.
+        wait_for(lambda: peer["open"] == 0)  # Exit closed the connection, so nothing more can be sent
 
     def test_exit_stops_a_sensor_reader_in_a_trickled_handshake_or_frame(self):
         for mode in ("slow-handshake", "partial-frame"):
