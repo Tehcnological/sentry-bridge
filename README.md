@@ -112,7 +112,8 @@ No dates, and plans can change. To ask for something or to help,
 
 Sentry Bridge is **GPL-3.0-only**, with an additional permission for the small-board firmware; see
 [LICENSE](LICENSE) and [NOTICE](NOTICE.txt). Third-party components keep their own licenses; see
-[Credits and legal](docs/Credits-and-Legal.md).
+[Credits and legal](docs/Credits-and-Legal.md). Copyright Christopher DeFoe. See
+[CONTRIBUTING.md](CONTRIBUTING.md) before sending changes.
 
 Not affiliated with or endorsed by uAvionix, ForeFlight or any EFB vendor; product names belong to
 their owners. Sentry Bridge uses the Sentry's own Compatibility Mode. It does not decrypt the

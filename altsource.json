@@ -10,7 +10,7 @@
     {
       "name": "Sentry Bridge",
       "bundleIdentifier": "io.github.tehcnological.sentrybridge",
-      "developerName": "Sentry Bridge contributors",
+      "developerName": "Christopher DeFoe",
       "subtitle": "Sentry traffic in any EFB",
       "localizedDescription": "Shows traffic from a uAvionix Sentry or Sentry Plus in EFB apps other than ForeFlight. The Sentry's Compatibility Mode sends traffic in a raw form; Sentry Bridge decodes it and sends standard GDL90 traffic reports to the EFB, on this device or another one. Advisory information only.",
       "iconURL": "https://raw.githubusercontent.com/Tehcnological/sentry-bridge/master/fastlane/metadata/android/en-US/images/icon.png",
