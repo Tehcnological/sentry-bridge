@@ -1,0 +1,67 @@
+name: Bug report
+description: Something does not work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please remove anything personal from logs and screenshots, such as
+        tail numbers, your location or WiFi names. Security problems: use the private report link
+        on the previous page instead.
+  - type: input
+    id: version
+    attributes:
+      label: Sentry Bridge version
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Android
+        - iPhone
+        - iPad
+        - Other (say which below)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and device
+      placeholder: "Android 15 on a Galaxy S24, Windows 11, iPadOS 26.1"
+    validations:
+      required: true
+  - type: input
+    id: receiver
+    attributes:
+      label: Receiver
+      placeholder: "Sentry, Sentry Plus"
+    validations:
+      required: true
+  - type: input
+    id: efb
+    attributes:
+      label: EFB app and device
+      placeholder: "ForeFlight on an iPad, Garmin Pilot on the same phone"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: |
+        1. Started the bridge with...
+        2. ...
+        Expected: ...
+        Happened: ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Optional. The bridge's status line or log helps the most.
