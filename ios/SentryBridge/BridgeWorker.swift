@@ -3,7 +3,13 @@ import Foundation
 struct BridgeSettings: Codable {
     var source = "192.168.4.1"
     var inputPort = "4000"
-    var destination = "127.0.0.1"
+    /// The first destination, kept for builds before several EFBs (v0.3.x), which cannot read saved settings
+    /// without it. upgradeRoute() reads it from those builds' settings; nothing else does.
+    var destination: String? = "127.0.0.1"
+    /// This device (loopback) and the EFB addresses on other devices; every one uses outputPort. Optional
+    /// so older saved settings still decode; upgradeRoute() fills them.
+    var thisDevice: Bool? = true { didSet { destination = destinations.first ?? "" } }
+    var addresses: [String]? = [] { didSet { destination = destinations.first ?? "" } }
     var outputPort = "4000"
     static let sessionLengths = [60, 120, 180, 240]
     var sessionMinutes = 240
@@ -15,14 +21,52 @@ struct BridgeSettings: Codable {
     var discoveryPort: String? = "63093"
     // Missing in older saved settings means on, matching the other platforms' default.
     var restoreCompatibility: Bool? = true
-    /// EFB on this device: loopback on the receiver port, which Stratux-type EFBs listen on.
-    mutating func useThisDevice() { destination = "127.0.0.1"; outputPort = inputPort }
-    /// EFB on another device: its address (entered or found) on the standard GDL90 port.
-    mutating func useOtherDevice() { destination = ""; outputPort = "4000" }
+    static let maxAddresses = 16
+    /// Settings saved before several EFBs: a loopback destination becomes This device, any other a one-address
+    /// list (none when it was still empty). Without a destination, a missing field takes its default.
+    mutating func upgradeRoute() {
+        guard addresses == nil || thisDevice == nil else { return }
+        guard let old = destination else { thisDevice = thisDevice ?? true; addresses = addresses ?? []; return }
+        thisDevice = Self.isLoopback(old)
+        addresses = thisDevice == true || old.isEmpty ? [] : [Self.canonical(old) ?? old]
+    }
+    /// The usual dotted form of a numeric IPv4 address (no leading zeros), or nil when it is not one.
+    static func canonical(_ address: String) -> String? {
+        var ip: UInt32 = 0
+        guard sb_parse_ipv4(address, &ip) == 1 else { return nil }
+        return "\(ip >> 24).\(ip >> 16 & 255).\(ip >> 8 & 255).\(ip & 255)"
+    }
+    /// Where this route sends, This device first.
+    var destinations: [String] { (thisDevice != false ? ["127.0.0.1"] : []) + (addresses ?? []) }
+    /// This device on: loopback on the receiver port, which Stratux-type EFBs listen on. Off: the standard
+    /// GDL90 port for the EFBs on other devices.
+    mutating func setThisDevice(_ on: Bool) { thisDevice = on; outputPort = on ? inputPort : "4000" }
+    /// Adds an EFB address (typed or found); nil when added, else why not (tools/routes.py and web/app.js wording).
+    mutating func addEFB(_ text: String) -> String? {
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines), list = addresses ?? []
+        if typed.isEmpty { return "Enter the EFB device's IPv4 address." }
+        let address = Self.canonical(typed) ?? typed
+        if list.contains(address) { return "\(address): listed twice." }
+        if list.count >= Self.maxAddresses { return "Up to \(Self.maxAddresses) EFB addresses." }
+        guard Self.canonical(typed) != nil else { return "\(address): Enter a valid IPv4 address, not a hostname." }
+        guard sbio_efb_candidate(address, UInt16(outputPort) ?? 0, source, UInt16(inputPort) ?? 0) != 0 else {
+            return "\(address): Use the other EFB device's unicast IPv4 address."
+        }
+        addresses = list + [address]
+        return nil
+    }
+    /// Why Start cannot use this route, or nil.
+    var routeError: String? {
+        let list = addresses ?? []
+        if thisDevice == false && list.isEmpty { return "Turn on This device or add an EFB address." }
+        if list.count > Self.maxAddresses { return "Up to \(Self.maxAddresses) EFB addresses." }
+        for (index, address) in list.enumerated() where list[..<index].contains(address) { return "\(address): listed twice." }
+        return nil
+    }
     /// The input shares its port only for loopback output on that same port; otherwise it stays exclusive.
     var sharesInput: Bool {
         guard let input = UInt16(inputPort), let output = UInt16(outputPort) else { return false }
-        return Self.isLoopback(destination) && input == output
+        return thisDevice != false && input == output
     }
     /// Numeric IPv4 in 127.0.0.0/8, parsed like the C adapter; anything else is not loopback.
     static func isLoopback(_ address: String) -> Bool {
@@ -45,8 +89,10 @@ struct BridgeSnapshot {
     var inputRebind: String?
     /// Fresh battery, CO and temperature from the receiver's statistics stream; nil when none or stale.
     var readings: ReceiverReadings?
-    /// The address this run now sends to after following a moved EFB; nil while unchanged.
-    var followedDestination: String?
+    /// The EFB addresses this run now sends to after following a moved EFB; nil while unchanged.
+    var followedAddresses: [String]?
+    /// Per EFB address while forwarding: "answering" or "not answering"; missing means "not seen yet".
+    var efbStates: [String: String] = [:]
     /// Latest message from following the EFB (switched, or none or several devices answer).
     var followMessage: String?
     var received: UInt64 = 0, forwarded: UInt64 = 0, sendErrors: UInt64 = 0
@@ -138,11 +184,12 @@ final class BridgeWorker: @unchecked Sendable {
     private var helpersRun: Bool { lock.lock(); defer { lock.unlock() }; return !stopped && !ended }
     private var readings: ReceiverReadings?, readingsAt = -Double.infinity
     private var lastReceive: Double?
-    // The destination this run sends to; the follower changes it only under the lock, for this run.
-    // The destination this run sends to. The follower only requests a switch; the UDP loop changes it after
+    // Where this run sends, This device first. The follower only requests a switch; the UDP loop changes it after
     // the adapter accepted the new address, so a refused switch leaves the route, checks and settings as they were.
-    private var destination = "", pendingDestination: (from: String, to: String)?
-    private var followedDestination: String?, followMessage: String?
+    private var targets: [String] = [], pendingDestination: (from: String, to: String)?
+    /// A switch the adapter accepted, for the follow rule to record on its next check; a refused one is never here.
+    private var acceptedSwitch: (from: String, to: String)?
+    private var followedAddresses: [String]?, followMessage: String?, efbStates: [String: String] = [:]
     private var compatibilityResult: String?
     private var contactResult: String?
     private var contactInFlight = false
@@ -239,14 +286,21 @@ final class BridgeWorker: @unchecked Sendable {
             if shouldStop { return (nil, false) }
         }
         guard !shouldStop else { return (nil, false) }
+        let destinations = settings.destinations
+        guard let first = destinations.first else { return ("Turn on This device or add an EFB address.", false) }
         var error = [CChar](repeating: 0, count: 512)
         let opened = demo ? sbio_open_demo(UInt16(settings.inputPort) ?? 0, &error, error.count) : sbio_open_shared(settings.source, UInt16(settings.inputPort) ?? 0,
-                                        settings.destination, UInt16(settings.outputPort) ?? 0,
+                                        first, UInt16(settings.outputPort) ?? 0,
                                         settings.sharesInput ? 1 : 0, &error, error.count)
         guard let io = opened else {
             return (String(cString: error), false)
         }
         defer { sbio_close(io) }
+        if !demo {
+            for address in destinations.dropFirst() where sbio_add_destination(io, address) != 0 {
+                return ("\(address): Use the other EFB device's unicast IPv4 address, then Start again.", false)
+            }
+        }
         let cache = EFBAnnouncements(settings)
         var listener: EFBListener?
         var discoveryError: String?
@@ -265,7 +319,7 @@ final class BridgeWorker: @unchecked Sendable {
             sbio_observe(io, nil, nil); listener?.close()
             withExtendedLifetime(cache) {}
         }
-        lock.lock(); destination = settings.destination; lock.unlock()
+        lock.lock(); targets = demo ? [] : destinations; lock.unlock()
         // Readings while forwarding, Compatibility Mode included; never in the demo or from a loopback source.
         if !demo && (settings.contactsReceiver || readsLoopbackStats) {
             let reader = ReceiverReadingsReader(receiver: settings.source, port: receiverHTTPPort, cancel: cancel,
@@ -275,8 +329,8 @@ final class BridgeWorker: @unchecked Sendable {
             helpers.enter()
             DispatchQueue(label: "io.sentrybridge.readings", qos: .utility).async { reader.run(); helpers.leave() }
         }
-        // Follow a moved EFB only for one Other device address.
-        if !demo && (settings.contactsReceiver || sweepProbe != nil) && !BridgeSettings.isLoopback(settings.destination) {
+        // Follow moved EFBs on other devices.
+        if !demo && (settings.contactsReceiver || sweepProbe != nil) && !(settings.addresses ?? []).isEmpty {
             helpers.enter()
             DispatchQueue(label: "io.sentrybridge.follow", qos: .utility).async { [self] in follow(settings); helpers.leave() }
         }
@@ -287,10 +341,13 @@ final class BridgeWorker: @unchecked Sendable {
             guard !shouldStop else { return (nil, false) }
             lock.lock(); let next = pendingDestination; pendingDestination = nil; lock.unlock()
             if let next {
-                let accepted = !refusesSwitch && sbio_set_destination(io, next.to) == 0
+                let accepted = !refusesSwitch && sbio_replace_destination(io, next.from, next.to) == 0
                 lock.lock()
                 if accepted {
-                    destination = next.to; followedDestination = next.to
+                    acceptedSwitch = next
+                    targets = targets.map { $0 == next.from ? next.to : $0 }
+                    followedAddresses = targets.filter { !BridgeSettings.isLoopback($0) }
+                    efbStates[next.from] = nil; efbStates[next.to] = "answering"
                     followMessage = EFBFollower.followMessage(from: next.from, to: next.to)
                 } else {
                     followMessage = "The EFB at \(next.from) stopped answering, but \(next.to) cannot be used; still sending to \(next.from)."
@@ -322,7 +379,8 @@ final class BridgeWorker: @unchecked Sendable {
                 value.discoveryError = discoveryError
                 lock.lock(); value.compatibilityRequest = compatibilityResult; value.receiverContact = contactResult
                 value.readings = now - readingsAt <= ReceiverReadingsReader.staleS ? readings : nil
-                value.followedDestination = followedDestination; value.followMessage = followMessage; lock.unlock()
+                value.followedAddresses = followedAddresses; value.followMessage = followMessage
+                value.efbStates = efbStates.filter { targets.contains($0.key) }; lock.unlock()
                 value.inputRebind = inputRebind
                 update(value); lastUpdate = now
                 if let duration, s.elapsed >= duration { return (nil, true) }
@@ -330,33 +388,41 @@ final class BridgeWorker: @unchecked Sendable {
         }
         return (nil, false)
     }
-    /// While forwarding to one Other device address, check it every 30 s; after an EFB that answered
-    /// missed two checks, while receiver data still arrives and this device is on the receiver's network,
-    /// sweep and switch to the one other device that answers (EFBFollower). The switch is committed under
-    /// the lock, only for this run and only if the destination has not changed since the probe.
+    /// While forwarding, check every Other device address at once every 30 s and keep its state. When exactly one
+    /// EFB that answered before missed two checks, while receiver data still arrives and this device is on the
+    /// receiver's network, sweep and replace that address with the one unlisted device that answers (EFBFollower).
+    /// The switch is committed under the lock, only for this run and only if the list has not changed since the probe.
     private func follow(_ settings: BridgeSettings) {
         var rule = EFBFollower()
         let port = UInt16(settings.outputPort) ?? 0, input = UInt16(settings.inputPort) ?? 0
         while helpersRun {
             let wake = sbio_now() + followCheckS
             while helpersRun && sbio_now() < wake { Thread.sleep(forTimeInterval: 0.05) }
-            lock.lock(); let current = destination, heard = lastReceive; lock.unlock()
-            guard helpersRun, let heard, sbio_now() - heard < 10 else { continue }
-            guard let answered = probe([current])?.first, helpersRun else { continue }
-            guard rule.checked(answered: answered), let local = localAddress(settings.source) else { continue }
+            lock.lock(); let listed = targets, heard = lastReceive, accepted = acceptedSwitch; acceptedSwitch = nil; lock.unlock()
+            if let accepted { rule.followed(from: accepted.from, to: accepted.to) }
+            let others = listed.filter { !BridgeSettings.isLoopback($0) }
+            guard helpersRun, !others.isEmpty, let heard, sbio_now() - heard < 10 else { continue }
+            guard let answers = probe(others), answers.count == others.count, helpersRun else { continue }
+            let decision = rule.checked(others, answering: Set(zip(others, answers).filter { $0.1 }.map { $0.0 }))
+            lock.lock(); efbStates = rule.states; lock.unlock()
+            guard case .sweep(let current) = decision else {
+                if case .report(let message) = decision { lock.lock(); followMessage = message; lock.unlock() }
+                continue
+            }
+            guard let local = localAddress(settings.source) else { continue }
             let found = EFBSweep.sweep(local: local, exclude: [settings.source], probe: probe, cancelled: { !helpersRun })
                 .filter { sbio_efb_candidate($0, port, settings.source, input) != 0 }
             guard helpersRun else { continue }
-            switch rule.swept(found, current: current) {
-            case .keep: continue
+            switch rule.swept(found, current: current, listed: Set(listed)) {
+            case .keep, .sweep:
+                lock.lock(); efbStates = rule.states; lock.unlock()
             case .report(let message):
                 lock.lock(); followMessage = message; lock.unlock()
             case .follow(let target):
                 lock.lock()
-                guard !stopped, !ended, destination == current, pendingDestination == nil else { lock.unlock(); continue }
+                guard !stopped, !ended, targets == listed, pendingDestination == nil else { lock.unlock(); continue }
                 pendingDestination = (current, target)
                 lock.unlock()
-                rule.followed()
             }
         }
     }

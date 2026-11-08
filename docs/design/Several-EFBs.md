@@ -1,6 +1,6 @@
 # Several EFBs at once: design
 
-Status: approved design, not yet built. Target: two pull requests, described under Rollout.
+Status: built. Windows and Android in #15, iPhone and iPad in #16, as described under Rollout.
 
 ## Goal
 
@@ -9,7 +9,7 @@ Send GDL90 to more than one EFB at the same time, for example:
 - a laptop or phone running the bridge and feeding two tablets, or
 - a tablet running the bridge and its own EFB, plus one or two other tablets.
 
-Today the bridge sends to one route: This device (127.0.0.1) or one Other device address.
+Before this, the bridge sent to one route: This device (127.0.0.1) or one Other device address.
 
 ## Decisions
 

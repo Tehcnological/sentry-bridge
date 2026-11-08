@@ -78,8 +78,6 @@ class TestAltSource(unittest.TestCase):
             altsource.check(source)
 
     def test_published_source_matches_the_app(self):
-        if not altsource.SOURCE.exists():
-            return  # added after the first release with an IPA (a skip would block release preparation)
         altsource.check(json.loads(altsource.SOURCE.read_text(encoding="utf-8")))
 
 

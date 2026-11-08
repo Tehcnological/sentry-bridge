@@ -138,7 +138,7 @@ class TestGUI(unittest.TestCase):
         http = self.c.http
         self.c.http = lambda path, *args, **kwargs: gets.append(path) or http(path, *args, **kwargs)
         self.simulator()
-        self.c.action("start", self.route(free_port()))
+        self.c.action("start", self.route(self.efb_port()))
         wait_for(lambda: self.c.contact_ok is True)
         self.assertIn("/?action=get", gets)
         self.assertIn("Keepalive: receiver status OK", "\n".join(self.c.runtime.logs))
@@ -146,7 +146,7 @@ class TestGUI(unittest.TestCase):
     def test_sensors_come_from_the_statistics_websocket_while_forwarding(self):
         self.simulator()
         self.assertIsNone(self.c.status()["sensors"])
-        self.c.action("start", self.route(free_port()))
+        self.c.action("start", self.route(self.efb_port()))
         wait_for(lambda: self.c.status()["sensors"] is not None)
         # The cabin sensor, not the warmer baro sensor on the board.
         self.assertEqual(self.c.status()["sensors"], {"batteryPercent": 80, "coPpm": 0, "temperatureC": 21.5})
@@ -243,10 +243,9 @@ class TestGUI(unittest.TestCase):
         self.forward_to(peer)
         wait_for(lambda: peer["pongs"] > 0)
         self.c.close()
-        self.assertFalse(self.c.sensor_thread.is_alive())
-        pongs = peer["pongs"]
-        time.sleep(.5)
-        self.assertEqual(peer["pongs"], pongs)  # nothing sent after Exit returned
+        self.assertFalse(self.c.sensor_thread.is_alive())  # the only sender of pongs is gone
+        # Comparing pong counts raced: a pong sent before Exit could reach the peer's count after it.
+        wait_for(lambda: peer["open"] == 0)  # Exit closed the connection, so nothing more can be sent
 
     def test_exit_stops_a_sensor_reader_in_a_trickled_handshake_or_frame(self):
         for mode in ("slow-handshake", "partial-frame"):
@@ -543,6 +542,12 @@ class TestGUI(unittest.TestCase):
         self.c.runtime.settings = {**self.c.runtime.settings, "efbPort": port}
         return dict(host="windows", thisDevice=True, addresses=[])
 
+    def efb_port(self):
+        """A free port other than the receiver's, so a test route is never shared by chance."""
+        while (port := free_port()) == self.c.runtime.settings["listenPort"]:
+            pass
+        return port
+
     def test_receiver_switches_backup_and_packet_verification(self):
         self.synchronized_simulator()
         result = self.job("compatibility", dict(enabled=True, seconds=.7))
@@ -558,7 +563,7 @@ class TestGUI(unittest.TestCase):
         self.synchronized_simulator()
         self.job("compatibility", dict(enabled=True, verify=False))
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as rx:
-            rx.bind(("127.0.0.1", 0))
+            rx.bind(("127.0.0.1", self.efb_port()))
             rx.settimeout(4)
             self.c.action("start", self.route(rx.getsockname()[1]))
             capture_id = self.c.action("capture-start", {})["capture"]
@@ -581,7 +586,7 @@ class TestGUI(unittest.TestCase):
 
     def test_auto_restore_then_manual_disable_is_respected(self):
         self.simulator()
-        self.c.action("start", self.route(free_port()))
+        self.c.action("start", self.route(self.efb_port()))
         wait_for(lambda: self.c.simulator.public, 12)
         wait_for(lambda: not self.c.busy(), 12)
         self.job("compatibility", {"enabled": False, "seconds": .7})
@@ -595,13 +600,13 @@ class TestGUI(unittest.TestCase):
             _, path = self.c.artifact("kept.txt", "report")
             path.write_text("keep")
             self.c.complete_file(next(reversed(self.c.artifacts)))
-        self.c.action("start", self.route(free_port()))
+        self.c.action("start", self.route(self.efb_port()))
         wait_for(lambda: self.c.simulator.public, 12)
         wait_for(lambda: not self.c.busy(), 12)
         self.assertEqual(self.c.job["state"], "done", self.c.job)
         self.c.action("stop", {})
         self.c.simulator.public = False
-        self.c.action("start", self.route(free_port()))
+        self.c.action("start", self.route(self.efb_port()))
         wait_for(lambda: self.c.simulator.public, 12)
         wait_for(lambda: not self.c.busy(), 12)
         self.assertEqual(len(self.c.artifacts), 100)
@@ -908,7 +913,7 @@ class TestGUI(unittest.TestCase):
         self.simulator()
         self.job("compatibility", dict(enabled=True, verify=False))
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as rx:
-            rx.bind(("127.0.0.1", 0))
+            rx.bind(("127.0.0.1", self.efb_port()))
             rx.settimeout(4)
             self.c.action("start", self.route(rx.getsockname()[1]))
             wait_for(lambda: hasattr(self.c.runtime, "core"))
@@ -986,7 +991,7 @@ class TestGUI(unittest.TestCase):
         self.c._submit("Blocked operation", operation)
         try:
             self.assertTrue(entered.wait(8))
-            self.c.runtime.start(validate_settings_routes(self.route(free_port()), self.c.runtime.settings))
+            self.c.runtime.start(validate_settings_routes(self.route(self.efb_port()), self.c.runtime.settings))
             self.assertTrue(deferred.wait(8), "Wait until an actual enable request is deferred")
             self.assertTrue(self.c.busy())
             release.set()
@@ -1015,7 +1020,7 @@ class TestGUI(unittest.TestCase):
         self.simulator()
         self.job("compatibility", dict(enabled=True, verify=False))
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver:
-            receiver.bind(("127.0.0.1", 0)); receiver.settimeout(4)
+            receiver.bind(("127.0.0.1", self.efb_port())); receiver.settimeout(4)
             self.c.action("start", self.route(receiver.getsockname()[1]))
             with self.c.runtime.lock:
                 self.c.runtime.recording = (FullDisk(), None)
@@ -1342,7 +1347,7 @@ class TestGUI(unittest.TestCase):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as held:
             held.bind(("0.0.0.0", port))
             with self.assertRaisesRegex(ValueError, "unavailable"):
-                self.c.action("start", self.route(free_port()))
+                self.c.action("start", self.route(self.efb_port()))
 
     def test_upload_analysis_weather_and_no_arbitrary_file_access(self):
         data = sim.uplink_0x07(__import__("random").Random(1))

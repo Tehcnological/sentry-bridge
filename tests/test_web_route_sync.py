@@ -84,6 +84,9 @@ renderEfbList(); poll(status);
 out.stable = {same: firstRow === $("efb-list").children[0], label: firstRow.children[2]["aria-label"]};
 // Check setup errors that name an address go under the field.
 showAddressError("192.168.4.21: listed twice."); out.checkError = $("address-error").textContent;
+// Browser B moved the EFB port only: this browser shows the new port, and its validation no longer counts.
+checked = true; $("validation").hidden = false;
+out.port = poll({...status, settings: {...settings, efbPort: 4001}});
 // Reload while forwarding to a saved route: the first poll is not a change.
 for (const key of Object.keys(synced)) delete synced[key];
 const saved = {settings, routesRequest: {host: "windows", thisDevice: false, addresses: ["192.168.4.30"]}, running: true};
@@ -138,7 +141,7 @@ class TestWebRouteSync(unittest.TestCase):
         script = (ROOT / "web/app.js").read_text(encoding="utf-8")
         self.assertIn("if (routeState() !== shownRoute) { $(\"discovered\").replaceChildren(); lastFound = []; discoveryRoute = null; updateDestination(); }", script)
         if node() is None:
-            return  # shortcut: this host has no Node; the line above still pins the refresh
+            self.skipTest("Node.js is needed to run the screen's own functions")
         fields = re.search(r"const settingsFields = (\{[^}]*\});", script).group(1)
         harness = HARNESS.replace("SETTINGS_FIELDS", fields).replace(
             "FUNCTIONS", "\n".join(function_source(script, name) for name in NAMES))
@@ -173,6 +176,10 @@ class TestWebRouteSync(unittest.TestCase):
         self.assertEqual(out["states"], ["answering", "not seen yet"])
         self.assertEqual(out["stable"], {"same": True, "label": "Remove 192.168.4.20"})
         self.assertEqual(out["checkError"], "192.168.4.21: listed twice.")
+        self.assertIn("UDP 4001", out["port"]["help"])
+        self.assertIn("UDP 4001", out["port"]["summary"])
+        self.assertFalse(out["port"]["checked"])
+        self.assertTrue(out["port"]["validationHidden"])
         self.assertTrue(out["reload"]["checked"], out["reload"])  # restored route, unchanged poll: nothing invalidated
         self.assertEqual(out["reload"]["addresses"], ["192.168.4.30"])
         # A Find EFB result from before a route change never comes back after the clear.

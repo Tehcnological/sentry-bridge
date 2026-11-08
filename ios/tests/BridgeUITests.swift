@@ -42,21 +42,29 @@ final class BridgeUITests: XCTestCase {
             return false
         }
     }
-    /// Selects Other device in the segmented control or, at accessibility text sizes, the inline
-    /// list, and confirms the route's address field appears.
-    private func selectOtherDevice(_ app: XCUIApplication) {
-        let field = app.textFields["Other device IPv4"]
-        let other = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Other device")).firstMatch
-        for _ in 0..<3 {
-            reveal(other, in: app)
-            other.tap()
-            if field.waitForExistence(timeout: 3) { return }
-        }
-        XCTFail("Select the Other device topology before editing its route")
+    /// Sets the This device switch with one tap on the switch control itself (a tap on a Form row's centre may
+    /// not toggle it), then waits for the value.
+    private func setThisDevice(_ on: Bool, in app: XCUIApplication) {
+        let toggle = app.switches["bridge.thisDevice"], want = on ? "1" : "0"
+        reveal(toggle, in: app)
+        if toggle.value as? String != want { (toggle.switches.firstMatch.exists ? toggle.switches.firstMatch : toggle).tap() }
+        let set = expectation(for: NSPredicate(format: "value == %@", want), evaluatedWith: toggle)
+        wait(for: [set], timeout: 5)
+    }
+    /// Types an EFB address and taps Add (Return adds too; replaceText retries on a value mismatch, so it
+    /// must not submit).
+    private func addEFB(_ address: String, in app: XCUIApplication) {
+        let field = app.textFields["EFB IPv4 address"]
+        reveal(field, in: app)
+        replaceText(in: field, with: address, app: app)
+        let add = app.buttons["bridge.addEFB"]
+        reveal(add, in: app); add.tap()
+    }
+    private func listedEFB(_ address: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ AND label BEGINSWITH %@", "bridge.efb", address)).firstMatch
     }
     func testFindEFBExitWhileStopped() {
         let app = launch()
-        selectOtherDevice(app)
         let find = app.buttons["bridge.findEFB"]
         for _ in 0..<5 { if find.isHittable { break }; app.swipeUp() }
         find.tap()
@@ -101,12 +109,9 @@ final class BridgeUITests: XCTestCase {
         let bound = withUnsafePointer(to: &source) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(sender, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
         XCTAssertEqual(bound, 0)
         let app = launch(extraArguments: delayedObserver ? ["--ui-delay-discovery-observer"] : [])
-        selectOtherDevice(app)
-        let field = app.textFields["Other device IPv4"]
-        reveal(field, in: app)
         if running {
-            replaceText(in: field, with: address + "\n", app: app)
-            XCTAssertEqual(field.value as? String, address)
+            addEFB(address, in: app)
+            XCTAssertTrue(listedEFB(address, in: app).waitForExistence(timeout: 5), "typed address listed")
             for _ in 0..<5 { if app.buttons["bridge.startStop"].isHittable { break }; app.swipeDown() }
             app.buttons["bridge.startStop"].tap()
             XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5))
@@ -133,16 +138,21 @@ final class BridgeUITests: XCTestCase {
         find.tap()
         XCTAssertTrue(app.staticTexts["Synthetic EFB"].waitForExistence(timeout: delayedObserver ? 15 : 10))
         XCTAssertEqual(app.staticTexts.matching(identifier: "Synthetic EFB").count, 1)
+        let use = app.buttons["bridge.useEFB"]
         if running {
-            XCTAssertFalse(app.buttons["bridge.useEFB"].isEnabled)
+            XCTAssertFalse(use.isEnabled)
             app.buttons["Exit"].tap()
             for _ in 0..<5 { if app.buttons["bridge.startStop"].isHittable { break }; app.swipeDown() }
             app.buttons["bridge.startStop"].tap()
             XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
         } else {
-            app.buttons["bridge.useEFB"].tap()
-            XCTAssertTrue(field.waitForExistence(timeout: 5))
-            XCTAssertEqual(field.value as? String, address)
+            XCTAssertEqual(use.label, "Add Synthetic EFB at \(address)")
+            use.tap()
+            // The list stays open; the row now says Added and cannot add the address twice.
+            XCTAssertTrue(app.buttons["Added Synthetic EFB at \(address)"].waitForExistence(timeout: 5))
+            XCTAssertFalse(use.isEnabled)
+            app.buttons["Exit"].tap()
+            XCTAssertTrue(listedEFB(address, in: app).waitForExistence(timeout: 5), "found address listed")
         }
     }
     private func launch(extraArguments: [String] = [], extraEnvironment: [String: String] = [:]) -> XCUIApplication {
@@ -282,7 +292,7 @@ final class BridgeUITests: XCTestCase {
             locationShot.name = "EFB setup layout \(orientation.rawValue)"; locationShot.lifetime = .keepAlways; add(locationShot)
             let settings = app.buttons["Settings"]
             reveal(settings, in: app); settings.tap()
-            for label in ["Sentry IPv4", "Input UDP port", "Destination IPv4", "Output UDP port", "EFB discovery UDP port"] {
+            for label in ["EFB IPv4 address", "Sentry IPv4", "Input UDP port", "Output UDP port", "EFB discovery UDP port"] {
                 let field = app.textFields[label]
                 reveal(field, in: app)
                 XCTAssertEqual(field.label, label)
@@ -322,19 +332,13 @@ final class BridgeUITests: XCTestCase {
         }
         gate("baseline")
         for phase in gates == nil ? ["after"] : ["after", "after2"] {
-            if phase == "after2" {
-                // Start needs the local route again after the first round selected Other device.
-                let local = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "This device")).firstMatch
-                reveal(local, in: app); local.tap()
-                reveal(start, in: app, upwards: false)
-            }
+            if phase == "after2" { reveal(start, in: app, upwards: false) }
             for _ in 0..<5 {
                 start.tap()
                 XCTAssertTrue(app.buttons["Stop Bridge"].waitForExistence(timeout: 5))
                 start.tap()
                 XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
             }
-            selectOtherDevice(app)
             let find = app.buttons["bridge.findEFB"]
             reveal(find, in: app)
             for _ in 0..<5 {
@@ -420,15 +424,15 @@ final class BridgeUITests: XCTestCase {
         let app = launch(extraArguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"])
         let settings = app.buttons["Settings"]
         reveal(settings, in: app); settings.tap()
-        let field = app.textFields["Destination IPv4"]
+        let field = app.textFields["Output UDP port"]
         reveal(field, in: app); field.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         let before = layout(app).two
         XCUIDevice.shared.orientation = .landscapeLeft
         let after = layout(app).two
         let focused = NSPredicate(format: "hasKeyboardFocus == true")
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: focused, object: app.textFields["Destination IPv4"])], timeout: 5),
-                       .completed, "Destination IPv4 keeps focus after rotation (layout \(before ? "two" : "one") to \(after ? "two" : "one"))")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: focused, object: app.textFields["Output UDP port"])], timeout: 5),
+                       .completed, "Output UDP port keeps focus after rotation (layout \(before ? "two" : "one") to \(after ? "two" : "one"))")
         XCTAssertTrue(app.keyboards.firstMatch.exists, "keyboard stays up")
         XCUIDevice.shared.orientation = .portrait
     }
@@ -583,22 +587,44 @@ final class BridgeUITests: XCTestCase {
         capture("Expanded setup instructions")
     }
 
-    func testEFBLocationSetsRoute() {
+    func testThisDeviceSwitchAndEFBList() {
         let app = launch()
-        selectOtherDevice(app)
+        // This device off: the standard GDL90 port for other devices, and Start needs an address.
+        setThisDevice(false, in: app)
         let settings = app.buttons["Settings"]
         reveal(settings, in: app); settings.tap()
         let output = app.textFields["Output UDP port"]
         reveal(output, in: app)
         XCTAssertEqual(output.value as? String, "4000", "Another device listens on the standard GDL90 port")
-        // This device: loopback on the receiver port (14000 in the synthetic route), shared with the EFB.
-        let this = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "This device")).firstMatch
-        reveal(this, in: app); this.tap()
+        let start = app.buttons["bridge.startStop"]
+        reveal(start, in: app, upwards: false); start.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Turn on This device or add an EFB address.")).firstMatch.waitForExistence(timeout: 5))
+        // This device on: loopback on the receiver port (14000 in the synthetic route), shared with the EFB.
+        setThisDevice(true, in: app)
         reveal(output, in: app)
         XCTAssertEqual(output.value as? String, "14000")
-        let destination = app.textFields["Destination IPv4"]
-        reveal(destination, in: app)
-        XCTAssertEqual(destination.value as? String, "127.0.0.1")
+        // Two addresses listed; the same one again is refused; Return adds; Remove drops one.
+        addEFB("192.0.2.10", in: app)
+        XCTAssertTrue(listedEFB("192.0.2.10", in: app).waitForExistence(timeout: 5))
+        addEFB("192.0.2.10", in: app)
+        XCTAssertTrue(app.staticTexts["192.0.2.10: listed twice."].waitForExistence(timeout: 5))
+        // Closing Find EFB clears an Add error, so one from its list never stays under the address field.
+        let find = app.buttons["bridge.findEFB"]
+        reveal(find, in: app); find.tap()
+        XCTAssertTrue(app.buttons["Exit"].waitForExistence(timeout: 5))
+        app.buttons["Exit"].tap()
+        XCTAssertTrue(find.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["192.0.2.10: listed twice."].waitForNonExistence(timeout: 5), "Exit from Find EFB must clear the Add error")
+        let field = app.textFields["EFB IPv4 address"]
+        reveal(field, in: app)
+        replaceText(in: field, with: "192.0.2.11", app: app)
+        field.typeText("\n")
+        XCTAssertTrue(listedEFB("192.0.2.11", in: app).waitForExistence(timeout: 5), "Return adds the address")
+        let remove = app.buttons["Remove 192.0.2.10"]
+        reveal(remove, in: app); remove.tap()
+        XCTAssertTrue(listedEFB("192.0.2.10", in: app).waitForNonExistence(timeout: 5))
+        XCTAssertTrue(listedEFB("192.0.2.11", in: app).exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "EFB list"; shot.lifetime = .keepAlways; add(shot)
     }
 
     func testBridgeSessionRequestAndStop() throws {
