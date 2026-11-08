@@ -48,9 +48,7 @@ what each test needs and how to build each platform.
 - **The decoders must agree.** `bridge.py` is the Python reference. The C core (`core/`) serves the
   Windows bridge, the desktop app, Android and iOS. Their output must be identical byte for byte,
   and the parity tests check that. A decoding or encoding change goes into both.
-- **The C field decoders are clean-room.** `core/sbdecode.c` was written from
-  [docs/Decoder-Spec.md](docs/Decoder-Spec.md) alone. To change it, update the spec first and
-  write the code from the spec. Do not copy code from other ADS-B or UAT decoders, or from any
+- **Write your own code.** Do not copy code from other ADS-B or UAT decoders, or from any
   receiver's firmware.
 - **Generated files stay generated.** The Xcode project comes from `tools/generate_ios_project.py`;
   change the generator, not the project. CI checks that the project is current.
