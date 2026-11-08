@@ -110,7 +110,7 @@ No dates, and plans can change. To ask for something or to help,
 
 ## License
 
-Sentry Bridge is **GPL-3.0-only**, with an additional permission for app stores; see
+Sentry Bridge is **GPL-3.0-only**, with an additional permission for the small-board firmware; see
 [LICENSE](LICENSE) and [NOTICE](NOTICE.txt). Third-party components keep their own licenses; see
 [Credits and legal](docs/Credits-and-Legal.md).
 

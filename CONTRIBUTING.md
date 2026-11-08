@@ -60,6 +60,9 @@ what each test needs and how to build each platform.
 
 ## License
 
-Sentry Bridge is GPL-3.0-only, with the additional permissions in [NOTICE](NOTICE.txt). By
-submitting a contribution, you agree that it is licensed under those same terms, including the
-permission for app stores.
+Sentry Bridge is GPL-3.0-only, with the additional permission in [NOTICE](NOTICE.txt).
+Christopher DeFoe keeps sole copyright so he can publish it in app stores under other terms.
+
+That means outside pull requests can only be accepted from authors who first assign the copyright
+in their change to Christopher DeFoe. Without that, please open an issue describing the change
+instead of a pull request.

@@ -1,7 +1,7 @@
 # Credits and legal
 
-Sentry Bridge is distributed under **GPL-3.0-only**, with an additional permission for app
-stores (see [NOTICE](../NOTICE.txt)). Third-party components retain their licenses.
+Sentry Bridge is distributed under **GPL-3.0-only**, with an additional permission for the
+small-board firmware (see [NOTICE](../NOTICE.txt)). Third-party components retain their licenses.
 The full terms are in [LICENSE](../LICENSE).
 
 ## Prior work and components

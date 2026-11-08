@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The licence texts shipped in the app bundle, shown in full: NOTICE (including the GPL section 7
-/// app-store permission) and LICENSE (GPL-3.0). The iOS app contains project code only; the Python,
+/// firmware permission) and LICENSE (GPL-3.0). The iOS app contains project code only; the Python,
 /// Kotlin and dump978 notices cover other platforms' components.
 struct LicensesView: View {
     static let files: [(title: String, resource: String, ext: String?)] = [

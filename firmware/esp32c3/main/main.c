@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * Copyright (c) 2026 Sentry Bridge contributors. See NOTICE.txt.
+ * Copyright (c) 2026 Christopher DeFoe. See NOTICE.txt.
  *
  * Sentry Bridge for ESP32-C3 boards. Joins the receiver's open WiFi (name starting "Sentry"),
  * listens on UDP 4000 and broadcasts decoded traffic to the receiver's network on UDP 4000.
