@@ -32,8 +32,7 @@ copyright is held by the Sentry Bridge contributors. You may remove it from
 your copies or modified versions. The firmware's third-party notices are in
 firmware/notices/Third-Party.txt.
 
-The native decoder (core/sbdecode.c) was written clean-room from
-docs/Decoder-Spec.md. The Python reference keeps this attribution:
+The Python reference keeps this attribution:
 - pyModeS 2.22.0, Junzi Sun and contributors, GNU GPL version 3.
   https://github.com/junzis/pyModeS/tree/v2.22.0
   bridge.py imports it at run time; it is installed separately.

@@ -10,8 +10,7 @@ Push-Location $guiRoot
 try {
     $guiBuild = Join-Path $guiRoot ('build/desktop/' + [Guid]::NewGuid().ToString('N'))
     # The packaged GUI always uses the C core. Keep the Python reference decoder and its optional
-    # dependencies out to keep the native package small. The combined app is GPLv3;
-    # excluding a Python package does not establish independent decoder provenance.
+    # dependencies out to keep the native package small. The combined app is GPLv3.
     $guiModules = @('bridge', 'pyModeS', 'numpy', 'yaml')
     $guiExcluded = @($guiModules | ForEach-Object { '--exclude-module', $_ })
     $env:PYINSTALLER_CONFIG_DIR = Join-Path $SbScratch 'pyinstaller-gui-cache'

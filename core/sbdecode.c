@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
  * 1090ES and UAT field decoders.
- * Written from docs/Decoder-Spec.md only (clean room); see that file.
+ * Field layouts and numeric behaviour: docs/Decoder-Spec.md.
  */
 #include <stdint.h>
 #include <stddef.h>
