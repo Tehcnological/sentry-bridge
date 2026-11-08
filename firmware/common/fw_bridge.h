@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * Copyright (c) 2026 Sentry Bridge contributors. See NOTICE.txt.
+ * Copyright (c) 2026 Christopher DeFoe. See NOTICE.txt.
  *
  * Board-independent bridge loop for the microcontroller firmware (ESP32-C3, Pico W, Pico 2 W).
  * The board code owns WiFi, sockets and time; this file decides what to send and when to contact

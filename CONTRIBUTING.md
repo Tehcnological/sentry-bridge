@@ -1,7 +1,18 @@
 # Contributing
 
-Thanks for helping. Bug reports, device reports and pull requests are all welcome. Everyone taking
-part follows the [code of conduct](CODE_OF_CONDUCT.md).
+Thanks for helping. Bug reports and device reports are welcome. Pull requests are welcome too, with
+one condition on copyright below. Everyone taking part follows the
+[code of conduct](CODE_OF_CONDUCT.md).
+
+## Copyright
+
+Sentry Bridge is published under GPL-3.0-only, with the additional permission in
+[NOTICE](NOTICE.txt). Christopher DeFoe keeps sole copyright so he can publish it in app stores
+under other terms.
+
+That means outside pull requests can only be accepted from authors who first assign the copyright
+in their change to Christopher DeFoe. Without that, please open an issue describing the change
+instead of a pull request.
 
 ## Reporting a problem
 
@@ -19,11 +30,12 @@ do not. See [Compatibility](docs/Compatibility.md).
 
 ## Pull requests
 
-1. Fork the repository and branch from `master`.
-2. Keep one change per pull request, with tests and the docs it affects.
-3. Run the tests locally (below), then open the pull request against `master`.
-4. In the description, say what changed and how you checked it. Mention anything you could only
-   check on a device, and anything you could not check.
+1. Outside contributors: assign the copyright in your change first (see [Copyright](#copyright)).
+2. Fork the repository and branch from `master`.
+3. Keep one change per pull request, with tests and the docs it affects.
+4. Run the tests locally (below), then open the pull request against `master`.
+5. In the description, say what changed and how you checked it. Mention anything you could only
+   check on a device, and anything you could not check. The pull request template lists the checks.
 
 The **CI** check must pass before a merge. It builds and tests every platform; see
 [Continuous integration](docs/CI.md). A first-time contributor's run starts after a maintainer
@@ -57,9 +69,3 @@ what each test needs and how to build each platform.
 - **Supported platforms.** Windows, Android, iPhone and iPad are maintained. macOS and Linux are
   unmaintained: the desktop app may run there from source, and changes for them are welcome if
   they keep the tests passing.
-
-## License
-
-Sentry Bridge is GPL-3.0-only, with the additional permissions in [NOTICE](NOTICE.txt). By
-submitting a contribution, you agree that it is licensed under those same terms, including the
-permission for app stores.
