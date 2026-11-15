@@ -169,7 +169,7 @@ function updateDestination() {
 }
 for (const id of ["host","same"]) $(id).addEventListener("change",updateDestination);
 $("address").addEventListener("input",() => showAddressError(""));
-$("address").addEventListener("keydown",event => { if (event.key === "Enter") { event.preventDefault(); addEfb($("address").value); } });
+$("address").addEventListener("keydown",event => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); addEfb($("address").value); } });
 $("add-efb").addEventListener("click",() => addEfb($("address").value));
 $("find-efb").addEventListener("click",() => { $("discovered").replaceChildren(); lastFound = []; discoveryRoute = shownRoute; act("discover",{seconds:6}); });
 function renderDiscovered(efbs) {
