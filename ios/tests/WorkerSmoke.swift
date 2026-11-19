@@ -361,6 +361,11 @@ import Foundation
             back.upgradeRoute()
             expect(back.thisDevice == false && back.addresses == ["192.168.4.40", "192.168.4.41"], "a saved route read back must not change: \(back.addresses ?? [])")
         } else { expect(false, "saved settings must decode") }
+        // Settings that have both new fields but lost destination (early several-EFB test builds) get it back.
+        var noDestination = saved { $0["destination"] = nil; $0["thisDevice"] = false; $0["addresses"] = ["192.168.4.50"] }
+        noDestination.upgradeRoute()
+        expect(savedDestination(noDestination) as? String == "192.168.4.50" && noDestination.addresses == ["192.168.4.50"],
+               "settings without destination must save the first address as destination: \(String(describing: savedDestination(noDestination)))")
         guard failures.isEmpty else { failures.forEach { print("FAIL: \($0)") }; exit(1) }
         print("PASS: typed addresses stored in dotted form, saved routes upgraded and kept, destination saved for older builds")
     }
