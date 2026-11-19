@@ -23,9 +23,10 @@ struct BridgeSettings: Codable {
     var restoreCompatibility: Bool? = true
     static let maxAddresses = 16
     /// Settings saved before several EFBs: a loopback destination becomes This device, any other a one-address
-    /// list (none when it was still empty). Without a destination, a missing field takes its default.
+    /// list (none when it was still empty). Without a destination, a missing field takes its default. Current
+    /// settings only get destination back when it was lost (decoding skips didSet).
     mutating func upgradeRoute() {
-        guard addresses == nil || thisDevice == nil else { return }
+        guard addresses == nil || thisDevice == nil else { destination = destinations.first ?? ""; return }
         guard let old = destination else { thisDevice = thisDevice ?? true; addresses = addresses ?? []; return }
         thisDevice = Self.isLoopback(old)
         addresses = thisDevice == true || old.isEmpty ? [] : [Self.canonical(old) ?? old]
