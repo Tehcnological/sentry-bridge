@@ -98,7 +98,7 @@ enum RunMode { case foreground, audio, session }
         var route = BridgeSettings()
         route.source = "127.0.0.1"; route.inputPort = DemoReplayer.inputPort
         // The worker opens a decode-only adapter with no output socket.
-        route.destination = "127.0.0.1"; route.outputPort = DemoReplayer.outputPort
+        route.outputPort = DemoReplayer.outputPort
         route.experiment = false; route.restoreCompatibility = false; route.keepAwake = settings.keepAwake
         settings = route; demo = true; demoReplayer = replayer
         start()
@@ -113,6 +113,7 @@ enum RunMode { case foreground, audio, session }
     init() {
         settings = UserDefaults.standard.data(forKey: "bridge.settings.v1")
             .flatMap { try? JSONDecoder().decode(BridgeSettings.self, from: $0) } ?? BridgeSettings()
+        settings.upgradeRoute()
         // Older builds allowed any length from 1 to 240; round up to the nearest offered length.
         settings.sessionMinutes = BridgeSettings.sessionLengths.first { $0 >= settings.sessionMinutes } ?? 240
         keepRunning = KeepRunningChoice.load(UserDefaults.standard.data(forKey: KeepRunningChoice.storeKey), flavor: flavor)
@@ -201,13 +202,24 @@ enum RunMode { case foreground, audio, session }
     func syntheticSettings() {
         guard !busy else { return }
         settings.source = "127.0.0.1"; settings.inputPort = "14000"
-        settings.destination = "127.0.0.1"; settings.outputPort = "14001"
+        settings.thisDevice = true; settings.outputPort = "14001"
+    }
+    /// The EFB field and Find EFB's Add; addressError says why an address was not added.
+    @Published var addressError: String?
+    @discardableResult func addEFB(_ text: String) -> Bool {
+        guard !busy else { return false }
+        addressError = settings.addEFB(text)
+        return addressError == nil
+    }
+    func removeEFB(_ address: String) {
+        guard !busy else { return }
+        settings.addresses = (settings.addresses ?? []).filter { $0 != address }; addressError = nil
     }
     func findEFBs() {
         exitDiscovery()
         discoveryVisible = true; findingEFBs = true
         discoveredEFBs = []; discoveryMessage = nil
-        discoveryList.start(route: settings.destination)
+        discoveryList.start()
         let id = UUID(); discoveryToken = id
         let usingBridge = busy && worker != nil
         let deadline = sbio_now() + 6
@@ -217,12 +229,12 @@ enum RunMode { case foreground, audio, session }
         search.findEFBs(settings, listen: !usingBridge, update: { [weak self] entries in
             DispatchQueue.main.async {
                 guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
-                self.discoveryList.announce(entries, route: self.settings.destination); self.showDiscovered()
+                self.discoveryList.announce(entries); self.showDiscovered()
             }
         }, swept: { [weak self] entries in
             DispatchQueue.main.async {
                 guard let self, self.discoveryToken == id, self.discoveryVisible else { return }
-                self.discoveryList.sweep(entries, route: self.settings.destination); self.showDiscovered()
+                self.discoveryList.sweep(entries); self.showDiscovered()
             }
         }, finish: { [weak self] error in
             DispatchQueue.main.async {
@@ -230,7 +242,7 @@ enum RunMode { case foreground, audio, session }
                 self.discoverySearching = false; self.discoveryWorker = nil
                 if !usingBridge {
                     self.findingEFBs = false
-                    self.discoveryMessage = !self.discoveryList.isCurrent(route: self.settings.destination) ? Self.routeChanged
+                    self.discoveryMessage = !self.discoveryList.isCurrent ? Self.routeChanged
                         : error ?? (self.discoveredEFBs.isEmpty ? Self.nothingFound : nil)
                 }
             }
@@ -248,41 +260,42 @@ enum RunMode { case foreground, audio, session }
                 // Sample once more before ending the search. A delayed first main-actor
                 // turn must not discard announcements already received by the worker.
                 if usingBridge && self.findingEFBs {
-                    self.discoveryList.announce(self.snapshot.efbs, route: self.settings.destination)
+                    self.discoveryList.announce(self.snapshot.efbs)
                     if let error = self.snapshot.discoveryError { self.discoveryMessage = error }
                 }
                 self.showDiscovered(now: now)
                 if usingBridge && now >= deadline && !self.discoverySearching && self.findingEFBs {
                     self.findingEFBs = false
-                    self.discoveryMessage = !self.discoveryList.isCurrent(route: self.settings.destination) ? Self.routeChanged
+                    self.discoveryMessage = !self.discoveryList.isCurrent ? Self.routeChanged
                         : self.snapshot.discoveryError ?? (self.discoveredEFBs.isEmpty ? Self.nothingFound : nil)
                 }
                 do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
             }
         }
     }
+    /// Find EFB's Add: the list stays open, and the row then shows Added.
     func useEFB(_ entry: DiscoveredEFB) {
         guard !busy else { return }
         guard sbio_now() - entry.seen < 30,
               sbio_efb_candidate(entry.address, entry.port, settings.source, UInt16(settings.inputPort) ?? 0) != 0 else {
             discoveredEFBs.removeAll { $0.id == entry.id }; return
         }
-        settings.destination = entry.address
-        exitDiscovery()
+        if !addEFB(entry.address) { discoveryMessage = addressError }
     }
     func exitDiscovery() {
         discoveryToken = UUID(); discoveryWorker?.stop(); discoveryWorker = nil
         discoveryTask?.cancel(); discoveryTask = nil
         findingEFBs = false; discoveryVisible = false; discoveredEFBs = []; discoveryList = DiscoveryList()
+        addressError = nil  // an Add from the list must not leave its error under the address field
     }
     /// mode overrides the chooser's method for this run (Shortcuts, UI tests).
     func start(mode override: RunMode? = nil) {
         guard !busy, !discoveryVisible else { return }
-        var sourceIP: UInt32 = 0, destinationIP: UInt32 = 0
-        guard sb_parse_ipv4(settings.source, &sourceIP) == 1,
-              sb_parse_ipv4(settings.destination, &destinationIP) == 1 else {
-            message = "Enter numeric IPv4 addresses for the receiver and destination."; return
+        var sourceIP: UInt32 = 0
+        guard sb_parse_ipv4(settings.source, &sourceIP) == 1 else {
+            message = "Enter a numeric IPv4 address for the receiver."; return
         }
+        if let error = settings.routeError { message = error; return }
         guard let input = UInt16(settings.inputPort), input > 0,
               let output = UInt16(settings.outputPort), output > 0 else {
             message = "Use ports from 1 to 65535."; return
@@ -467,9 +480,9 @@ enum RunMode { case foreground, audio, session }
                 // Each shared-input rebind result after a WiFi address change is a diagnostics event.
                 if let rebind = value.inputRebind, rebind != previous.inputRebind { self.record("Receiver input: \(rebind)") }
                 if let follow = value.followMessage, follow != previous.followMessage { self.record("EFB: \(follow)") }
-                // Following a moved EFB: show and save the address this run now sends to.
-                if let followed = value.followedDestination, followed != self.settings.destination {
-                    self.settings.destination = followed
+                // Following a moved EFB: show and save the addresses this run now sends to.
+                if let followed = value.followedAddresses, followed != self.settings.addresses {
+                    self.settings.addresses = followed
                     // Find EFB results may list the old address: clear them, and drop any a running search reports later.
                     self.discoveryList.routeChanged(); self.discoveredEFBs = []
                     if self.discoveryVisible { self.discoveryMessage = Self.routeChanged }
@@ -590,7 +603,7 @@ enum RunMode { case foreground, audio, session }
     }
     func foregrounded() { record("Scene foregrounded"); refreshLocationAuthorization(); UIApplication.shared.isIdleTimerDisabled = busy && settings.keepAwake }
     private func checkLocalNetwork() {
-        guard let localHost = [settings.source, settings.destination].first(where: { !BridgeSettings.isLoopback($0) }) else { return }
+        guard let localHost = ([settings.source] + (settings.addresses ?? [])).first(where: { !BridgeSettings.isLoopback($0) }) else { return }
         // UDP connect prompts for local network access without transmitting receiver commands.
         let currentToken = token
         let connection = NWConnection(host: NWEndpoint.Host(localHost), port: 9, using: .udp)

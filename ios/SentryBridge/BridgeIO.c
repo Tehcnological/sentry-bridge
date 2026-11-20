@@ -21,7 +21,9 @@
 struct sbio {
     sb_bridge bridge;
     int input, output, recovering, has_heartbeat, demo;
-    struct sockaddr_in destination;
+    struct sockaddr_in destinations[SBIO_MAX_DESTINATIONS]; /* all on one output port; [0] is loopback when sharing */
+    size_t destination_count;
+    uint16_t input_port;
     uint8_t buffer[65536];
     sbio_status status;
     double started, last_tick, last_step, last_rx, last_heartbeat;
@@ -55,14 +57,18 @@ static void emit(void *ctx, const uint8_t *data, size_t len) {
         }
     }
     if (io->demo) return; /* Decode/count sample frames, never emit network output. */
-    ssize_t n = sendto(io->output, data, len, 0,
-                       (struct sockaddr *)&io->destination, sizeof io->destination);
-    if (n == (ssize_t)len) io->status.forwarded++;
-    else {
+    int sent = 0; /* a frame counts as sent when any EFB took it; each failed send is an output error */
+    for (size_t i = 0; i < io->destination_count; i++) {
+        struct sockaddr_in *to = &io->destinations[i];
+        if (sendto(io->output, data, len, 0, (struct sockaddr *)to, sizeof *to) == (ssize_t)len) { sent = 1; continue; }
+        int failure = errno;
+        char address[INET_ADDRSTRLEN] = "";
+        inet_ntop(AF_INET, &to->sin_addr, address, sizeof address);
         io->status.send_errors++;
         snprintf(io->status.detail, sizeof io->status.detail,
-                 "UDP output failed: %s. Check Local Network access and destination.", strerror(errno));
+                 "UDP output to %s failed: %s. Check Local Network access and destination.", address, strerror(failure));
     }
+    if (sent) io->status.forwarded++;
 }
 static int unicast(uint32_t ip) {
     return ip != 0 && (ip >> 24) != 0 && (ip >> 24) < 224;
@@ -207,9 +213,10 @@ static sbio *open_route(const char *source_ip, uint16_t input_port,
         io->output = socket(AF_INET, SOCK_DGRAM, 0);
         if (io->output < 0 || fcntl(io->output, F_SETFL, O_NONBLOCK) < 0) goto fail;
     }
-    io->destination.sin_family = AF_INET;
-    io->destination.sin_port = htons(output_port);
-    io->destination.sin_addr.s_addr = htonl(dst);
+    io->destinations[0].sin_family = AF_INET;
+    io->destinations[0].sin_port = htons(output_port);
+    io->destinations[0].sin_addr.s_addr = htonl(dst);
+    io->destination_count = 1; io->input_port = input_port;
     sb_config config; sb_config_defaults(&config);
     config.sentry_ip = src; config.relay = 1;
     config.log = log_message; config.log_ctx = io;
@@ -407,11 +414,31 @@ int sbio_request_status(const char *receiver_ip, uint16_t http_port, int timeout
                         sbio_cancel *cancel, char *error, size_t error_cap) {
     return receiver_http(receiver_ip, http_port, timeout_ms, "/?action=get", NULL, cancel, error, error_cap);
 }
-int sbio_set_destination(sbio *io, const char *destination_ip) {
+static int find_destination(sbio *io, uint32_t ip) {
+    for (size_t i = 0; i < io->destination_count; i++)
+        if (ntohl(io->destinations[i].sin_addr.s_addr) == ip) return (int)i;
+    return -1;
+}
+/* Another device's unicast address, not yet listed, that cannot loop back into this bridge's input. */
+static int other_device(sbio *io, uint32_t ip) {
+    int same_port = ntohs(io->destinations[0].sin_port) == io->input_port;
+    return unicast(ip) && (ip >> 24) != 127 && !interface_broadcast(ip) && find_destination(io, ip) < 0 &&
+           !(same_port && local_address(ip));
+}
+int sbio_add_destination(sbio *io, const char *ip) {
     uint32_t dst;
-    if (!io || io->demo || io->shared || !sb_parse_ipv4(destination_ip, &dst) || !unicast(dst) ||
-        (dst >> 24) == 127 || interface_broadcast(dst)) return -1;
-    io->destination.sin_addr.s_addr = htonl(dst);
+    if (!io || io->demo || io->destination_count >= SBIO_MAX_DESTINATIONS || !sb_parse_ipv4(ip, &dst) ||
+        !other_device(io, dst)) return -1;
+    io->destinations[io->destination_count] = io->destinations[0];
+    io->destinations[io->destination_count++].sin_addr.s_addr = htonl(dst);
+    return 0;
+}
+int sbio_replace_destination(sbio *io, const char *from, const char *to) {
+    uint32_t old, dst;
+    int i;
+    if (!io || io->demo || !sb_parse_ipv4(from, &old) || !sb_parse_ipv4(to, &dst) || (old >> 24) == 127 ||
+        (i = find_destination(io, old)) < 0 || !other_device(io, dst)) return -1;
+    io->destinations[i].sin_addr.s_addr = htonl(dst);
     return 0;
 }
 int sbio_route_local(const char *receiver_ip, uint16_t port, char *out, size_t cap) {

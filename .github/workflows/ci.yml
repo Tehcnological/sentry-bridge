@@ -247,11 +247,50 @@ jobs:
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
           xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
+      - name: UI test summary
+        if: ${{ !cancelled() }}
+        run: |
+          # -quiet names the failing tests only; the result bundle has each failure's message and line.
+          # xcodebuild passes skipped tests, so the count is checked: here only the 7 Lite-only tests skip.
+          result=$(ls -dt build/ios-ui/Logs/Test/*.xcresult | head -1)
+          xcrun xcresulttool get test-results summary --path "$result" | tee build/ui-summary.json
+          # Each failure's line and step timeline: the summary's message alone cannot tell a hang from a slow simulator.
+          jq -r '.testFailures[]?.testIdentifierString' build/ui-summary.json | while read -r id; do
+            xcrun xcresulttool get test-results test-details --test-id "$id" --path "$result" || echo "::warning::No details for $id"
+          done
+          jq -e '.skippedTests == 7' build/ui-summary.json > /dev/null || { echo "::error::Expected exactly 7 skipped UI tests (the Lite-only ones)"; exit 1; }
+
+  ios-lite:
+    name: iOS Lite UI
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: UI tests on the simulator, Lite build
+        run: |
+          udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name == "iPhone 17")][0].udid')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui SB_FLAVOR=Lite CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
+      - name: UI test summary
+        if: ${{ !cancelled() }}
+        run: |
+          # Only the background audio test (a Sideload option) may skip in the Lite build.
+          result=$(ls -dt build/ios-ui/Logs/Test/*.xcresult | head -1)
+          xcrun xcresulttool get test-results summary --path "$result" | tee build/ui-summary.json
+          jq -r '.testFailures[]?.testIdentifierString' build/ui-summary.json | while read -r id; do
+            xcrun xcresulttool get test-results test-details --test-id "$id" --path "$result" || echo "::warning::No details for $id"
+          done
+          jq -e '.skippedTests == 1' build/ui-summary.json > /dev/null || { echo "::error::Expected exactly 1 skipped UI test (the Sideload-only one)"; exit 1; }
 
   # The one required check. Skipped platforms pass here, so docs-only changes can merge.
   ci:
     name: CI
-    needs: [changes, lint, linux, windows, macos, android, ios]
+    needs: [changes, lint, linux, windows, macos, android, ios, ios-lite]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -262,4 +301,4 @@ jobs:
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           echo "$NEEDS" | jq -e '
             ([.changes, .lint, .linux] | all(.result == "success"))
-            and ([.windows, .macos, .android, .ios] | all(.result == "success" or .result == "skipped"))' > /dev/null
+            and ([.windows, .macos, .android, .ios, ."ios-lite"] | all(.result == "success" or .result == "skipped"))' > /dev/null

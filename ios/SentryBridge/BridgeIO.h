@@ -58,10 +58,16 @@ int sbio_request_compatibility(const char *receiver_ip, uint16_t http_port, int 
    this request keeps the client active and restores the stream. */
 int sbio_request_status(const char *receiver_ip, uint16_t http_port, int timeout_ms,
                         sbio_cancel *cancel, char *error, size_t error_cap);
-/* Owning worker only: send to another EFB address from now on (following a moved EFB), keeping the
-   output port, counters and decoder state. 0 changed, -1 refused (address kept): not a valid
-   unicast destination, or this route shares its input with an EFB on this device. */
-int sbio_set_destination(sbio *io, const char *destination_ip);
+/* This device (when on) plus up to 16 EFB addresses. */
+#define SBIO_MAX_DESTINATIONS 17
+/* Owning worker only: also send to another device's address, on the output port given at open.
+   0 added, -1 refused: invalid, broadcast, loopback, already listed, the list is full, or this
+   device's own address on the receiver port. */
+int sbio_add_destination(sbio *io, const char *ip);
+/* Owning worker only: send to `to` instead of `from` from now on (following a moved EFB), keeping
+   the other destinations, counters and decoder state. 0 replaced, -1 refused (list kept): `from` is
+   loopback or not listed, or `to` would be refused by sbio_add_destination. */
+int sbio_replace_destination(sbio *io, const char *from, const char *to);
 /* Any thread. The local IPv4 address the system routes to receiver_ip (no datagram is sent), as a
    dotted string. 0 found, -1 no route. */
 int sbio_route_local(const char *receiver_ip, uint16_t port, char *out, size_t cap);

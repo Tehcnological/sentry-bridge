@@ -152,57 +152,78 @@ enum EFBSweep {
         }
     }
     /// After the EFB at current missed its checks: current itself when it answers the sweep (it recovered),
-    /// else the one other device that answers, or nil for none or several (the user chooses then).
-    static func followChoice(_ candidates: [String], current: String) -> String? {
+    /// else the one answering device that is not listed already, or nil for none or several (the user
+    /// chooses then).
+    static func followChoice(_ candidates: [String], current: String, listed: Set<String> = []) -> String? {
         if candidates.contains(current) { return current }
-        return candidates.count == 1 ? candidates[0] : nil
+        let unlisted = candidates.filter { !listed.contains($0) }
+        return unlisted.count == 1 ? unlisted[0] : nil
     }
 }
 
-/// The follow rule (tools/gui_server.py _follow_efb, Android NativeGui.watchEfb): while forwarding to one
-/// Other device address, check it every 30 s. Only an EFB that answered before and then missed two checks
-/// in a row leads to a sweep; one that never answered (a firewall, perhaps) keeps its route as configured.
+/// The follow rule (tools/gui_server.py _follow_efb, Android NativeGui.watchEfb): while forwarding, check every
+/// Other device address every 30 s. Only an EFB that answered before and then missed two checks in a row counts
+/// as silent; one that never answered (a firewall, perhaps) keeps its route and stays "not seen yet". Exactly
+/// one silent EFB leads to a sweep; several are reported once and nothing changes.
 struct EFBFollower {
     static let checkS = 30.0, misses = 2
-    enum Decision: Equatable { case keep, follow(String), report(String) }
-    private(set) var seen = false, misses = 0
-    private var reported: String?
-    /// After one check of the current address: whether to sweep now.
-    mutating func checked(answered: Bool) -> Bool {
-        if answered { seen = true; misses = 0; reported = nil; return false }
-        misses += 1
-        return seen && misses >= Self.misses
+    enum Decision: Equatable { case keep, sweep(String), follow(String), report(String) }
+    /// Per address: "answering", "not answering" or "not seen yet".
+    private(set) var states: [String: String] = [:]
+    private var seen: Set<String> = [], missed: [String: Int] = [:], reported: Set<String> = []
+    private var several = false
+    /// After one check of every listed Other device address: sweep for the one silent EFB, report several
+    /// silent EFBs once, or keep.
+    mutating func checked(_ addresses: [String], answering: Set<String>) -> Decision {
+        states = states.filter { addresses.contains($0.key) }
+        for address in addresses {
+            if answering.contains(address) {
+                seen.insert(address); missed[address] = 0; reported.remove(address); states[address] = "answering"
+            } else {
+                missed[address, default: 0] += 1
+                states[address] = seen.contains(address) ? "not answering" : "not seen yet"
+            }
+        }
+        let silent = addresses.filter { seen.contains($0) && missed[$0, default: 0] >= Self.misses }
+        let wasSeveral = several
+        several = silent.count > 1
+        if silent.count == 1 { return .sweep(silent[0]) }
+        guard silent.count > 1, !wasSeveral else { return .keep }
+        return .report("The EFBs at \(silent.joined(separator: ", ")) stopped answering. Nothing was changed. Choose one with Find EFB.")
     }
-    /// After the sweep: keep the route (it recovered, or nothing new to say), follow the one other
-    /// device, or report once per address that none or several answered.
-    mutating func swept(_ candidates: [String], current: String) -> Decision {
-        guard let target = EFBSweep.followChoice(candidates, current: current) else {
-            guard reported != current else { return .keep }
-            reported = current
+    /// After the sweep for the silent EFB at current: keep (it answered again, or nothing new to say), follow
+    /// the one answering device not listed already, or report once per address that none or several answered.
+    mutating func swept(_ candidates: [String], current: String, listed: Set<String>) -> Decision {
+        guard let target = EFBSweep.followChoice(candidates, current: current, listed: listed) else {
+            guard !reported.contains(current) else { return .keep }
+            reported.insert(current)
             return .report("The EFB at \(current) stopped answering. Devices on the receiver's WiFi: \(candidates.isEmpty ? "none" : candidates.joined(separator: ", ")). Choose one with Find EFB.")
         }
-        if target == current { seen = true; misses = 0; reported = nil; return .keep }  // a short interruption
+        if target == current { missed[current] = 0; reported.remove(current); states[current] = "answering"; return .keep }  // a short interruption
         return .follow(target)
     }
-    /// After the switch was committed.
-    mutating func followed() { misses = 0; reported = nil }
+    /// After the switch from current to target was requested.
+    mutating func followed(from current: String, to target: String) {
+        missed[current] = 0; reported.remove(current)
+        seen.insert(target); missed[target] = 0; states[target] = "answering"
+    }
     static func followMessage(from current: String, to target: String) -> String {
         "The EFB at \(current) stopped answering; now sending to \(target), the only other device on the receiver's WiFi."
     }
 }
 
-/// Find EFB's list: announcing EFBs first, then swept devices that do not announce, each kept 30 s. Results
-/// belong to the destination the search started with. A route change (the bridge following a moved EFB)
-/// clears the list, and results that search reports later are dropped (web/app.js discoveryRoute).
+/// Find EFB's list: announcing EFBs first, then swept devices that do not announce, each kept 30 s. A route
+/// change (the bridge following a moved EFB) clears the list, and results the search reports later are
+/// dropped until a new search starts (web/app.js discoveryRoute).
 struct DiscoveryList {
-    private var route: String?
+    private var searching = false
     private var announced: [DiscoveredEFB] = [], swept: [DiscoveredEFB] = []
-    mutating func start(route: String) { self.route = route; announced = []; swept = [] }
-    /// route is the destination when the results arrive; a different one means they may list the old address.
-    mutating func announce(_ entries: [DiscoveredEFB], route: String) { if route == self.route { announced = entries } }
-    mutating func sweep(_ entries: [DiscoveredEFB], route: String) { if route == self.route { swept = entries } }
-    mutating func routeChanged() { route = nil; announced = []; swept = [] }
-    func isCurrent(route: String) -> Bool { route == self.route }
+    mutating func start() { searching = true; announced = []; swept = [] }
+    mutating func announce(_ entries: [DiscoveredEFB]) { if searching { announced = entries } }
+    mutating func sweep(_ entries: [DiscoveredEFB]) { if searching { swept = entries } }
+    mutating func routeChanged() { searching = false; announced = []; swept = [] }
+    /// False after a route change during this search.
+    var isCurrent: Bool { searching }
     mutating func entries(now: Double = sbio_now()) -> [DiscoveredEFB] {
         announced = announced.filter { now - $0.seen < 30 }; swept = swept.filter { now - $0.seen < 30 }
         let addresses = Set(announced.map(\.address))
