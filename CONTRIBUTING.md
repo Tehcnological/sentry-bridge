@@ -1,8 +1,7 @@
 # Contributing
 
 Thanks for helping. Bug reports and device reports are welcome. Pull requests are welcome too, with
-one condition on copyright below. Everyone taking part follows the
-[code of conduct](CODE_OF_CONDUCT.md).
+one condition on copyright below.
 
 ## Copyright
 
