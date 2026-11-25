@@ -53,8 +53,7 @@ On iPhone or iPad, add the Sentry Bridge source to your sideloading app to insta
    - **Other devices**: EFBs on other devices on the Sentry's WiFi. Add each IP address, or tap
      **Find EFB** to look them up.
 
-   Windows and Android feed up to 16 other devices at once, and Windows this device too. iPhone and
-   iPad feed one EFB: this device or one other device.
+   Up to 16 other devices are fed at once, and on Windows, iPhone and iPad this device too.
 3. On iPhone or iPad, answer the **Background running** prompt if shown. **Background audio** is
    recommended where offered. Allow **Local Network** access and notifications. Then press **Start**.
 4. In your EFB, select a **Stratux** or **GDL90** device as the traffic source (UDP port 4000).
@@ -93,13 +92,13 @@ No dates, and plans can change. To ask for something or to help,
 
 - **Sentry Bridge Lite on the App Store.** A version for iPhone and iPad that uses Bridge Session
   instead of silent background audio. Not available on the App Store yet.
-- **Several EFBs on iPhone and iPad.** Windows and Android already feed several EFBs at once; the
-  iPhone and iPad app is next.
 - **Small WiFi boards.** Firmware for the ESP32-C3, Pico W and Pico 2 W is in the source but not yet
   tested with a Sentry. Once it is, it becomes a release download. A board with a screen and a case,
   the LilyGO T-Dongle, is the next target.
 - **CO alarm level on iPhone and iPad.** Use the Sentry's own alarm level instead of a fixed 50 ppm.
 - **Links to Hidden Pages.** Find and link to all hidden pages in the Sentry's web settings.
+- **Device names in Find EFB.** Show each device's network name, such as "Pilot's iPad", instead of
+  "Device" for EFBs that do not announce themselves. Devices that do not answer still show "Device".
 
 ## More
 

@@ -16,7 +16,7 @@ class Status(C.Structure):
     _fields_=[('received',C.c_uint64),('forwarded',C.c_uint64),('send_errors',C.c_uint64),('rejected_sources',C.c_uint64),
               ('traffic',C.c_uint32),('weather',C.c_uint32),('heartbeat',C.c_uint32),('crc_bad',C.c_uint32),
               ('gps_valid',C.c_int),('mode',C.c_int),('age',C.c_double),('elapsed',C.c_double),('max_gap',C.c_double),('detail',C.c_char*256),
-              ('own_valid',C.c_int),('own_lat',C.c_double),('own_lon',C.c_double),('own_age',C.c_double)]
+              ('own_valid',C.c_int),('own_lat',C.c_double),('own_lon',C.c_double),('own_age',C.c_double),('unreachable',C.c_uint32)]
 
 @unittest.skipUnless(sys.platform=='darwin','Darwin/iOS adapter validation runs on Mac')
 class IOSAdapter(unittest.TestCase):
@@ -209,6 +209,69 @@ int main(void) {
                 '-I'+str(ROOT/'core'),'-I'+str(ROOT/'ios/SentryBridge'),str(source),
                 str(ROOT/'core/sbcore.c'),'-lm','-o',str(binary)],check=True)
             subprocess.run([str(binary)],check=True)
+
+    def test_one_unreachable_efb_is_not_an_output_error(self):
+        # sendto is replaced so that one chosen address fails; nothing touches the network.
+        fixture = r"""
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+static unsigned failing_ip;
+static ssize_t fixture_sendto(int fd, const void *data, size_t len, int flags, const struct sockaddr *to, socklen_t tolen) {
+    (void)fd; (void)data; (void)flags; (void)tolen;
+    if (ntohl(((const struct sockaddr_in *)to)->sin_addr.s_addr) == failing_ip) { errno = EHOSTDOWN; return -1; }
+    return (ssize_t)len;
+}
+#define sendto fixture_sendto
+#include "BridgeIO.c"
+static void frame(sbio *io) {
+    uint8_t heartbeat[7] = {0, 0x80, 0, 0, 0, 0, 0}, out[32];
+    size_t count = sb_frame(heartbeat, sizeof heartbeat, out, sizeof out);
+    sb_feed(&io->bridge, out, count, 0x7f000001, sbio_now(), emit, io);
+}
+int main(void) {
+    char error[512];
+    sbio *io = sbio_open("127.0.0.1", 14000, "127.0.0.1", 14001, error, sizeof error);
+    if (!io) { puts(error); return 1; }
+    if (sbio_add_destination(io, "192.0.2.20") || sbio_add_destination(io, "192.0.2.21")) return 2;
+    failing_ip = 0xc0000214; /* 192.0.2.20 is off; this device and .21 still receive */
+    snprintf(io->status.detail, sizeof io->status.detail, "core message");
+    frame(io);
+    sbio_status status; sbio_snapshot(io, &status);
+    if (status.forwarded != 1 || status.send_errors != 0) return 3;
+    if (status.unreachable != 1u << 1) return 4;
+    if (!strstr(status.detail, "192.0.2.20")) return 5;
+    snprintf(io->status.detail, sizeof io->status.detail, "core message");
+    frame(io); sbio_snapshot(io, &status);
+    if (strcmp(status.detail, "core message")) return 6; /* reported once, not on every frame */
+    if (sbio_replace_destination(io, "192.0.2.20", "192.0.2.22")) return 7;
+    sbio_snapshot(io, &status);
+    if (status.unreachable != 0) return 8; /* the replacement starts clean */
+    failing_ip = 0x7f000001; /* this device only: still one EFB receives */
+    frame(io); sbio_snapshot(io, &status);
+    if (status.send_errors != 0 || status.unreachable != 1u) return 9;
+    sbio_close(io);
+    io = sbio_open("127.0.0.1", 14000, "192.0.2.30", 14001, error, sizeof error);
+    if (!io) return 10;
+    failing_ip = 0xc000021e; /* the only EFB fails: the frame reached none */
+    frame(io); sbio_snapshot(io, &status);
+    if (status.forwarded != 0 || status.send_errors != 1 || status.unreachable != 1u) return 11;
+    failing_ip = 0; frame(io); sbio_snapshot(io, &status);
+    if (status.forwarded != 1 || status.unreachable != 0) return 12; /* it answers again */
+    sbio_close(io);
+    return 0;
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/'fixture.c';source.write_text(fixture)
+            binary=Path(directory)/'fixture'
+            subprocess.run(['clang','-Wall','-Wextra','-Werror','-std=c11',
+                '-I'+str(ROOT/'core'),'-I'+str(ROOT/'ios/SentryBridge'),str(source),
+                str(ROOT/'core/sbcore.c'),'-lm','-o',str(binary)],check=True)
+            self.assertEqual(subprocess.run([str(binary)]).returncode,0)
 
     def test_weather_cannot_keep_an_old_gps_fix_fresh(self):
         h,e=self.open();self.assertTrue(h,e)
@@ -435,21 +498,69 @@ int main(void) {
         status,_=self.probe([b'127.0.0.2']*10,7,3000,cancel)
         self.assertEqual(status,-2);self.assertLess(time.monotonic()-started,.5)
         self.assertEqual(self.probe([b'127.0.0.1'],7,3000,cancel)[0],-2)  # already cancelled: no attempt
-    def test_route_local_and_followed_destination(self):
+    def destinations(self):
+        self.lib.sbio_add_destination.argtypes=[C.c_void_p,C.c_char_p]
+        self.lib.sbio_replace_destination.argtypes=[C.c_void_p,C.c_char_p,C.c_char_p]
+        return self.lib.sbio_add_destination,self.lib.sbio_replace_destination
+    def lan(self):
+        with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as probe:
+            try:probe.connect(('192.0.2.1',9));lan=probe.getsockname()[0]
+            except OSError:self.skipTest('needs a non-loopback IPv4 interface')
+        if lan.startswith('127.'):self.skipTest('needs a non-loopback IPv4 interface')
+        return lan
+    def test_route_local(self):
         self.lib.sbio_route_local.argtypes=[C.c_char_p,C.c_uint16,C.c_char_p,C.c_size_t]
-        self.lib.sbio_set_destination.argtypes=[C.c_void_p,C.c_char_p]
         out=C.create_string_buffer(64)
         self.assertEqual(self.lib.sbio_route_local(b'127.0.0.1',9,out,64),0);self.assertEqual(out.value,b'127.0.0.1')
         self.assertEqual(self.lib.sbio_route_local(b'invalid',9,out,64),-1)
+    def test_frames_reach_every_destination(self):
+        add,_=self.destinations();lan=self.lan()
+        other=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);self.addCleanup(other.close)
+        other.bind((lan,self.sink.getsockname()[1]));other.settimeout(.5)  # the one output port, another address
         h,e=self.open();self.assertTrue(h,e)
-        for refused in [b'invalid',b'0.0.0.0',b'224.0.0.1',b'255.255.255.255',b'127.0.0.1']:
-            self.assertEqual(self.lib.sbio_set_destination(h,refused),-1,refused)
-        # The address only; nothing is sent without receiver input. The output port is kept.
-        self.assertEqual(self.lib.sbio_set_destination(h,b'192.0.2.10'),0)
-        self.assertEqual((self.status(h).forwarded,self.status(h).send_errors),(0,0))
-        shared=self.lib.sbio_open_shared(b'127.0.0.1',self.port+1 if self.port<65535 else 1,b'127.0.0.1',self.port+1 if self.port<65535 else 1,1,C.create_string_buffer(512),512)
-        if shared:
-            self.handles.append(shared);self.assertEqual(self.lib.sbio_set_destination(shared,b'192.0.2.10'),-1)
+        self.assertEqual(add(h,lan.encode()),0)
+        heartbeat=gdl90.encode_heartbeat(True,1234)
+        self.send(heartbeat);self.step(h)
+        self.assertEqual(self.wait_frames(h),[heartbeat])
+        self.assertEqual(other.recv(65536),heartbeat)
+        self.assertEqual((self.status(h).forwarded,self.status(h).send_errors),(1,0))  # one frame, sent twice
+    def test_destination_limits(self):
+        add,_=self.destinations()
+        h,e=self.open();self.assertTrue(h,e)  # 127.0.0.1 is the first of 17
+        for refused in [b'invalid',b'0.0.0.0',b'224.0.0.1',b'255.255.255.255',b'127.0.0.1',b'127.0.0.2']:
+            self.assertEqual(add(h,refused),-1,refused)
+        for i in range(16):self.assertEqual(add(h,b'192.0.2.%d'%(i+10)),0,i)
+        self.assertEqual(add(h,b'192.0.2.50'),-1)  # the 18th
+        h2,e=self.open(port=self.port+1 if self.port<65535 else 1,dest=b'192.0.2.10');self.assertTrue(h2,e)
+        self.assertEqual(add(h2,b'192.0.2.11'),0)
+        self.assertEqual(add(h2,b'192.0.2.11'),-1)  # listed twice
+        self.assertEqual(add(h2,b'192.0.2.10'),-1)
+        self.assertEqual((self.status(h2).forwarded,self.status(h2).send_errors),(0,0))  # nothing sent without input
+    def test_replace_keeps_the_other_destinations(self):
+        add,replace=self.destinations();lan=self.lan()
+        moved=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);self.addCleanup(moved.close)
+        moved.bind((lan,self.sink.getsockname()[1]));moved.settimeout(.5)
+        h,e=self.open();self.assertTrue(h,e)
+        self.assertEqual(add(h,b'192.0.2.10'),0);self.assertEqual(add(h,b'192.0.2.11'),0)
+        for source,target in [(b'127.0.0.1',b'192.0.2.12'),(b'192.0.2.10',b'127.0.0.1'),(b'192.0.2.99',b'192.0.2.12'),
+                              (b'192.0.2.10',b'192.0.2.11'),(b'192.0.2.10',b'224.0.0.1'),(b'192.0.2.10',b'invalid')]:
+            self.assertEqual(replace(h,source,target),-1,(source,target))
+        self.assertEqual(replace(h,b'192.0.2.10',lan.encode()),0)
+        self.assertEqual(add(h,b'192.0.2.10'),0)  # the old address is free again
+        heartbeat=gdl90.encode_heartbeat(True,1234)
+        self.send(heartbeat);self.step(h)
+        self.assertEqual(self.wait_frames(h),[heartbeat])  # This device kept
+        self.assertEqual(moved.recv(65536),heartbeat)
+    def test_shared_route_adds_and_replaces_only_other_devices(self):
+        add,replace=self.destinations();lan=self.lan()
+        efb=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);self.addCleanup(efb.close);efb.bind(('0.0.0.0',self.port))
+        error=C.create_string_buffer(512)
+        h=self.lib.sbio_open_shared(lan.encode(),self.port,b'127.0.0.1',self.port,1,error,512)
+        self.assertTrue(h,error.value.decode());self.handles.append(h)
+        self.assertEqual(add(h,lan.encode()),-1)  # this device's own address on the receiver port feeds our input
+        self.assertEqual(add(h,b'192.0.2.10'),0)
+        self.assertEqual(replace(h,b'127.0.0.1',b'192.0.2.11'),-1)
+        self.assertEqual(replace(h,b'192.0.2.10',b'192.0.2.11'),0)
     # The receiver's /stats WebSocket, against a loopback server playing the receiver.
     def ws_server(self,script,connections=1):
         import base64,hashlib,threading

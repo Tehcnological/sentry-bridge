@@ -18,6 +18,7 @@ struct BridgeView: View {
     @Namespace private var fieldLabels
     @State private var showDiagnostics = false
     @State private var showSettings = false
+    @State private var newAddress = ""
     // Compatibility notice before each Start (never Stop); hidden only after Start with the toggle on.
     @AppStorage(BridgeView.noticeHiddenKey) private var noticeHidden = false
     @State private var showCompatibility = false
@@ -90,13 +91,15 @@ struct BridgeView: View {
                                     Text("\(entry.address):\(entry.port)").font(.caption)
                                 }
                                 if !typeSize.isAccessibilitySize { Spacer() }
-                                Button("Use") { model.useEFB(entry) }.foregroundStyle(linkInk).disabled(model.busy)
-                                    .accessibilityLabel("Use \(entry.app.isEmpty ? "EFB" : entry.app) at \(entry.address)")
+                                let added = (model.settings.addresses ?? []).contains(entry.address)
+                                Button(added ? "Added" : "Add") { model.useEFB(entry) }.foregroundStyle(linkInk).disabled(model.busy || added)
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("\(added ? "Added" : "Add") \(entry.app.isEmpty ? "EFB" : entry.app) at \(entry.address)")
                                     .accessibilityIdentifier("bridge.useEFB")
                             }
                         }
                         Text("Lists EFBs and other devices on the Sentry's WiFi. If yours is missing, enter the address from the EFB device's WiFi settings.").font(.caption).foregroundStyle(secondary)
-                        if model.busy { Text("Stop Bridge to use an address.").font(.caption) }
+                        if model.busy { Text("Stop Bridge to add an address.").font(.caption) }
                       }.listRowBackground(surface)
                     }
                     .foregroundStyle(ink)
@@ -189,28 +192,77 @@ struct BridgeView: View {
             if let rebind = model.snapshot.inputRebind { Text(rebind).font(.caption).accessibilityIdentifier("bridge.inputRebind") }
             if let follow = model.snapshot.followMessage { Text(follow).font(.caption).accessibilityIdentifier("bridge.followEFB") }
             if model.snapshot.sendErrors > 0 { Text("Output errors: \(model.snapshot.sendErrors). Check permission, WiFi and routing.").foregroundStyle(warning) }
+            if model.busy, !model.snapshot.unreachable.isEmpty {
+                let names = model.snapshot.unreachable.map { BridgeSettings.isLoopback($0) ? "This device" : $0 }
+                Text("Not reaching \(ListFormatter.localizedString(byJoining: names)). Check that \(names.count == 1 ? "it is" : "each is") on and on the Sentry's WiFi.")
+                    .foregroundStyle(warning).accessibilityIdentifier("bridge.unreachable")
+            }
         }.listRowBackground(surface)
     }
-    /// Shown while GPS cross-reference is chosen and location is not set to Always.
+    /// A listed EFB's state while forwarding: not reachable when sends to it fail, else answering, not answering
+    /// or not seen yet while the addresses are checked; nothing when they are not.
+    private func efbState(_ address: String) -> String? {
+        if model.snapshot.unreachable.contains(address) { return "not reachable" }
+        return model.snapshot.checksEFBs ? model.snapshot.efbStates[address] ?? "not seen yet" : nil
+    }
+    /// Shown while GPS cross-reference is chosen and location is not set to Always. Undecided access is asked for
+    /// here; While Using and off can only be changed in Settings.
     @ViewBuilder private func alwaysLocationNote(context: String) -> some View {
-        Label("GPS cross-reference needs location set to Always.", systemImage: "location.slash").foregroundStyle(warning)
+        let need = model.locationNeed ?? .off
+        Label(need.note, systemImage: "location.slash").foregroundStyle(warning)
             .accessibilityIdentifier("bridge.alwaysLocation." + context)
-        Button("Open Settings") {
-            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-        }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.openLocationSettings." + context)
+        if need == .ask {
+            Button("Allow Location") { model.requestLocation() }
+                .foregroundStyle(linkInk).accessibilityIdentifier("bridge.allowLocation." + context)
+        } else {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+            }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.openLocationSettings." + context)
+        }
     }
     @ViewBuilder private var setupSections: some View {
         Section("EFB setup") {
-            if typeSize.isAccessibilitySize { locationPicker.pickerStyle(.inline) }
-            else { locationPicker.pickerStyle(.segmented) }
-            if !BridgeSettings.isLoopback(model.settings.destination) {
-                field("Other device IPv4", $model.settings.destination)
-                Button("Find EFB") { model.findEFBs() }.foregroundStyle(linkInk)
-                    .accessibilityIdentifier("bridge.findEFB")
+            Toggle("This device", isOn: Binding(get: { model.settings.thisDevice != false }, set: { model.settings.setThisDevice($0) }))
+                .disabled(model.busy).accessibilityIdentifier("bridge.thisDevice")
+            ForEach(model.settings.addresses ?? [], id: \.self) { address in
+                (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout())) {
+                    VStack(alignment: .leading) {
+                        Text(address)
+                        // States only while forwarding; never in notifications or warnings.
+                        if model.busy, let state = efbState(address) { Text(state).font(.caption).foregroundStyle(secondary) }
+                    }.accessibilityElement(children: .combine).accessibilityIdentifier("bridge.efb")
+                    if !typeSize.isAccessibilitySize { Spacer() }
+                    Button("Remove") { model.removeEFB(address) }.foregroundStyle(linkInk).disabled(model.busy)
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Remove \(address)").accessibilityIdentifier("bridge.removeEFB")
+                }
             }
+            if (model.settings.addresses ?? []).count < BridgeSettings.maxAddresses {
+                (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout())) {
+                    TextField("EFB IPv4 address", text: $newAddress)
+                        .keyboardType(.numbersAndPunctuation).textInputAutocapitalization(.never)
+                        .autocorrectionDisabled().disabled(model.busy)
+                        .accessibilityLabel("EFB IPv4 address")
+                        .focused($focusedField, equals: "EFB IPv4 address")
+                        .submitLabel(.done)
+                        .onSubmit(addTyped)
+                        .onChange(of: newAddress) { _, _ in model.addressError = nil }
+                    Button("Add", action: addTyped).foregroundStyle(linkInk).disabled(model.busy)
+                        .buttonStyle(.borderless).accessibilityIdentifier("bridge.addEFB")
+                }
+                // The separator starts at a row's first Text, which here is Add: start it with the field.
+                .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+            } else {
+                Text("Up to \(BridgeSettings.maxAddresses) EFB addresses.").font(.caption).foregroundStyle(secondary)
+            }
+            if let error = model.addressError {
+                Text(error).font(.caption).foregroundStyle(warning).accessibilityIdentifier("bridge.addressError")
+            }
+            Button("Find EFB") { model.findEFBs() }.foregroundStyle(linkInk)
+                .accessibilityIdentifier("bridge.findEFB")
             DisclosureGroup("Setup instructions") {
             Text("1. Join the Sentry's WiFi.\n2. Turn off Power Savings in the Sentry's web settings.\n3. In the EFB, choose a Stratux or GDL90 device on UDP port 4000.").font(.callout)
-            Text("EFB on this device: close other EFBs; only one receives the data. EFB on another device: enter its address or use Find EFB.").font(.callout)
+            Text("This device: close other EFBs here; only one receives the data. Other devices: add each EFB's address, or use Find EFB.").font(.callout)
             }
         }.listRowBackground(surface)
         Section {
@@ -218,10 +270,9 @@ struct BridgeView: View {
             Text("Routing").font(.headline)
             field("Sentry IPv4", $model.settings.source)
             field("Input UDP port", $model.settings.inputPort)
-            field("Destination IPv4", $model.settings.destination)
             field("Output UDP port", $model.settings.outputPort)
             field("EFB discovery UDP port", Binding(get: { model.settings.discoveryPort ?? "63093" }, set: { model.settings.discoveryPort = $0 }))
-Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this device.")
+            Text("Changes apply at the next Start. Every EFB, This device included, receives on the output port.")
                 .font(.caption).foregroundStyle(secondary)
             #if DEBUG
             // UI tests only: points the route at a local test feed.
@@ -369,13 +420,9 @@ Text("Changes apply at the next Start. Destination 127.0.0.1 is an EFB on this d
             .foregroundStyle(ink)
             .scrollContentBackground(colorScheme == .dark ? .hidden : .visible)
     }
-    private var locationPicker: some View {
-        Picker("EFB runs", selection: Binding(get: { BridgeSettings.isLoopback(model.settings.destination) ? "local" : "remote" }, set: { value in
-            if value == "local" { model.settings.useThisDevice() } else { model.settings.useOtherDevice() }
-        })) {
-            Text("This device").tag("local")
-            Text("Other device").tag("remote")
-        }.disabled(model.busy)
+    /// The EFB field's Add and Return: the field clears once the address is listed.
+    private func addTyped() {
+        if model.addEFB(newAddress) { newAddress = "" }
     }
     @ViewBuilder private func statusRow(_ label: String, _ value: String) -> some View {
         if typeSize.isAccessibilitySize {

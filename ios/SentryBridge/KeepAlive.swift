@@ -144,6 +144,11 @@ final class PhoneLocation: NSObject, CLLocationManagerDelegate {
     /// Asks for Always access. done(true) once location may be used; While Using also counts, with iOS
     /// asking later to allow it in the background.
     func requestAlways(_ done: @escaping (Bool) -> Void) {
+        #if DEBUG
+        // UI tests: an undecided request is granted Always without a system prompt.
+        if testAuthorization == .notDetermined { testAuthorization = .authorizedAlways; onAuthorization(); done(true); return }
+        if testAuthorization != nil { done(hasAlways || status == .authorizedWhenInUse); return }
+        #endif
         switch status {
         case .authorizedAlways: done(true)
         case .authorizedWhenInUse: manager.requestAlwaysAuthorization(); done(true)
