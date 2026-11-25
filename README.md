@@ -97,7 +97,7 @@ No dates, and plans can change. To ask for something or to help,
   the LilyGO T-Dongle, is the next target.
 - **CO alarm level on iPhone and iPad.** Use the Sentry's own alarm level instead of a fixed 50 ppm.
 - **Links to Hidden Pages.** Find and link to all hidden pages in the Sentry's web settings.
-- **Device names in Find EFB.** Show each device's network name, such as "Chris's iPad", instead of
+- **Device names in Find EFB.** Show each device's network name, such as "Pilot's iPad", instead of
   "Device" for EFBs that do not announce themselves. Devices that do not answer still show "Device".
 
 ## More
