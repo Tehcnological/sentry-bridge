@@ -192,7 +192,18 @@ struct BridgeView: View {
             if let rebind = model.snapshot.inputRebind { Text(rebind).font(.caption).accessibilityIdentifier("bridge.inputRebind") }
             if let follow = model.snapshot.followMessage { Text(follow).font(.caption).accessibilityIdentifier("bridge.followEFB") }
             if model.snapshot.sendErrors > 0 { Text("Output errors: \(model.snapshot.sendErrors). Check permission, WiFi and routing.").foregroundStyle(warning) }
+            if model.busy, !model.snapshot.unreachable.isEmpty {
+                let names = model.snapshot.unreachable.map { BridgeSettings.isLoopback($0) ? "This device" : $0 }
+                Text("Not reaching \(ListFormatter.localizedString(byJoining: names)). Check that \(names.count == 1 ? "it is" : "each is") on and on the Sentry's WiFi.")
+                    .foregroundStyle(warning).accessibilityIdentifier("bridge.unreachable")
+            }
         }.listRowBackground(surface)
+    }
+    /// A listed EFB's state while forwarding: not reachable when sends to it fail, else answering, not answering
+    /// or not seen yet while the addresses are checked; nothing when they are not.
+    private func efbState(_ address: String) -> String? {
+        if model.snapshot.unreachable.contains(address) { return "not reachable" }
+        return model.snapshot.checksEFBs ? model.snapshot.efbStates[address] ?? "not seen yet" : nil
     }
     /// Shown while GPS cross-reference is chosen and location is not set to Always. Undecided access is asked for
     /// here; While Using and off can only be changed in Settings.
@@ -218,7 +229,7 @@ struct BridgeView: View {
                     VStack(alignment: .leading) {
                         Text(address)
                         // States only while forwarding; never in notifications or warnings.
-                        if model.busy { Text(model.snapshot.efbStates[address] ?? "not seen yet").font(.caption).foregroundStyle(secondary) }
+                        if model.busy, let state = efbState(address) { Text(state).font(.caption).foregroundStyle(secondary) }
                     }.accessibilityElement(children: .combine).accessibilityIdentifier("bridge.efb")
                     if !typeSize.isAccessibilitySize { Spacer() }
                     Button("Remove") { model.removeEFB(address) }.foregroundStyle(linkInk).disabled(model.busy)

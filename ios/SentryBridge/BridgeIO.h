@@ -13,6 +13,9 @@ typedef struct {
        own_valid 1 when one was received, own_age seconds since then. Nothing writes it back. */
     int own_valid;
     double own_lat, own_lon, own_age;
+    /* Bit i set: the latest send to destination i (in the order added, This device first) failed.
+       send_errors counts only frames that reached no destination. */
+    uint32_t unreachable;
 } sbio_status;
 /* Serialized worker API. Strict exclusive bind; IPv4 unicast only. */
 sbio *sbio_open(const char *source_ip, uint16_t input_port,

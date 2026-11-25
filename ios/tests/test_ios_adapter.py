@@ -16,7 +16,7 @@ class Status(C.Structure):
     _fields_=[('received',C.c_uint64),('forwarded',C.c_uint64),('send_errors',C.c_uint64),('rejected_sources',C.c_uint64),
               ('traffic',C.c_uint32),('weather',C.c_uint32),('heartbeat',C.c_uint32),('crc_bad',C.c_uint32),
               ('gps_valid',C.c_int),('mode',C.c_int),('age',C.c_double),('elapsed',C.c_double),('max_gap',C.c_double),('detail',C.c_char*256),
-              ('own_valid',C.c_int),('own_lat',C.c_double),('own_lon',C.c_double),('own_age',C.c_double)]
+              ('own_valid',C.c_int),('own_lat',C.c_double),('own_lon',C.c_double),('own_age',C.c_double),('unreachable',C.c_uint32)]
 
 @unittest.skipUnless(sys.platform=='darwin','Darwin/iOS adapter validation runs on Mac')
 class IOSAdapter(unittest.TestCase):
@@ -209,6 +209,69 @@ int main(void) {
                 '-I'+str(ROOT/'core'),'-I'+str(ROOT/'ios/SentryBridge'),str(source),
                 str(ROOT/'core/sbcore.c'),'-lm','-o',str(binary)],check=True)
             subprocess.run([str(binary)],check=True)
+
+    def test_one_unreachable_efb_is_not_an_output_error(self):
+        # sendto is replaced so that one chosen address fails; nothing touches the network.
+        fixture = r"""
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+static unsigned failing_ip;
+static ssize_t fixture_sendto(int fd, const void *data, size_t len, int flags, const struct sockaddr *to, socklen_t tolen) {
+    (void)fd; (void)data; (void)flags; (void)tolen;
+    if (ntohl(((const struct sockaddr_in *)to)->sin_addr.s_addr) == failing_ip) { errno = EHOSTDOWN; return -1; }
+    return (ssize_t)len;
+}
+#define sendto fixture_sendto
+#include "BridgeIO.c"
+static void frame(sbio *io) {
+    uint8_t heartbeat[7] = {0, 0x80, 0, 0, 0, 0, 0}, out[32];
+    size_t count = sb_frame(heartbeat, sizeof heartbeat, out, sizeof out);
+    sb_feed(&io->bridge, out, count, 0x7f000001, sbio_now(), emit, io);
+}
+int main(void) {
+    char error[512];
+    sbio *io = sbio_open("127.0.0.1", 14000, "127.0.0.1", 14001, error, sizeof error);
+    if (!io) { puts(error); return 1; }
+    if (sbio_add_destination(io, "192.0.2.20") || sbio_add_destination(io, "192.0.2.21")) return 2;
+    failing_ip = 0xc0000214; /* 192.0.2.20 is off; this device and .21 still receive */
+    snprintf(io->status.detail, sizeof io->status.detail, "core message");
+    frame(io);
+    sbio_status status; sbio_snapshot(io, &status);
+    if (status.forwarded != 1 || status.send_errors != 0) return 3;
+    if (status.unreachable != 1u << 1) return 4;
+    if (!strstr(status.detail, "192.0.2.20")) return 5;
+    snprintf(io->status.detail, sizeof io->status.detail, "core message");
+    frame(io); sbio_snapshot(io, &status);
+    if (strcmp(status.detail, "core message")) return 6; /* reported once, not on every frame */
+    if (sbio_replace_destination(io, "192.0.2.20", "192.0.2.22")) return 7;
+    sbio_snapshot(io, &status);
+    if (status.unreachable != 0) return 8; /* the replacement starts clean */
+    failing_ip = 0x7f000001; /* this device only: still one EFB receives */
+    frame(io); sbio_snapshot(io, &status);
+    if (status.send_errors != 0 || status.unreachable != 1u) return 9;
+    sbio_close(io);
+    io = sbio_open("127.0.0.1", 14000, "192.0.2.30", 14001, error, sizeof error);
+    if (!io) return 10;
+    failing_ip = 0xc000021e; /* the only EFB fails: the frame reached none */
+    frame(io); sbio_snapshot(io, &status);
+    if (status.forwarded != 0 || status.send_errors != 1 || status.unreachable != 1u) return 11;
+    failing_ip = 0; frame(io); sbio_snapshot(io, &status);
+    if (status.forwarded != 1 || status.unreachable != 0) return 12; /* it answers again */
+    sbio_close(io);
+    return 0;
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/'fixture.c';source.write_text(fixture)
+            binary=Path(directory)/'fixture'
+            subprocess.run(['clang','-Wall','-Wextra','-Werror','-std=c11',
+                '-I'+str(ROOT/'core'),'-I'+str(ROOT/'ios/SentryBridge'),str(source),
+                str(ROOT/'core/sbcore.c'),'-lm','-o',str(binary)],check=True)
+            self.assertEqual(subprocess.run([str(binary)]).returncode,0)
 
     def test_weather_cannot_keep_an_old_gps_fix_fresh(self):
         h,e=self.open();self.assertTrue(h,e)

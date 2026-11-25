@@ -23,6 +23,7 @@ struct sbio {
     int input, output, recovering, has_heartbeat, demo;
     struct sockaddr_in destinations[SBIO_MAX_DESTINATIONS]; /* all on one output port; [0] is loopback when sharing */
     size_t destination_count;
+    uint8_t failing[SBIO_MAX_DESTINATIONS]; /* the latest send to destinations[i] failed */
     uint16_t input_port;
     uint8_t buffer[65536];
     sbio_status status;
@@ -57,18 +58,33 @@ static void emit(void *ctx, const uint8_t *data, size_t len) {
         }
     }
     if (io->demo) return; /* Decode/count sample frames, never emit network output. */
-    int sent = 0; /* a frame counts as sent when any EFB took it; each failed send is an output error */
+    /* A frame counts as sent when any EFB took it, and as an output error only when none did. One
+       unreachable EFB (off, or gone from the WiFi) is marked unreachable and reported once, so the
+       others keep showing as forwarding. */
+    int sent = 0, failure = 0;
+    struct sockaddr_in *failed = NULL;
     for (size_t i = 0; i < io->destination_count; i++) {
         struct sockaddr_in *to = &io->destinations[i];
-        if (sendto(io->output, data, len, 0, (struct sockaddr *)to, sizeof *to) == (ssize_t)len) { sent = 1; continue; }
-        int failure = errno;
+        if (sendto(io->output, data, len, 0, (struct sockaddr *)to, sizeof *to) == (ssize_t)len) {
+            sent = 1; io->failing[i] = 0; continue;
+        }
+        if (!io->failing[i] || !failed) { failure = errno; failed = to; }
+        if (!io->failing[i]) {
+            io->failing[i] = 1;
+            char address[INET_ADDRSTRLEN] = "";
+            inet_ntop(AF_INET, &to->sin_addr, address, sizeof address);
+            snprintf(io->status.detail, sizeof io->status.detail,
+                     "UDP output to %s failed: %s. Check that the EFB is on and on the receiver's WiFi.", address, strerror(failure));
+        }
+    }
+    if (sent) io->status.forwarded++;
+    else if (failed) {
         char address[INET_ADDRSTRLEN] = "";
-        inet_ntop(AF_INET, &to->sin_addr, address, sizeof address);
+        inet_ntop(AF_INET, &failed->sin_addr, address, sizeof address);
         io->status.send_errors++;
         snprintf(io->status.detail, sizeof io->status.detail,
                  "UDP output to %s failed: %s. Check Local Network access and destination.", address, strerror(failure));
     }
-    if (sent) io->status.forwarded++;
 }
 static int unicast(uint32_t ip) {
     return ip != 0 && (ip >> 24) != 0 && (ip >> 24) < 224;
@@ -299,6 +315,8 @@ void sbio_snapshot(sbio *io, sbio_status *status) {
     status->own_lat = io->bridge.has_own ? io->bridge.own_lat : 0;
     status->own_lon = io->bridge.has_own ? io->bridge.own_lon : 0;
     status->own_age = io->bridge.has_own ? now - io->bridge.own_t : -1;
+    status->unreachable = 0;
+    for (size_t i = 0; i < io->destination_count; i++) if (io->failing[i]) status->unreachable |= 1u << i;
 }
 int sbio_refresh_shared_input(sbio *io) {
     uint32_t local;
@@ -430,6 +448,7 @@ int sbio_add_destination(sbio *io, const char *ip) {
     if (!io || io->demo || io->destination_count >= SBIO_MAX_DESTINATIONS || !sb_parse_ipv4(ip, &dst) ||
         !other_device(io, dst)) return -1;
     io->destinations[io->destination_count] = io->destinations[0];
+    io->failing[io->destination_count] = 0;
     io->destinations[io->destination_count++].sin_addr.s_addr = htonl(dst);
     return 0;
 }
@@ -438,7 +457,7 @@ int sbio_replace_destination(sbio *io, const char *from, const char *to) {
     int i;
     if (!io || io->demo || !sb_parse_ipv4(from, &old) || !sb_parse_ipv4(to, &dst) || (old >> 24) == 127 ||
         (i = find_destination(io, old)) < 0 || !other_device(io, dst)) return -1;
-    io->destinations[i].sin_addr.s_addr = htonl(dst);
+    io->destinations[i].sin_addr.s_addr = htonl(dst); io->failing[i] = 0;
     return 0;
 }
 int sbio_route_local(const char *receiver_ip, uint16_t port, char *out, size_t cap) {

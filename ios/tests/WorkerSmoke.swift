@@ -457,6 +457,23 @@ import Foundation
         let several = "The EFBs at 192.0.2.10, 192.0.2.11 stopped answering. Nothing was changed. Choose one with Find EFB."
         check(both.checked(two, answering: []) == .report(several), "two silent: reported")
         check(both.checked(two, answering: []) == .keep, "two silent: reported once")
+        // A third goes silent too: the report names the new set; the same set again stays quiet.
+        let three = two + ["192.0.2.12"]
+        var growing = EFBFollower()
+        _ = growing.checked(three, answering: Set(three)); _ = growing.checked(three, answering: ["192.0.2.12"])
+        check(growing.checked(three, answering: ["192.0.2.12"]) == .report(several), "two of three silent: reported")
+        _ = growing.checked(three, answering: [])
+        let all = "The EFBs at 192.0.2.10, 192.0.2.11, 192.0.2.12 stopped answering. Nothing was changed. Choose one with Find EFB."
+        check(growing.checked(three, answering: []) == .report(all), "a third silent EFB: reported again with all three")
+        check(growing.checked(three, answering: []) == .keep, "the same three: not reported again")
+        // A refused switch: no new sweep for that EFB until it answers again, then it can be followed as before.
+        var refusedRule = EFBFollower()
+        _ = refusedRule.checked(one, answering: listed); _ = refusedRule.checked(one, answering: [])
+        check(refusedRule.checked(one, answering: []) == .sweep("192.0.2.10"), "refused: first sweep")
+        refusedRule.refused("192.0.2.10")
+        for _ in 0..<3 { check(refusedRule.checked(one, answering: []) == .keep, "refused: no sweep every check") }
+        _ = refusedRule.checked(one, answering: listed); _ = refusedRule.checked(one, answering: [])
+        check(refusedRule.checked(one, answering: []) == .sweep("192.0.2.10"), "refused, then answered: followed again")
         check(EFBFollower.followMessage(from: "192.0.2.10", to: "192.0.2.9") == "The EFB at 192.0.2.10 stopped answering; now sending to 192.0.2.9, the only other device on the receiver's WiFi.", "follow message")
         print("PASS: readings for \(cases.count) shared stats cases, /24 rule, sweep and cancellation, follow rule")
     }

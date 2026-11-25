@@ -97,6 +97,10 @@ struct BridgeSnapshot {
     var followedAddresses: [String]?
     /// Per EFB address while forwarding: "answering" or "not answering"; missing means "not seen yet".
     var efbStates: [String: String] = [:]
+    /// True while every listed address is checked (the follow thread runs); efbStates means nothing otherwise.
+    var checksEFBs = false
+    /// Listed destinations (127.0.0.1 for This device) whose latest send failed.
+    var unreachable: [String] = []
     /// Latest message from following the EFB (switched, or none or several devices answer).
     var followMessage: String?
     var received: UInt64 = 0, forwarded: UInt64 = 0, sendErrors: UInt64 = 0
@@ -194,6 +198,8 @@ final class BridgeWorker: @unchecked Sendable {
     /// A switch the adapter accepted, for the follow rule to record on its next check; a refused one is never here.
     private var acceptedSwitch: (from: String, to: String)?
     private var followedAddresses: [String]?, followMessage: String?, efbStates: [String: String] = [:]
+    /// Set by the worker when the adapter refused a switch; the follow thread takes it.
+    private var refusedSwitch: String?
     private var compatibilityResult: String?
     private var contactResult: String?
     private var contactInFlight = false
@@ -334,7 +340,8 @@ final class BridgeWorker: @unchecked Sendable {
             DispatchQueue(label: "io.sentrybridge.readings", qos: .utility).async { reader.run(); helpers.leave() }
         }
         // Follow moved EFBs on other devices.
-        if !demo && (settings.contactsReceiver || sweepProbe != nil) && !(settings.addresses ?? []).isEmpty {
+        let checksEFBs = !demo && (settings.contactsReceiver || sweepProbe != nil) && !(settings.addresses ?? []).isEmpty
+        if checksEFBs {
             helpers.enter()
             DispatchQueue(label: "io.sentrybridge.follow", qos: .utility).async { [self] in follow(settings); helpers.leave() }
         }
@@ -355,6 +362,7 @@ final class BridgeWorker: @unchecked Sendable {
                     followMessage = EFBFollower.followMessage(from: next.from, to: next.to)
                 } else {
                     followMessage = "The EFB at \(next.from) stopped answering, but \(next.to) cannot be used; still sending to \(next.from)."
+                    refusedSwitch = next.from
                 }
                 lock.unlock()
             }
@@ -384,7 +392,10 @@ final class BridgeWorker: @unchecked Sendable {
                 lock.lock(); value.compatibilityRequest = compatibilityResult; value.receiverContact = contactResult
                 value.readings = now - readingsAt <= ReceiverReadingsReader.staleS ? readings : nil
                 value.followedAddresses = followedAddresses; value.followMessage = followMessage
-                value.efbStates = efbStates.filter { targets.contains($0.key) }; lock.unlock()
+                value.efbStates = efbStates.filter { targets.contains($0.key) }
+                value.unreachable = targets.enumerated().filter { s.unreachable & (1 << UInt32($0.offset)) != 0 }.map(\.element)
+                lock.unlock()
+                value.checksEFBs = checksEFBs
                 value.inputRebind = inputRebind
                 update(value); lastUpdate = now
                 if let duration, s.elapsed >= duration { return (nil, true) }
@@ -402,8 +413,10 @@ final class BridgeWorker: @unchecked Sendable {
         while helpersRun {
             let wake = sbio_now() + followCheckS
             while helpersRun && sbio_now() < wake { Thread.sleep(forTimeInterval: 0.05) }
-            lock.lock(); let listed = targets, heard = lastReceive, accepted = acceptedSwitch; acceptedSwitch = nil; lock.unlock()
+            lock.lock(); let listed = targets, heard = lastReceive, accepted = acceptedSwitch, refusal = refusedSwitch
+            acceptedSwitch = nil; refusedSwitch = nil; lock.unlock()
             if let accepted { rule.followed(from: accepted.from, to: accepted.to) }
+            if let refusal { rule.refused(refusal) }
             let others = listed.filter { !BridgeSettings.isLoopback($0) }
             guard helpersRun, !others.isEmpty, let heard, sbio_now() - heard < 10 else { continue }
             guard let answers = probe(others), answers.count == others.count, helpersRun else { continue }

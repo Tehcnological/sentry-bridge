@@ -171,26 +171,35 @@ struct EFBFollower {
     /// Per address: "answering", "not answering" or "not seen yet".
     private(set) var states: [String: String] = [:]
     private var seen: Set<String> = [], missed: [String: Int] = [:], reported: Set<String> = []
-    private var several = false
-    /// After one check of every listed Other device address: sweep for the one silent EFB, report several
-    /// silent EFBs once, or keep.
+    /// Addresses whose switch the adapter refused: not swept for again until they answer.
+    private var refusedAddresses: Set<String> = []
+    /// The silent EFBs last reported together; a different set is reported again.
+    private var severalReported: [String] = []
+    /// After one check of every listed Other device address: sweep for the one silent EFB, report each new set
+    /// of several silent EFBs once, or keep.
     mutating func checked(_ addresses: [String], answering: Set<String>) -> Decision {
         states = states.filter { addresses.contains($0.key) }
         for address in addresses {
             if answering.contains(address) {
-                seen.insert(address); missed[address] = 0; reported.remove(address); states[address] = "answering"
+                seen.insert(address); missed[address] = 0; reported.remove(address); refusedAddresses.remove(address)
+                states[address] = "answering"
             } else {
                 missed[address, default: 0] += 1
                 states[address] = seen.contains(address) ? "not answering" : "not seen yet"
             }
         }
         let silent = addresses.filter { seen.contains($0) && missed[$0, default: 0] >= Self.misses }
-        let wasSeveral = several
-        several = silent.count > 1
-        if silent.count == 1 { return .sweep(silent[0]) }
-        guard silent.count > 1, !wasSeveral else { return .keep }
+        guard silent.count > 1 else {
+            severalReported = []
+            return silent.count == 1 && !refusedAddresses.contains(silent[0]) ? .sweep(silent[0]) : .keep
+        }
+        guard silent != severalReported else { return .keep }
+        severalReported = silent
         return .report("The EFBs at \(silent.joined(separator: ", ")) stopped answering. Nothing was changed. Choose one with Find EFB.")
     }
+    /// After the adapter refused the switch away from current: keep sending there and stop sweeping for it
+    /// until it answers again.
+    mutating func refused(_ current: String) { refusedAddresses.insert(current) }
     /// After the sweep for the silent EFB at current: keep (it answered again, or nothing new to say), follow
     /// the one answering device not listed already, or report once per address that none or several answered.
     mutating func swept(_ candidates: [String], current: String, listed: Set<String>) -> Decision {
