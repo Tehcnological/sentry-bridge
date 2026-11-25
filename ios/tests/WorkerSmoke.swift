@@ -527,10 +527,12 @@ import Foundation
         check(checkCount >= 4, "the follower stopped checking after the switch")
         check(lastChecked == (refused ? "192.0.2.10" : "192.0.2.20"), "checked \(lastChecked ?? "nothing") after the switch")
         if refused {
-            // A refused switch is not a switch: 192.0.2.10 is still silent, so every later check sweeps again
-            // instead of counting two new misses first.
+            // A refused switch is not repeated: 192.0.2.10 stays silent, so later checks go on without sweeping the
+            // whole network every 30 s. One more sweep can start before the refusal reaches the follower.
+            Thread.sleep(forTimeInterval: 0.3)
             lock.lock(); let order = Array(kinds.drop { $0 != "sweep" }); lock.unlock()
-            check(!zip(order, order.dropFirst()).contains { $0 == "check" && $1 == "check" }, "after a refused switch a check went without a sweep: \(order)")
+            check(order.filter { $0 == "sweep" }.count <= 2 && order.suffix(2) == ["check", "check"],
+                  "after a refused switch the follower kept sweeping: \(order)")
         }
         worker.stop()
         check(finished.wait(timeout: .now() + 1) == .success, "Stop timeout with a follower")
