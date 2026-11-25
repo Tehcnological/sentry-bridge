@@ -740,6 +740,35 @@ final class BridgeUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         assertSingleWarning()
     }
+    func testLocationNoteAsksAgainWhenPromptWasDismissed() {
+        // A dismissed prompt leaves access undecided: the note asks again instead of linking to Settings.
+        let mode = lite ? "bridgeSession+gps" : "backgroundAudio+gps"
+        let app = launch(extraArguments: ["--keep-running=" + mode, "--ui-test-location", "--ui-location-undetermined"])
+        let note = app.staticTexts["bridge.alwaysLocation.status"]
+        reveal(note, in: app); XCTAssertTrue(note.exists)
+        XCTAssertEqual(note.label, "GPS cross-reference needs location access.")
+        XCTAssertFalse(app.buttons["bridge.openLocationSettings.status"].exists)
+        let allow = app.buttons["bridge.allowLocation.status"]; reveal(allow, in: app); allow.tap()
+        XCTAssertTrue(note.waitForNonExistence(timeout: 5))
+    }
+    func testStartAsksForUndecidedLocation() {
+        let mode = lite ? "bridgeSession+gps" : "backgroundAudio+gps"
+        let app = launch(extraArguments: ["--keep-running=" + mode, "--ui-test-location", "--ui-location-undetermined", "--refuse-session-registration"])
+        app.buttons["bridge.startStop"].tap()
+        expectKeepAlive(app, "location=true gps=true watchdog=true session=false")
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "bridge.alwaysLocation.")).count, 0)
+        let start = app.buttons["bridge.startStop"]; reveal(start, in: app); start.tap()
+        XCTAssertTrue(app.buttons["Start Bridge"].waitForExistence(timeout: 5))
+    }
+    func testLocationNoteNamesWhileUsing() {
+        let mode = lite ? "bridgeSession+gps" : "backgroundAudio+gps"
+        let app = launch(extraArguments: ["--keep-running=" + mode, "--ui-test-location", "--ui-location-when-in-use"])
+        let note = app.staticTexts["bridge.alwaysLocation.status"]
+        reveal(note, in: app); XCTAssertTrue(note.exists)
+        XCTAssertTrue(note.label.hasPrefix("Location is set to While Using."), note.label)
+        XCTAssertTrue(app.buttons["bridge.openLocationSettings.status"].exists)
+        XCTAssertFalse(app.buttons["bridge.allowLocation.status"].exists)
+    }
     func testBackgroundAudioKeepsRunningWhenHidden() throws {
         try XCTSkipIf(lite, "Background audio is a Sideload option")
         let app = launch(extraArguments: ["--keep-running=backgroundAudio"])

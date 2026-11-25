@@ -194,13 +194,20 @@ struct BridgeView: View {
             if model.snapshot.sendErrors > 0 { Text("Output errors: \(model.snapshot.sendErrors). Check permission, WiFi and routing.").foregroundStyle(warning) }
         }.listRowBackground(surface)
     }
-    /// Shown while GPS cross-reference is chosen and location is not set to Always.
+    /// Shown while GPS cross-reference is chosen and location is not set to Always. Undecided access is asked for
+    /// here; While Using and off can only be changed in Settings.
     @ViewBuilder private func alwaysLocationNote(context: String) -> some View {
-        Label("GPS cross-reference needs location set to Always.", systemImage: "location.slash").foregroundStyle(warning)
+        let need = model.locationNeed ?? .off
+        Label(need.note, systemImage: "location.slash").foregroundStyle(warning)
             .accessibilityIdentifier("bridge.alwaysLocation." + context)
-        Button("Open Settings") {
-            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-        }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.openLocationSettings." + context)
+        if need == .ask {
+            Button("Allow Location") { model.requestLocation() }
+                .foregroundStyle(linkInk).accessibilityIdentifier("bridge.allowLocation." + context)
+        } else {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+            }.foregroundStyle(linkInk).accessibilityIdentifier("bridge.openLocationSettings." + context)
+        }
     }
     @ViewBuilder private var setupSections: some View {
         Section("EFB setup") {

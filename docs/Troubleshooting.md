@@ -58,7 +58,9 @@ See [iPhone and iPad limitations](Compatibility.md#iphone-and-ipad).
 
 ## GPS cross-reference says it needs Always location
 
-In Sentry Bridge, tap **Open Settings** beside the note and set location access to **Always**.
+If the note offers **Allow Location**, the location prompt was closed without an answer: tap it and
+choose to allow location. If the note says location is set to **While Using** or is off, tap
+**Open Settings** beside it and set location access to **Always**.
 The note updates when you return. If the bridge is still running, the check starts without a restart.
 If the bridge stopped while you were in Settings, press **Start** again. If you do not want that access, stop the bridge
 and choose an option without GPS cross-reference in **Settings → Background running**.

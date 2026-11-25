@@ -152,6 +152,17 @@ final class Watchdog {
 }
 
 /// The phone's latest position, from Core Location. Seconds use sbio_now's monotonic clock.
+/// What GPS cross-reference still needs from location access, shown in the note under the status.
+enum LocationNeed: Equatable {
+    case ask, whileUsing, off
+    var note: String {
+        switch self {
+        case .ask: return "GPS cross-reference needs location access."
+        case .whileUsing: return "Location is set to While Using. GPS cross-reference needs Always to keep checking in the background."
+        case .off: return "Location is off for Sentry Bridge. GPS cross-reference needs it set to Always."
+        }
+    }
+}
 struct PhoneFix: Equatable { var lat: Double, lon: Double, accuracy: Double, at: Double }
 /// The Sentry's GPS as the bridge decodes it: the heartbeat's fix flag and its latest ownship position.
 struct SentryFix: Equatable {

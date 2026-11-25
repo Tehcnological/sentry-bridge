@@ -52,8 +52,18 @@ enum RunMode { case foreground, audio, session }
     @Published private(set) var gpsStatus: String?
     @Published private(set) var gpsWarning: String?
     @Published private(set) var locationStatus = CLAuthorizationStatus.notDetermined
-    /// GPS cross-reference is chosen but location is not set to Always; the app links to its Settings page until it is.
-    var needsAlwaysLocation: Bool { choice.gpsCheck && locationStatus != .authorizedAlways }
+    /// GPS cross-reference is chosen but location is not set to Always; the note asks or links to Settings until it is.
+    var needsAlwaysLocation: Bool { locationNeed != nil }
+    /// What the GPS cross-reference still needs from location access, or nil when it has Always.
+    var locationNeed: LocationNeed? {
+        guard choice.gpsCheck else { return nil }
+        switch locationStatus {
+        case .authorizedAlways: return nil
+        case .notDetermined: return .ask
+        case .authorizedWhenInUse: return .whileUsing
+        default: return .off
+        }
+    }
     var choice: KeepRunningChoice {
         keepRunning ?? KeepRunningChoice(method: flavor == .sideload ? .backgroundAudio : .bridgeSession)
     }
@@ -152,7 +162,10 @@ enum RunMode { case foreground, audio, session }
         #endif
         #if DEBUG
         if testing && ProcessInfo.processInfo.arguments.contains("--ui-test-location") {
-            location.useTestAuthorization(ProcessInfo.processInfo.arguments.contains("--ui-location-always") ? .authorizedAlways : .denied)
+            let arguments = ProcessInfo.processInfo.arguments
+            location.useTestAuthorization(arguments.contains("--ui-location-always") ? .authorizedAlways
+                : arguments.contains("--ui-location-when-in-use") ? .authorizedWhenInUse
+                : arguments.contains("--ui-location-undetermined") ? .notDetermined : .denied)
         }
         #endif
         locationStatus = location.status
@@ -178,10 +191,16 @@ enum RunMode { case foreground, audio, session }
             self.record("Notifications \(granted ? "allowed" : "not allowed")")
             if !granted { self.keepRunningNote = "Notifications are off, so the app can't warn you if the bridge stops. Turn them on in Settings." }
             guard picked.gpsCheck else { return }
-            self.location.requestAlways { [weak self] allowed in
-                guard let self else { return }
-                self.refreshLocationAuthorization(); self.record("Location access \(allowed ? "allowed" : "not allowed")")
-            }
+            self.requestLocation()
+        }
+    }
+    /// Asks for location access for the GPS cross-reference. iOS shows its prompt only while access is undecided;
+    /// a dismissed prompt leaves it undecided, so the note and Start ask again.
+    func requestLocation() {
+        record("Location access requested")
+        location.requestAlways { [weak self] allowed in
+            guard let self else { return }
+            self.refreshLocationAuthorization(); self.record("Location access \(allowed ? "allowed" : "not allowed")")
         }
     }
     private func save(_ choice: KeepRunningChoice) {
@@ -317,7 +336,8 @@ enum RunMode { case foreground, audio, session }
         gpsRequestedForRun = mode != .foreground && choice.gpsCheck && !demo
         refreshLocationAuthorization()
         if gpsRequestedForRun && !gpsRunning {
-            record("GPS cross-reference skipped: no location access")
+            // Undecided: ask now; GPS cross-reference starts during this run once access is given.
+            if locationStatus == .notDetermined { requestLocation() } else { record("GPS cross-reference skipped: no location access") }
         }
         // A pending session can already be hidden when GPS is enabled. Start location and arm its
         // warning before submitting, not only after the scheduler eventually launches the worker.

@@ -80,8 +80,10 @@ this check: it is not sent to the EFB, saved as a track, or used to change your 
 or traffic reports. The check does not correct a bad Sentry position and has not been tested
 against a real receiver in flight. Its warning appears in Sentry Bridge, not in your EFB.
 
-Choose **Always** in the app's location permissions for background use. If the app says
-**GPS cross-reference needs location set to Always**, tap **Open Settings** and change the permission.
+Choose **Always** in the app's location permissions for background use. If the location prompt was
+closed without an answer, the app says **GPS cross-reference needs location access**: tap
+**Allow Location**, or press **Start**, to see the prompt again. If the app says location is set to
+**While Using** or is off, tap **Open Settings** and change the permission to **Always**.
 Choosing the option alone does not grant permission. If the bridge is still running, the check starts
 when access is granted; if it stopped while you were in Settings, press **Start** again. iOS shows a
 location indicator while it is in use.
