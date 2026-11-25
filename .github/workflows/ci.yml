@@ -20,6 +20,13 @@ defaults:
   run:
     shell: bash
 
+env:
+  # The UI tests run in two shards per flavor. Shard 1 runs these, the slowest ones (about half the time);
+  # shard 2 runs all the others, so a new test always runs.
+  UI_SHARD_1: >-
+    testCompatibilityNoticeBeforeStart testAlwaysLocationNoteHasOneVisibleContext testKeepRunningChooser
+    testThisDeviceSwitchAndEFBList testLandscapeTwoColumnLayout
+
 jobs:
   changes:
     name: Detect changes
@@ -213,32 +220,45 @@ jobs:
           python tools/test_android_diagnostics.py
 
   ios:
-    name: iOS
+    name: iOS (${{ matrix.shard }}/2)
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: xcode-27  # the app needs the iOS 27 SDK; macos-latest stops at Xcode 26
-    timeout-minutes: 75  # IPAs, host checks, ~40 min of UI tests and room for retries
+    timeout-minutes: 60  # IPAs, host checks, ~20 min of UI tests and room for retries
+    strategy:
+      fail-fast: false
+      matrix:
+        # Shard 1 runs no Lite-only test, so it skips none; shard 2 skips the 7 Lite-only ones.
+        include:
+          - {shard: 1, skipped: 0}
+          - {shard: 2, skipped: 7}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        if: matrix.shard == 1
         with:
           python-version: '3.13'
           cache: pip
           cache-dependency-path: requirements*.txt
-      - run: python -m pip install -r requirements-dev.txt
+      - if: matrix.shard == 1
+        run: python -m pip install -r requirements-dev.txt
       - name: Generated Xcode project is current
+        if: matrix.shard == 1
         run: |
           python tools/generate_ios_project.py
           git diff --exit-code -- ios
       - name: Build the release and Lite IPAs, unsigned
+        if: matrix.shard == 1
         run: |
           python tools/build_ios_ipa.py
           python tools/build_ios_ipa.py --flavor Lite
       - name: POSIX adapter over local UDP
+        if: matrix.shard == 1
         run: python -m unittest discover -s ios/tests -p 'test_*.py' -v
       - name: Swift worker on the host
+        if: matrix.shard == 1
         run: python tools/validate_ios_host.py
       - name: UI tests on the simulator
         run: |
@@ -248,12 +268,14 @@ jobs:
           udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name == "iPhone 17")][0].udid')
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
-          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui -retry-tests-on-failure -test-iterations 3 CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
+          filter=only; [ "${{ matrix.shard }}" = 1 ] || filter=skip
+          tests=(); for t in $UI_SHARD_1; do tests+=("-$filter-testing:BridgeUITests/BridgeUITests/$t"); done
+          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui "${tests[@]}" -retry-tests-on-failure -test-iterations 3 CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
       - name: UI test summary
         if: ${{ !cancelled() }}
         run: |
           # -quiet names the failing tests only; the result bundle has each failure's message and line.
-          # xcodebuild passes skipped tests, so the count is checked: here only the 7 Lite-only tests skip.
+          # xcodebuild passes skipped tests, so the count is checked: only the 7 Lite-only tests skip (all in shard 2).
           result=$(ls -dt build/ios-ui/Logs/Test/*.xcresult | head -1)
           xcrun xcresulttool get test-results summary --path "$result" | tee build/ui-summary.json
           # Each failure's line and step timeline: the summary's message alone cannot tell a hang from a slow simulator.
@@ -262,21 +284,29 @@ jobs:
           done
           # A test that passed only on retry is reported, so a slow-simulator flake stays visible.
           jq -r 'select(.result == "Passed") | .testFailures[]? | "::warning::Passed on retry: \(.testIdentifierString): \(.failureText)"' build/ui-summary.json || true
-          jq -e '.skippedTests == 7' build/ui-summary.json > /dev/null || { echo "::error::Expected exactly 7 skipped UI tests (the Lite-only ones)"; exit 1; }
+          jq -e --argjson n ${{ matrix.skipped }} '.skippedTests == $n' build/ui-summary.json > /dev/null || { echo "::error::Expected exactly ${{ matrix.skipped }} skipped UI tests in this shard"; exit 1; }
+          # Shard 1 must run every listed test: a renamed test would otherwise drop out of both shards.
+          [ "${{ matrix.shard }}" != 1 ] || jq -e --argjson n "$(wc -w <<< "$UI_SHARD_1")" '.totalTestCount == $n' build/ui-summary.json > /dev/null || { echo "::error::Shard 1 did not run every test in UI_SHARD_1"; exit 1; }
       - name: Keep the UI test results of a failed run
         if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: ios-ui-xcresult
+          name: ios-ui-xcresult-${{ matrix.shard }}
           path: build/ios-ui/Logs/Test/*.xcresult
           retention-days: 7
 
   ios-lite:
-    name: iOS Lite UI
+    name: iOS Lite UI (${{ matrix.shard }}/2)
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: xcode-27
-    timeout-minutes: 60  # ~37 min of UI tests and room for retries
+    timeout-minutes: 45  # ~20 min of UI tests and room for retries
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {shard: 1, skipped: 0}
+          - {shard: 2, skipped: 1}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -286,7 +316,9 @@ jobs:
           udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name == "iPhone 17")][0].udid')
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
-          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui SB_FLAVOR=Lite -retry-tests-on-failure -test-iterations 3 CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
+          filter=only; [ "${{ matrix.shard }}" = 1 ] || filter=skip
+          tests=(); for t in $UI_SHARD_1; do tests+=("-$filter-testing:BridgeUITests/BridgeUITests/$t"); done
+          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui SB_FLAVOR=Lite "${tests[@]}" -retry-tests-on-failure -test-iterations 3 CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
       - name: UI test summary
         if: ${{ !cancelled() }}
         run: |
@@ -298,7 +330,8 @@ jobs:
           done
           # A test that passed only on retry is reported, so a slow-simulator flake stays visible.
           jq -r 'select(.result == "Passed") | .testFailures[]? | "::warning::Passed on retry: \(.testIdentifierString): \(.failureText)"' build/ui-summary.json || true
-          jq -e '.skippedTests == 1' build/ui-summary.json > /dev/null || { echo "::error::Expected exactly 1 skipped UI test (the Sideload-only one)"; exit 1; }
+          jq -e --argjson n ${{ matrix.skipped }} '.skippedTests == $n' build/ui-summary.json > /dev/null || { echo "::error::Expected exactly ${{ matrix.skipped }} skipped UI tests in this shard"; exit 1; }
+          [ "${{ matrix.shard }}" != 1 ] || jq -e --argjson n "$(wc -w <<< "$UI_SHARD_1")" '.totalTestCount == $n' build/ui-summary.json > /dev/null || { echo "::error::Shard 1 did not run every test in UI_SHARD_1"; exit 1; }
 
   # The one required check. Skipped platforms pass here, so docs-only changes can merge.
   ci:
