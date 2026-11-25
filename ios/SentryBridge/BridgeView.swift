@@ -239,6 +239,8 @@ struct BridgeView: View {
                     Button("Add", action: addTyped).foregroundStyle(linkInk).disabled(model.busy)
                         .buttonStyle(.borderless).accessibilityIdentifier("bridge.addEFB")
                 }
+                // The separator starts at a row's first Text, which here is Add: start it with the field.
+                .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
             } else {
                 Text("Up to \(BridgeSettings.maxAddresses) EFB addresses.").font(.caption).foregroundStyle(secondary)
             }
