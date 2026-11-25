@@ -40,8 +40,11 @@ struct BridgeSettings: Codable {
     /// Where this route sends, This device first.
     var destinations: [String] { (thisDevice != false ? ["127.0.0.1"] : []) + (addresses ?? []) }
     /// This device on: loopback on the receiver port, which Stratux-type EFBs listen on. Off: the standard
-    /// GDL90 port for the EFBs on other devices.
-    mutating func setThisDevice(_ on: Bool) { thisDevice = on; outputPort = on ? inputPort : "4000" }
+    /// GDL90 port for the EFBs on other devices. Listed EFBs share the output port, so it stays put while any are.
+    mutating func setThisDevice(_ on: Bool) {
+        thisDevice = on
+        if (addresses ?? []).isEmpty { outputPort = on ? inputPort : "4000" }
+    }
     /// Adds an EFB address (typed or found); nil when added, else why not (tools/routes.py and web/app.js wording).
     mutating func addEFB(_ text: String) -> String? {
         let typed = text.trimmingCharacters(in: .whitespacesAndNewlines), list = addresses ?? []

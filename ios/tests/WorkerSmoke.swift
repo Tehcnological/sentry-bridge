@@ -20,6 +20,12 @@ import Foundation
               route.routeError == "Turn on This device or add an EFB address." else { fail("This device off with no address") }
         route.inputPort = "14000"; route.setThisDevice(true)
         guard route.destinations == ["127.0.0.1"], route.outputPort == "14000", route.sharesInput, route.routeError == nil else { exit(1) }
+        // Listed EFBs on other devices share the output port, so the switch leaves it alone while any are listed.
+        var listed = BridgeSettings(); listed.inputPort = "14000"; listed.setThisDevice(false)
+        _ = listed.addEFB("192.168.4.20"); listed.setThisDevice(true)
+        guard listed.outputPort == "4000", listed.destinations == ["127.0.0.1", "192.168.4.20"] else { fail("This device on moved the port of listed EFBs: \(listed.outputPort)") }
+        listed.outputPort = "4001"; listed.setThisDevice(false)
+        guard listed.outputPort == "4001" else { fail("This device off reset the port of listed EFBs: \(listed.outputPort)") }
         route.outputPort = "14001"
         guard !route.sharesInput else { print("FAIL: a different local port must stay exclusive"); exit(1) }
         route.outputPort = "014000"

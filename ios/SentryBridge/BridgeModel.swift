@@ -221,7 +221,7 @@ enum RunMode { case foreground, audio, session }
     func syntheticSettings() {
         guard !busy else { return }
         settings.source = "127.0.0.1"; settings.inputPort = "14000"
-        settings.thisDevice = true; settings.outputPort = "14001"
+        settings.thisDevice = true; settings.addresses = []; settings.outputPort = "14001"
     }
     /// The EFB field and Find EFB's Add; addressError says why an address was not added.
     @Published var addressError: String?
