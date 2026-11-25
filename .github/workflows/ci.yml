@@ -259,6 +259,13 @@ jobs:
             xcrun xcresulttool get test-results test-details --test-id "$id" --path "$result" || echo "::warning::No details for $id"
           done
           jq -e '.skippedTests == 7' build/ui-summary.json > /dev/null || { echo "::error::Expected exactly 7 skipped UI tests (the Lite-only ones)"; exit 1; }
+      - name: Keep the UI test results of a failed run
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: ios-ui-xcresult
+          path: build/ios-ui/Logs/Test/*.xcresult
+          retention-days: 7
 
   ios-lite:
     name: iOS Lite UI
