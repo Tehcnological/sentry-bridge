@@ -60,7 +60,9 @@ copies. An accepted F-Droid reproducible-build recipe can retain that certificat
 
 To build the app yourself, open `ios/SentryBridge.xcodeproj` in Xcode with the iOS 27 SDK on a Mac, choose your
 team under **Signing & Capabilities**, and run it on the device. `python3 tools/build_ios_ipa.py`
-builds the same `dist/sentry-bridge.ipa` the release uses. The build setting `SB_FLAVOR` picks
+builds the same `dist/sentry-bridge.ipa` the release uses. CI's iOS job runs it on every change and keeps
+the IPA and `dist/ios-build-report.json` as the `ios-release-ipa` download; a release takes them from the run
+at the release commit. The build setting `SB_FLAVOR` picks
 the flavor: `Sideload` (the default and the release) keeps running with background audio; `Lite` has no
 silent audio and offers Bridge Session instead (`python3 tools/build_ios_ipa.py --flavor Lite` writes
 `dist/sentry-bridge-lite.ipa`, which is not released). Both flavors request the Time Sensitive notification

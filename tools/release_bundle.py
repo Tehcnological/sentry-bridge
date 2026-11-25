@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 # Firmware images (tools/build_firmware.py) are not release assets until they are tested on boards.
 # The console sentry-bridge.exe is built and tested but not released: the Windows app does its job.
-# The IPA is built on a Mac (tools/build_ios_ipa.py) and copied into dist/ with its report.
+# The IPA is built on macOS by tools/build_ios_ipa.py (CI's ios-release-ipa download) and copied into dist/ with its report.
 ASSETS = ("sentry-bridge-gui.exe", "sentry-ctl.exe", "sentry-bridge.apk", "sentry-bridge.ipa")
 # What the IPA is built from (the Xcode project's inputs, including the license texts it bundles);
 # its report pins these blobs.
