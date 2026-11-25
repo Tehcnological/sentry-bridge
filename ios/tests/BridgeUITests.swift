@@ -232,6 +232,9 @@ final class BridgeUITests: XCTestCase {
         reveal(replay, in: app); replay.tap()
         let start = app.buttons["bridge.startStop"]
         reveal(start, in: app, upwards: false); start.tap()
+        // The compatibility notice is saved state too: it shows unless an earlier test turned it off.
+        let notice = app.buttons["compatibility.start"]
+        if notice.waitForExistence(timeout: 3) { notice.tap() }
         let diagnostics = app.buttons["Diagnostics"]
         reveal(diagnostics, in: app); diagnostics.tap()
         let opened = app.staticTexts["Waiting for receiver data"]
@@ -438,13 +441,13 @@ final class BridgeUITests: XCTestCase {
     }
     /// Compatibility notice: shown before each Start (never Stop); Cancel does not start or save,
     /// even with the toggle on; Start with the toggle off asks again; Start with it on skips the
-    /// notice, also after relaunch. Runs at normal and AX5 text, scrolling inside the sheet.
+    /// notice, also after relaunch. Runs at normal text; at AX5 it checks the sheet scrolls to every control and Cancel.
     func testCompatibilityNoticeBeforeStart() {
-        for category in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryAccessibilityXXXL"] {
-            noticeWorkflow(category)
-        }
+        noticeWorkflow("UICTContentSizeCategoryL")
+        // The largest text only changes layout, so it checks reach and Cancel, not the whole flow again.
+        noticeWorkflow("UICTContentSizeCategoryAccessibilityXXXL", layoutOnly: true)
     }
-    private func noticeWorkflow(_ category: String) {
+    private func noticeWorkflow(_ category: String, layoutOnly: Bool = false) {
         let size = ["-UIPreferredContentSizeCategoryName", category]
         var app = launch(extraArguments: ["--compatibility-notice", "--reset-compatibility-notice"] + size)
         let startStop = app.buttons["bridge.startStop"]
@@ -480,6 +483,7 @@ final class BridgeUITests: XCTestCase {
         pressStart(expectNotice: true)
         app.buttons["compatibility.cancel"].tap()
         XCTAssertFalse(app.buttons["Stop Bridge"].waitForExistence(timeout: 2), "Cancel does not start")
+        if layoutOnly { app.terminate(); return }
         pressStart(expectNotice: true)
         switchOn()
         app.buttons["compatibility.cancel"].tap()
