@@ -232,6 +232,9 @@ final class BridgeUITests: XCTestCase {
         reveal(replay, in: app); replay.tap()
         let start = app.buttons["bridge.startStop"]
         reveal(start, in: app, upwards: false); start.tap()
+        // The compatibility notice is saved state too: it shows unless an earlier test turned it off.
+        let notice = app.buttons["compatibility.start"]
+        if notice.waitForExistence(timeout: 3) { notice.tap() }
         let diagnostics = app.buttons["Diagnostics"]
         reveal(diagnostics, in: app); diagnostics.tap()
         let opened = app.staticTexts["Waiting for receiver data"]
