@@ -25,7 +25,7 @@ env:
   # shard 2 runs all the others, so a new test always runs.
   UI_SHARD_1: >-
     testCompatibilityNoticeBeforeStart testAlwaysLocationNoteHasOneVisibleContext testKeepRunningChooser
-    testThisDeviceSwitchAndEFBList testLandscapeTwoColumnLayout testDemoWithSampleData testSavedRoutingSurvivesRelaunch
+    testThisDeviceSwitchAndEFBList
   # The Lite build differs only in keep-running modes, Bridge Session, intents, backgrounding and location.
   # It skips these tests of shared screens, which the Sideload build runs; a new test runs in both.
   UI_LITE_SKIP: >-
