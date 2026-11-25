@@ -288,7 +288,7 @@ def main(argv=None) -> int:
     # argparse exits before required subcommands; no network request is made.
     if list(sys.argv[1:] if argv is None else argv) == ["--license"]:
         root = Path(__file__).resolve().parent
-        for name in ("NOTICE.txt", "LICENSE", "notices/dump978-GPL-2.0.txt", "notices/Python-3.11.0.txt"):
+        for name in ("NOTICE.txt", "LICENSE", "notices/dump978-GPL-2.0.txt", "notices/Python-3.11.9.txt"):
             print((root / name).read_text(encoding="utf-8"))
         return 0
     ap.add_argument("--host", default=DEFAULT_HOST, help="Sentry IP[:port] (default %(default)s)")

@@ -126,7 +126,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
-          python-version: '3.11.0'  # the audited packaging runtime: tools/legal_assets.py
+          python-version: '3.11.9'  # the audited packaging runtime: tools/legal_assets.py
           cache: pip
           cache-dependency-path: requirements*.txt
       - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78  # v6.2.0

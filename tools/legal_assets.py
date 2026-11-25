@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 NOTICE_FILES = ("LICENSE", "NOTICE.txt",
                 "notices/Apache-2.0.txt", "notices/Kotlin-NOTICE.txt",
                 "notices/JetBrains-Annotations.txt",
-                "notices/Python-3.11.0.txt", "notices/dump978-GPL-2.0.txt")
+                "notices/Python-3.11.9.txt", "notices/dump978-GPL-2.0.txt")
 
 
 def page(title, body):
@@ -56,8 +56,8 @@ def current(path, content):
 
 def check_python_runtime(root=ROOT):
     license_file = Path(sys.base_prefix) / "LICENSE.txt"
-    expected = root / "notices/Python-3.11.0.txt"
-    if sys.version_info[:3] != (3, 11, 0) or not license_file.is_file() or (
+    expected = root / "notices/Python-3.11.9.txt"
+    if sys.version_info[:3] != (3, 11, 9) or not license_file.is_file() or (
             [line.rstrip() for line in license_file.read_text(encoding="utf-8").splitlines()] !=
             [line.rstrip() for line in expected.read_text(encoding="utf-8").splitlines()]):
         raise ValueError("Windows packaging runtime changed: audit its licenses and update legal assets first.")

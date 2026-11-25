@@ -38,11 +38,9 @@ runtime also includes org.jetbrains:annotations:13.0 (Apache-2.0); its original
 copyright notices are retained in notices/JetBrains-Annotations.txt.
 
 Packaged Windows Python tools include CPython and its incorporated components.
-The checked runtime is CPython 3.11.0; see notices/Python-3.11.0.txt, including
-PSF, historical Python, OpenSSL/SSLeay, bzip2, libffi and other component terms.
-This product includes software developed by the OpenSSL Project for use in the
-OpenSSL Toolkit (http://www.openssl.org/). This product includes cryptographic
-software written by Eric Young. The packaged Windows tools also contain the
+The checked runtime is CPython 3.11.9; see notices/Python-3.11.9.txt, including
+PSF, historical Python, bzip2, libffi, OpenSSL 3 (Apache-2.0) and other component
+terms. The packaged Windows tools also contain the
 Microsoft Visual C++ and Universal C runtime files (vcruntime140, ucrtbase,
 api-ms-win-*) as the Python Windows distribution ships them. They are Microsoft
 components under Microsoft's redistribution terms, not covered by the GPL.
