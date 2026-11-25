@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * Copyright (c) 2026 Sentry Bridge contributors. See NOTICE.txt.
+ * Copyright (c) 2026 Christopher DeFoe. See NOTICE.txt.
  */
 #include "fw_bridge.h"
 

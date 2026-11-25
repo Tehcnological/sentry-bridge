@@ -1,12 +1,8 @@
-# Decoder specification (clean-room input)
+# Decoder specification
 
-This is the only input for writing `core/sbdecode.c`. It describes what the 1090ES and
-UAT decoders must compute: field positions from the published message formats (ICAO
-Doc 9871 / DO-260B for 1090ES, DO-282B for UAT) and the exact numeric behaviour the
-parity tests require. It contains no code from any other decoder.
-
-The author of `core/sbdecode.c` must not read `core/sbcore.c`, `bridge.py`, `uat.py`,
-`sim.py`, pyModeS, dump978 or any other ADS-B decoder source while writing it.
+What the 1090ES and UAT decoders in `core/sbdecode.c` compute: field positions from the
+published message formats (ICAO Doc 9871 / DO-260B for 1090ES, DO-282B for UAT) and the
+exact numeric behaviour the parity tests require.
 
 ## Conventions
 
@@ -196,10 +192,3 @@ Clear `*r` first. Return 0 to reject, 1 otherwise.
     `callsign_is_flight_id` = bit 214.
   - Payload types 1, 2, 5 and 6: secondary altitude = bits 232..243, decoded like the
     altitude above into `alt2_ft` / `has_alt2`.
-
-## Provenance
-
-The 1090ES and UAT field decoders in `core/sbdecode.c` were written from this document
-alone by an author who did not read `core/sbcore.c`, `bridge.py`, `uat.py`, pyModeS or
-dump978. Numeric behaviour is checked against the Python reference by the parity tests,
-which compare outputs only.

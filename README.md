@@ -7,7 +7,7 @@
 [![Last commit](https://img.shields.io/github/last-commit/Tehcnological/sentry-bridge)](https://github.com/Tehcnological/sentry-bridge/commits/master)
 [![Open issues](https://img.shields.io/github/issues/Tehcnological/sentry-bridge)](https://github.com/Tehcnological/sentry-bridge/issues)
 
-Sentry Bridge lets you see traffic from a uAvionix **Sentry** or **Sentry Plus** ADS-B receiver in
+Sentry Bridge lets you see traffic from a uAvionix/ForeFlight **Sentry** or **Sentry Plus** ADS-B receiver in
 EFB apps other than ForeFlight, such as Garmin Pilot, FltPlan Go or AvareX.
 
 Normally the Sentry talks only to ForeFlight, over an encrypted link. It also has a little-known
@@ -97,7 +97,7 @@ No dates, and plans can change. To ask for something or to help,
   the LilyGO T-Dongle, is the next target.
 - **CO alarm level on iPhone and iPad.** Use the Sentry's own alarm level instead of a fixed 50 ppm.
 - **Links to Hidden Pages.** Find and link to all hidden pages in the Sentry's web settings.
-- **Device names in Find EFB.** Show each device's network name, such as "Chris's iPad", instead of
+- **Device names in Find EFB.** Show each device's network name, such as "Pilot's iPad", instead of
   "Device" for EFBs that do not announce themselves. Devices that do not answer still show "Device".
 
 ## More
@@ -105,12 +105,14 @@ No dates, and plans can change. To ask for something or to help,
 - [Documentation index](docs/Home.md)
 - [Privacy](docs/Privacy.md): traffic is processed on your device; nothing is sent to the project.
 - [Building from source](docs/Building.md)
+- [Contributing](CONTRIBUTING.md): issues, pull requests and the ground rules.
 
 ## License
 
-Sentry Bridge is **GPL-3.0-only**, with an additional permission for app stores; see
+Sentry Bridge is **GPL-3.0-only**, with an additional permission for the small-board firmware; see
 [LICENSE](LICENSE) and [NOTICE](NOTICE.txt). Third-party components keep their own licenses; see
-[Credits and legal](docs/Credits-and-Legal.md).
+[Credits and legal](docs/Credits-and-Legal.md). Copyright Christopher DeFoe. See
+[CONTRIBUTING.md](CONTRIBUTING.md) before sending changes.
 
 Not affiliated with or endorsed by uAvionix, ForeFlight or any EFB vendor; product names belong to
 their owners. Sentry Bridge uses the Sentry's own Compatibility Mode. It does not decrypt the

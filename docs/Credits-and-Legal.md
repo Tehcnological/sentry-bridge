@@ -1,7 +1,7 @@
 # Credits and legal
 
-Sentry Bridge is distributed under **GPL-3.0-only**, with an additional permission for app
-stores (see [NOTICE](../NOTICE.txt)). Third-party components retain their licenses.
+Sentry Bridge is distributed under **GPL-3.0-only**, with an additional permission for the
+small-board firmware (see [NOTICE](../NOTICE.txt)). Third-party components retain their licenses.
 The full terms are in [LICENSE](../LICENSE).
 
 ## Prior work and components
@@ -10,9 +10,7 @@ The full terms are in [LICENSE](../LICENSE).
   documented Compatibility Mode, receiver web endpoints and wrapped 1090ES traffic.
   Its interface observations informed this project; no claim of vendor endorsement follows.
 - [pyModeS](https://github.com/junzis/pyModeS/tree/v2.22.0), GPLv3, is the Python bridge's
-  runtime decoder and the parity reference. The native decoder (`core/sbdecode.c`) was
-  written clean-room from [Decoder-Spec.md](Decoder-Spec.md) by an author who did not read
-  pyModeS or dump978; the parity tests compare outputs only.
+  runtime decoder and the parity reference.
 - [mutability/dump978](https://github.com/mutability/dump978/blob/master/uat_decode.c)
   is the UAT field-layout reference cited by `uat.py`. That file is GPLv2 or later;
   any adaptation here is distributed under its version 3 option, with attribution retained.

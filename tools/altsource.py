@@ -70,7 +70,7 @@ def base():
     icon = f"{RAW}/fastlane/metadata/android/en-US/images/icon.png"
     return {"name": "Sentry Bridge", "identifier": f"{BUNDLE_ID}.source", "subtitle": "Sentry traffic in any EFB",
             "description": DESCRIPTION, "iconURL": icon, "website": REPOSITORY, "tintColor": "#2563EB",
-            "apps": [{"name": "Sentry Bridge", "bundleIdentifier": BUNDLE_ID, "developerName": "Sentry Bridge contributors",
+            "apps": [{"name": "Sentry Bridge", "bundleIdentifier": BUNDLE_ID, "developerName": "Christopher DeFoe",
                       "subtitle": "Sentry traffic in any EFB", "localizedDescription": DESCRIPTION, "iconURL": icon,
                       "tintColor": "#2563EB", "category": "utilities", "versions": []}],
             "news": []}
