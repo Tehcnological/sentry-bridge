@@ -217,7 +217,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: xcode-27  # the app needs the iOS 27 SDK; macos-latest stops at Xcode 26
-    timeout-minutes: 60  # IPAs, host checks and ~40 min of UI tests; 45 cut off a passing run
+    timeout-minutes: 75  # IPAs, host checks, ~40 min of UI tests and room for retries
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -243,10 +243,12 @@ jobs:
       - name: UI tests on the simulator
         run: |
           # Boot first: a cold simulator can miss the test runner's accessibility deadline.
+          # A failed test runs up to 3 times: the slow CI simulator sometimes misses XCTest's own query and
+          # audit deadlines in the long UI tests (they pass locally and on retry). A real failure fails every try.
           udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name == "iPhone 17")][0].udid')
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
-          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
+          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui -retry-tests-on-failure -test-iterations 3 CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
       - name: UI test summary
         if: ${{ !cancelled() }}
         run: |
@@ -258,6 +260,8 @@ jobs:
           jq -r '.testFailures[]?.testIdentifierString' build/ui-summary.json | while read -r id; do
             xcrun xcresulttool get test-results test-details --test-id "$id" --path "$result" || echo "::warning::No details for $id"
           done
+          # A test that passed only on retry is reported, so a slow-simulator flake stays visible.
+          jq -r 'select(.result == "Passed") | .testFailures[]? | "::warning::Passed on retry: \(.testIdentifierString): \(.failureText)"' build/ui-summary.json || true
           jq -e '.skippedTests == 7' build/ui-summary.json > /dev/null || { echo "::error::Expected exactly 7 skipped UI tests (the Lite-only ones)"; exit 1; }
       - name: Keep the UI test results of a failed run
         if: ${{ failure() }}
@@ -272,7 +276,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: xcode-27
-    timeout-minutes: 45
+    timeout-minutes: 60  # ~37 min of UI tests and room for retries
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -282,7 +286,7 @@ jobs:
           udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name == "iPhone 17")][0].udid')
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
-          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui SB_FLAVOR=Lite CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
+          xcodebuild test -project ios/SentryBridge.xcodeproj -scheme SentryBridge -destination "id=$udid" -derivedDataPath build/ios-ui SB_FLAVOR=Lite -retry-tests-on-failure -test-iterations 3 CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= -quiet
       - name: UI test summary
         if: ${{ !cancelled() }}
         run: |
@@ -292,6 +296,8 @@ jobs:
           jq -r '.testFailures[]?.testIdentifierString' build/ui-summary.json | while read -r id; do
             xcrun xcresulttool get test-results test-details --test-id "$id" --path "$result" || echo "::warning::No details for $id"
           done
+          # A test that passed only on retry is reported, so a slow-simulator flake stays visible.
+          jq -r 'select(.result == "Passed") | .testFailures[]? | "::warning::Passed on retry: \(.testIdentifierString): \(.failureText)"' build/ui-summary.json || true
           jq -e '.skippedTests == 1' build/ui-summary.json > /dev/null || { echo "::error::Expected exactly 1 skipped UI test (the Sideload-only one)"; exit 1; }
 
   # The one required check. Skipped platforms pass here, so docs-only changes can merge.
