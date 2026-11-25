@@ -217,7 +217,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: xcode-27  # the app needs the iOS 27 SDK; macos-latest stops at Xcode 26
-    timeout-minutes: 45
+    timeout-minutes: 60  # IPAs, host checks and ~40 min of UI tests; 45 cut off a passing run
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
