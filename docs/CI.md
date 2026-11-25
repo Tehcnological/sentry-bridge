@@ -13,8 +13,9 @@ are free for public repositories, and no secrets.
 | Windows | `windows-latest` | `tools/Test-Local.ps1`: MSVC build, full test suite, packaged control tool and GUI smoke tests, 100,000 corruption inputs under ASan |
 | macOS | `macos-latest` | `tools/test_posix.py` |
 | Android | `ubuntu-latest` | Unsigned release APK with the pinned SDK, NDK and Gradle; package name and JNI exports in all three ABIs; `tools/test_android_diagnostics.py` |
-| iOS (1/2, 2/2) | `xcode-27` | Shard 1: generated project is current; unsigned Sideload and Lite IPAs; adapter tests; Swift worker on the host. Both: UI tests on the simulator, Sideload build, split in two (shard 1 runs the slow tests in `UI_SHARD_1`, shard 2 all others; fails unless exactly the 7 Lite-only tests skip, all in shard 2) |
-| iOS Lite UI (1/2, 2/2) | `xcode-27` | UI tests on the simulator, Lite build, same split, in parallel with iOS (fails unless exactly the 1 Sideload-only test skips, in shard 2) |
+| iOS | `xcode-27` | Generated project is current; unsigned Sideload and Lite IPAs; adapter tests; Swift worker on the host |
+| iOS UI (1/2, 2/2) | `xcode-27` | UI tests on the simulator, Sideload build, split in two: shard 1 runs the slow tests in `UI_SHARD_1`, shard 2 all others (fails unless exactly the 7 Lite-only tests skip, all in shard 2) |
+| iOS Lite UI | `xcode-27` | UI tests on the simulator, Lite build, except the shared-screen tests in `UI_LITE_SKIP` that the Sideload build runs (fails unless exactly the 1 Sideload-only test skips) |
 | CI | `ubuntu-latest` | Passes only if everything above passed or was skipped as docs-only |
 
 No test may be skipped on any runner: `tools/ci_report.py` fails the job if one is, and shows failed
