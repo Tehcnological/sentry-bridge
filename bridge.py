@@ -77,7 +77,6 @@ DROP_AFTER_S = 60.0
 MAX_TARGETS = 256              # SB_MAX_TARGETS: the C core's fixed target table
 ACQUIRE_SLOTS = 32             # new targets protected from eviction while they collect a CPR pair...
 ACQUIRE_S = GLOBAL_PAIR_WINDOW_S   # ...for this long after first heard
-EVICT_DIST_S = 1.0             # a full-table scan reuses a target's distance from the reference this long
 MAX_FRAME_BYTES = 1024         # the C core's frame buffer (sb_feed raw[])
 STREAM_GAP_S = 10.0            # silence longer than this means the Sentry (or bridge) restarted
 ENABLE_RETRY_S = 20.0          # auto-enable: wait between attempts
@@ -137,8 +136,8 @@ class Target:
     nic_sup_a: bool = False     # NIC supplement-A, from operational status
     last_seen: float = 0.0
     first_seen: float = 0.0     # when this table entry was created
-    ref_nm: float = 0.0         # distance from the reference, cached for eviction scans...
-    ref_nm_t: float = -math.inf  # ...computed at this time
+    ref_nm: float = 0.0         # distance from the reference, cached for eviction scans; valid while
+    ref_gen: int = 0            # this equals Bridge._ref_gen (0: never) and the position is unchanged
     even: tuple | None = None   # (hex, t)
     odd: tuple | None = None
     msgs: int = 0
@@ -181,6 +180,7 @@ class Bridge:
         self.targets: dict[tuple[int, int], Target] = {}  # (GDL90 address type, address)
         self.stats = Stats()
         self.own_lat = self.own_lon = None
+        self._ref_at, self._ref_gen = None, 0   # reference of the cached eviction distances
         self.own_alt = None
         self.own_t = 0.0
         self.gps_valid = False
@@ -305,7 +305,7 @@ class Bridge:
         if t.vs_fpm is not None:
             t.vs_t = now
         if self._accept(t, r.lat, r.lon, now, None):
-            t.lat, t.lon, t.pos_t, t.nic, t.lost = r.lat, r.lon, now, r.nic, False
+            t.lat, t.lon, t.pos_t, t.nic, t.lost, t.ref_gen = r.lat, r.lon, now, r.nic, False, 0
             self.stats.pos_decoded += 1
         else:
             self.stats.pos_rejected += 1
@@ -328,6 +328,8 @@ class Bridge:
                 slot = next(i for i in range(MAX_TARGETS) if i not in used)
             else:
                 ref = self.ref_position(now)
+                if ref is not None and ref != self._ref_at:
+                    self._ref_at, self._ref_gen = ref, self._ref_gen + 1
                 acquiring = lambda o: o.lat is None and now - o.first_seen < ACQUIRE_S
                 crowded = sum(map(acquiring, self.targets.values())) > ACQUIRE_SLOTS
 
@@ -338,10 +340,10 @@ class Bridge:
                         return (0, o.last_seen, 0, o.slot)
                     if ref is None:
                         return (2, 0.0, o.last_seen, o.slot)
-                    # A full table scans every target for each newcomer; recomputing the distance at most
-                    # once a second keeps that affordable on small boards without an FPU.
-                    if now - o.ref_nm_t >= EVICT_DIST_S:
-                        o.ref_nm, o.ref_nm_t = dist_nm(ref[0], ref[1], o.lat, o.lon), now
+                    # A full table scans every target for each newcomer. Distances are cached until the
+                    # reference or the target's position changes, so boards without an FPU keep up.
+                    if o.ref_gen != self._ref_gen:
+                        o.ref_nm, o.ref_gen = dist_nm(ref[0], ref[1], o.lat, o.lon), self._ref_gen
                     return (2, -o.ref_nm, o.last_seen, o.slot)
                 victim = min(self.targets.values(), key=order)
                 self._forget((victim.addr_type, victim.icao))
@@ -436,7 +438,7 @@ class Bridge:
         return True
 
     def _set_pos(self, t: Target, lat, lon, tc, hexmsg, now):
-        t.lat, t.lon, t.pos_t, t.lost = lat, lon, now, False
+        t.lat, t.lon, t.pos_t, t.lost, t.ref_gen = lat, lon, now, False, 0
         sup_b = bool(int(hexmsg[9], 16) & 1)   # ME bit 8: NIC supplement-B in an airborne position
         t.nic = nic_for(tc, t.adsb_version, t.nic_sup_a, sup_b)
         self.stats.pos_decoded += 1

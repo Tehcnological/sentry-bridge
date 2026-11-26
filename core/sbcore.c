@@ -34,7 +34,6 @@ const char sb_settings_path[] = "/settings/?action=get";
 #define GLOBAL_PAIR_WINDOW_S 10.0
 #define ACQUIRE_SLOTS 32 /* new targets protected from eviction while they collect a CPR pair... */
 #define ACQUIRE_S GLOBAL_PAIR_WINDOW_S /* ...for this long after first heard */
-#define EVICT_DIST_S 1.0 /* a full-table scan reuses a target's distance from the reference this long */
 #define DROP_AFTER_S 60.0
 #define STREAM_GAP_S 10.0
 #define ENABLE_RETRY_S 20.0
@@ -443,18 +442,18 @@ static int acquiring(const sb_target *t, double now) { return !t->has_pos && now
    are still collecting their first position, the oldest of those; a positioned target, the farthest from
    the reference (without one, the one heard least recently); last, the oldest new target. Smaller key goes
    first; the lowest slot wins a tie. */
-static void evict_key(const sb_bridge *b, sb_target *t, double now, int crowded, int has_ref, double rlat,
+static void evict_key(sb_bridge *b, sb_target *t, double now, int crowded, int has_ref, double rlat,
                       double rlon, double k[3]) {
     if (acquiring(t, now)) {
         k[0] = crowded ? 1 : 3; k[1] = t->first_seen; k[2] = 0;
     } else if (!t->has_pos || t->lost || now - t->pos_t > b->cfg.stale_s) {
         k[0] = 0; k[1] = t->last_seen; k[2] = 0;
     } else {
-        /* Every newcomer scans the whole table: recomputing the distance at most once a second keeps that
-           affordable on boards without an FPU (bridge.py _target does the same). */
-        if (has_ref && now - t->ref_nm_t >= EVICT_DIST_S) {
+        /* Every newcomer scans the whole table. Distances are cached until the reference or the target's
+           position changes, so boards without an FPU keep up (bridge.py _target does the same). */
+        if (has_ref && t->ref_gen != b->ref_gen) {
             t->ref_nm = dist_nm(rlat, rlon, t->lat, t->lon);
-            t->ref_nm_t = now;
+            t->ref_gen = b->ref_gen;
         }
         k[0] = 2; k[1] = has_ref ? -t->ref_nm : 0.0; k[2] = t->last_seen;
     }
@@ -468,6 +467,9 @@ static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type, double 
     if (victim < 0) {
         double rlat = 0, rlon = 0, best[3], k[3];
         int has_ref = ref_position(b, now, &rlat, &rlon), crowded, n_acquiring = 0;
+        if (has_ref && (!b->ref_gen || rlat != b->ref_at_lat || rlon != b->ref_at_lon)) {
+            b->ref_at_lat = rlat; b->ref_at_lon = rlon; b->ref_gen++;
+        }
         for (i = 0; i < SB_MAX_TARGETS; i++) n_acquiring += acquiring(&b->targets[i], now);
         crowded = n_acquiring > ACQUIRE_SLOTS;
         victim = 0;
@@ -489,7 +491,6 @@ static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type, double 
     t->nacp = 0; /* unknown until a decoded mode-status message supplies it */
     t->adsb_version = -1;
     t->first_seen = now;
-    t->ref_nm_t = -HUGE_VAL;
     t->airborne = 1;
     return t;
 }
@@ -511,6 +512,7 @@ static void set_pos(sb_bridge *b, sb_target *t, double lat, double lon, const ui
     t->lat = lat;
     t->lon = lon;
     t->pos_t = now;
+    t->ref_gen = 0;
     t->nic = (uint8_t)nic_for(tc, t->adsb_version, t->nic_sup_a, m[4] & 1); /* ME bit 8: supplement-B */
     b->stats.pos_decoded++;
 }
@@ -679,6 +681,7 @@ static void raw_uat(sb_bridge *b, const uint8_t *msg, size_t len, double now) {
         t->lat = r.lat;
         t->lon = r.lon;
         t->pos_t = now;
+        t->ref_gen = 0;
         t->nic = (uint8_t)r.nic;
         b->stats.pos_decoded++;
     } else

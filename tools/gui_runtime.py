@@ -428,8 +428,7 @@ class Runtime:
                 self.view.update(mode=self.core.mode if self.core.mode != "?" else "UNKNOWN",
                                  frames={str(k): v for k, v in counts.items()}, datagrams=stats.datagrams,
                                  traffic=len(frames), weather=counts.get(7, 0), apps=0,
-                                 crc_bad=stats.crc_bad + stats.modes_bad_parity,   # GDL90 CRC-16 and Mode S parity
-                                 **{key: getattr(stats, key) for key in ("uat_msgs", "uat_fixed", "uat_bad")})
+                                 **{key: getattr(stats, key) for key in ("crc_bad", "uat_msgs", "uat_fixed", "uat_bad")})
                 # Heartbeat has the GPS-valid bit; avoid exposing the native struct layout.
                 self.view["gps"] = getattr(self, "gps", False)
             next_tick = now + self.settings["intervalSeconds"]

@@ -124,8 +124,9 @@ int main(int argc, char **argv) {
         sb_uat_correct(raw, random_u32() % 64, corrected, &nerr);
         sb_tick(&b, now, emit, NULL);
         sb_wants_enable(&b, now);
-        /* every other cycle the clock barely moves, so the 256-slot table fills and eviction runs */
-        now += (i & 4096) ? 0.001 : (random_u32() % 4 == 0) ? 21.0 : 0.1;
+        /* the first half of each cycle the clock barely moves, so the 256-slot table fills and eviction
+           runs; the second half ages, drops and gaps the stream */
+        now += (i & 2048) ? ((random_u32() % 4 == 0) ? 21.0 : 0.1) : 0.001;
         if (i % 4096 == 4095) sb_init(&b, &cfg);
     }
     json_checks(iterations);

@@ -398,6 +398,19 @@ class FrameRules:
         self.assertIn(1, addresses)                 # nearest, though heard first
         self.assertEqual(len(addresses), bridge.MAX_TARGETS - 1)
 
+    def test_full_table_ranks_distances_from_the_current_reference(self):
+        """Ownship jumps between two full-table scans less than a second apart: the second scan must rank
+        every target from the new position, not reuse distances measured from the old one."""
+        b = self.make_bridge()
+        self.fill_table(b)
+        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts 256, the farthest
+        b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0] - 200 / 60.0, lon=sim.ORIGIN[1],
+                                                alt_ft=1000, nic=9), gdl90.MSG_OWNSHIP), SENTRY, 1.1)
+        b.feed(modes(sim.me_identification("NEW2"), addr=0xABCDE1), SENTRY, 1.2)     # now 1 is the farthest
+        addresses = {r.address for r in self.reports(b, 1.3)}
+        self.assertNotIn(1, addresses)
+        self.assertIn(255, addresses)
+
     def test_full_table_evicts_an_unreported_target_first(self):
         b = self.make_bridge()
         self.fill_table(b)
@@ -464,17 +477,20 @@ class TestPythonFrameRules(FrameRules, unittest.TestCase):
 
     reports = TrafficSemantics.reports
 
-    def test_full_table_scan_computes_each_distance_once_a_second(self):
+    def test_full_table_scan_reuses_distances_until_the_reference_moves(self):
         """Every newcomer in a full table scans all targets. On a board without an FPU, a distance per
-        target per newcomer was more than one core at 400 aircraft, so distances are reused for a second."""
+        target per newcomer was more than one core at 400 aircraft, so each distance is kept until the
+        reference or that target's position changes."""
         b = self.make_bridge()
         self.fill_table(b)
         with mock.patch.object(bridge, "dist_nm", wraps=bridge.dist_nm) as dist:
             for n in range(100):
                 b.feed(modes(sim.me_identification("NEW"), addr=0xB00000 + n), SENTRY, 1 + n / 200)
             self.assertLessEqual(dist.call_count, bridge.MAX_TARGETS)
-            b.feed(modes(sim.me_identification("NEW"), addr=0xB10000), SENTRY, 2)
-            self.assertGreater(dist.call_count, bridge.MAX_TARGETS)   # a second later they are fresh again
+            b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0] + 0.01, lon=sim.ORIGIN[1],
+                                                    alt_ft=1000, nic=9), gdl90.MSG_OWNSHIP), SENTRY, 1.6)
+            b.feed(modes(sim.me_identification("NEW"), addr=0xB10000), SENTRY, 1.7)
+            self.assertGreater(dist.call_count, bridge.MAX_TARGETS)   # ownship moved: measured again
 
 
 @unittest.skipIf(LIB is None, "no C compiler available")

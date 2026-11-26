@@ -66,7 +66,8 @@ typedef struct {
     char callsign[9];
     double lat, lon, pos_t, last_seen, alt_t;
     double first_seen; /* when this table entry was created */
-    double ref_nm, ref_nm_t; /* distance from the reference, cached for eviction scans, and when */
+    double ref_nm;     /* distance from the reference, cached for eviction scans; valid while ref_gen */
+    uint32_t ref_gen;  /* equals the bridge's ref_gen (0: never) and the position is unchanged */
     /* alt_ft is pressure altitude only; geometric height never goes in a 0x14, so it is not kept. */
     int32_t alt_ft, vs_fpm;
     double gs_kt, track_deg;
@@ -99,6 +100,8 @@ typedef struct {
     int encrypted_after_gap;
     int enable_tries;
     double enable_last;
+    double ref_at_lat, ref_at_lon; /* reference of the cached eviction distances... */
+    uint32_t ref_gen;              /* ...bumped whenever it changes */
 } sb_bridge;
 
 /* Lifecycle */
