@@ -259,7 +259,7 @@ int sbio_step(sbio *io, int timeout_ms) {
         /* A suspended worker must not turn queued old positions into fresh ones. */
         const sb_stats *stats = sb_get_stats(&io->bridge);
         io->status.traffic += stats->sent; io->status.weather += stats->frames[7];
-        io->status.heartbeat += stats->frames[0]; io->status.crc_bad += stats->crc_bad;
+        io->status.heartbeat += stats->frames[0]; io->status.crc_bad += stats->crc_bad + stats->modes_bad_parity;
         if (io->last_rx && now - io->last_rx > io->status.max_gap) io->status.max_gap = now - io->last_rx;
         io->recovering = 1;
         sb_config cfg = io->bridge.cfg;
@@ -304,7 +304,7 @@ void sbio_snapshot(sbio *io, sbio_status *status) {
     *status = io->status;
     const sb_stats *s = sb_get_stats(&io->bridge);
     status->traffic += s->sent; status->weather += s->frames[7];
-    status->heartbeat += s->frames[0]; status->crc_bad += s->crc_bad;
+    status->heartbeat += s->frames[0]; status->crc_bad += s->crc_bad + s->modes_bad_parity; /* GDL90 CRC-16 and Mode S parity */
     double now = sbio_now();
     status->age = io->last_rx ? now - io->last_rx : -1;
     status->gps_valid = io->bridge.gps_valid && io->has_heartbeat && now - io->last_heartbeat <= 3;

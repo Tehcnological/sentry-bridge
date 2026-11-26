@@ -154,7 +154,7 @@ JNIEXPORT jstring JNICALL FN(summary)(JNIEnv *env, jobject self, jlong handle) {
     return (*env)->NewStringUTF(env, buf);
 }
 
-/* [mode, gps_valid, datagrams, crc_bad, modes_msgs, uat_msgs, uat_bad, sent, targets, positioned,
+/* [mode, gps_valid, datagrams, crc_bad (+ Mode S parity failures), modes_msgs, uat_msgs, uat_bad, sent, targets, positioned,
     positioned_uat, pos_rejected] */
 JNIEXPORT jintArray JNICALL FN(stats)(JNIEnv *env, jobject self, jlong handle) {
     (void)self;
@@ -170,7 +170,8 @@ JNIEXPORT jintArray JNICALL FN(stats)(JNIEnv *env, jobject self, jlong handle) {
             if (t->uat) positioned_uat++;
         }
     }
-    jint v[12] = {(jint)sb_get_mode(b), b->gps_valid ? 1 : 0, (jint)s->datagrams, (jint)s->crc_bad,
+    jint v[12] = {(jint)sb_get_mode(b), b->gps_valid ? 1 : 0, (jint)s->datagrams,
+                  (jint)(s->crc_bad + s->modes_bad_parity), /* GDL90 CRC-16 and Mode S parity */
                   (jint)s->modes_msgs, (jint)s->uat_msgs, (jint)s->uat_bad, (jint)s->sent,
                   targets, positioned, positioned_uat, (jint)s->pos_rejected};
     jintArray out = (*env)->NewIntArray(env, 12);
