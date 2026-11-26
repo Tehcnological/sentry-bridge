@@ -182,6 +182,7 @@ class Bridge:
         self.stats = Stats()
         self.own_lat = self.own_lon = None
         self._ref_at, self._ref_gen = None, 0   # reference of the cached eviction distances
+        self._refuse_until = 0.0        # a crowded table turns newcomers away until then (see _target)
         self.own_alt = None
         self.own_t = 0.0
         self.gps_valid = False
@@ -334,6 +335,9 @@ class Bridge:
                 used = {other.slot for other in self.targets.values()}
                 slot = next(i for i in range(MAX_TARGETS) if i not in used)
             else:
+                # Turned-away aircraft keep sending: skip the full scan until the newest refusal's victim is due.
+                if now < self._refuse_until and not placed():
+                    return None
                 ref = self.ref_position(now)
                 if ref is not None and ref != self._ref_at:
                     self._ref_at, self._ref_gen = ref, self._ref_gen + 1
@@ -354,6 +358,7 @@ class Bridge:
                     return (2, -o.ref_nm, o.last_seen, o.slot)
                 victim = min(self.targets.values(), key=order)
                 if crowded and acquiring(victim) and now - victim.first_seen < MIN_RESIDENCE_S and not placed():
+                    self._refuse_until = victim.first_seen + MIN_RESIDENCE_S
                     return None
                 self._forget((victim.addr_type, victim.icao))
                 slot = victim.slot
@@ -443,7 +448,10 @@ class Bridge:
         ref = self.ref_position(now)
         if ref is None or not (5 <= tc <= 18 or 20 <= tc <= 22):
             return False
-        lat, lon = pms.adsb.position_with_ref(hexmsg, ref[0], ref[1])
+        try:
+            lat, lon = pms.adsb.position_with_ref(hexmsg, ref[0], ref[1])
+        except Exception:   # as in _raw_modes: a message pyModeS cannot decode places nothing
+            return False
         lon = fold_lon(lon)
         if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
             return False

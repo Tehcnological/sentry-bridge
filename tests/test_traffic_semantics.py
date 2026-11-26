@@ -26,6 +26,7 @@ import uat
 SENTRY = "192.168.4.1"
 ADDR = 0xA12345
 LIB = sbcore_ffi.load()
+LIB256 = sbcore_ffi.load(max_targets=256)   # the size the microcontroller firmware builds use
 
 
 def modes(me, addr=ADDR, df=0x8D):
@@ -564,7 +565,8 @@ class TestPythonFrameRules(FrameRules, unittest.TestCase):
             self.assertLessEqual(dist.call_count, bridge.MAX_TARGETS)
             b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0] + 0.01, lon=sim.ORIGIN[1],
                                                     alt_ft=1000, nic=9), gdl90.MSG_OWNSHIP), SENTRY, 1.6)
-            b.feed(modes(sim.me_identification("NEW"), addr=0xB10000), SENTRY, 1.7)
+            # after the crowded table's turn-away window, so this newcomer scans the table again
+            b.feed(modes(sim.me_identification("NEW"), addr=0xB10000), SENTRY, 1.1 + bridge.MIN_RESIDENCE_S)
             self.assertGreater(dist.call_count, bridge.MAX_TARGETS)   # ownship moved: measured again
 
 
@@ -572,6 +574,22 @@ class TestPythonFrameRules(FrameRules, unittest.TestCase):
 class TestCFrameRules(FrameRules, unittest.TestCase):
     def make_bridge(self, **kw):
         return sbcore_ffi.CBridge(LIB, **kw)
+
+    reports = TrafficSemantics.reports
+
+
+@unittest.skipIf(LIB256 is None, "no C compiler available")
+class TestC256FrameRules(FrameRules, unittest.TestCase):
+    """The same rules with the 256-slot table of firmware/esp32c3 and firmware/pico."""
+    N, STEP = 256, 0.5
+
+    def setUp(self):
+        patch = mock.patch.object(bridge, "MAX_TARGETS", 256)   # the tests read the size from bridge
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def make_bridge(self, **kw):
+        return sbcore_ffi.CBridge(LIB256, **kw)
 
     reports = TrafficSemantics.reports
 

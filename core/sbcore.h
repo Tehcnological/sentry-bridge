@@ -104,6 +104,7 @@ typedef struct {
     double enable_last;
     double ref_at_lat, ref_at_lon; /* reference of the cached eviction distances... */
     uint32_t ref_gen;              /* ...bumped whenever it changes */
+    double refuse_until;           /* a crowded table turns newcomers away until then (new_target) */
 } sb_bridge;
 
 /* Lifecycle */

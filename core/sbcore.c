@@ -486,7 +486,10 @@ static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type, double 
         if (!b->targets[i].used) { victim = i; break; }
     if (victim < 0) {
         double rlat = 0, rlon = 0, best[3], k[3];
-        int has_ref = ref_position(b, now, &rlat, &rlon), crowded, n_acquiring = 0;
+        int has_ref, crowded, n_acquiring = 0;
+        /* Turned-away aircraft keep sending: skip the full scan until the newest refusal's victim is due. */
+        if (now < b->refuse_until && !placed_at_once(b, m, now)) return NULL;
+        has_ref = ref_position(b, now, &rlat, &rlon);
         if (has_ref && (!b->ref_gen || rlat != b->ref_at_lat || rlon != b->ref_at_lon)) {
             b->ref_at_lat = rlat; b->ref_at_lon = rlon;
             if (!++b->ref_gen) b->ref_gen = 1; /* 0 means never measured */
@@ -503,8 +506,10 @@ static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type, double 
             }
         }
         if (crowded && acquiring(&b->targets[victim], now) &&
-            now - b->targets[victim].first_seen < MIN_RESIDENCE_S && !placed_at_once(b, m, now))
+            now - b->targets[victim].first_seen < MIN_RESIDENCE_S && !placed_at_once(b, m, now)) {
+            b->refuse_until = b->targets[victim].first_seen + MIN_RESIDENCE_S;
             return NULL;
+        }
     }
     t = &b->targets[victim];
     memset(t, 0, sizeof *t);
