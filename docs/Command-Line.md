@@ -24,7 +24,7 @@ sentry-bridge [--listen-port N] [--sentry-ip IP] [--dest HOST:PORT ...] [--relay
 | `--sentry-ip IP` | 192.168.4.1 | Accept data only from this address (`''` accepts any) |
 | `--http-port N` | 80 | The Sentry's web port |
 | `--ref LAT,LON` | none | A position to use while the Sentry has no GPS fix |
-| `--stale S` | 15 | Drop an aircraft S seconds after its last position |
+| `--stale S` | 15 | Drop an aircraft S seconds after its last position; altitude, speed, track and vertical rate each also drop S seconds after their own last update |
 | `--interval S` | 1 | Seconds between traffic reports |
 | `--stats-every S` | 10 | Seconds between status lines |
 | `--announce-port N` | 63093 | Listen for EFB announcements, for information only (0 = off) |

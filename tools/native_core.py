@@ -20,7 +20,7 @@ class Config(C.Structure):
 class Stats(C.Structure):
     _fields_ = [("datagrams", C.c_uint32), ("frames", C.c_uint32 * 256)] + [
         (name, C.c_uint32) for name in ("crc_bad", "modes_msgs", "modes_other", "pos_decoded",
-        "pos_rejected", "sent", "uat_msgs", "uat_fixed", "uat_bad", "uat_skipped")]
+        "pos_rejected", "sent", "uat_msgs", "uat_fixed", "uat_bad", "uat_skipped", "modes_bad_parity")]
 
 
 def library():

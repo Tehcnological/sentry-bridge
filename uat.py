@@ -223,7 +223,8 @@ def _alt(raw: int) -> int | None:
 def decode_mdb(m: bytes, fec_errors: int = 0) -> UatReport | None:
     """Decode a corrected UAT ADS-B payload (18 or 34 bytes)."""
     ptype = m[0] >> 3
-    if ptype > 10 or (len(m) == 18 and ptype != 0):
+    # Payload type 0 is the basic (18-byte) message only; long messages carry types 1-10.
+    if ptype > 10 or (len(m) == 18) != (ptype == 0):
         return None
     r = UatReport(payload_type=ptype, qualifier=m[0] & 7,
                   address=(m[1] << 16) | (m[2] << 8) | m[3], fec_errors=fec_errors)
@@ -283,10 +284,11 @@ def decode_mdb(m: bytes, fec_errors: int = 0) -> UatReport | None:
 
 
 def decode_frame(frame: bytes) -> UatReport | None:
-    """Decode a Sentry 0x24 frame (message ID included). None if invalid or uncorrectable."""
+    """Decode a Sentry 0x24 frame (message ID included): ID, 3-byte time of reception, then a 48-byte
+    long or 30-byte basic UAT message with its Reed-Solomon parity. None if invalid or uncorrectable."""
     if len(frame) < 4 or frame[0] != 0x24:
         return None
-    body = frame[4:] if frame[1:4] == b"\xff\xff\xff" else frame[1:]
+    body = frame[4:]  # bytes 1-3: GDL90 time of reception (ff ff ff = not valid), skipped whatever its value
     if len(body) == LONG_LEN:
         fixed = rs_correct(body, LONG_ROOTS)
     elif len(body) == BASIC_LEN:

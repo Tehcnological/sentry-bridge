@@ -48,6 +48,7 @@ class Stats(ctypes.Structure):
         ("uat_fixed", ctypes.c_uint32),
         ("uat_bad", ctypes.c_uint32),
         ("uat_skipped", ctypes.c_uint32),
+        ("modes_bad_parity", ctypes.c_uint32),
     ]
 
 

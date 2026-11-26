@@ -51,6 +51,7 @@ typedef struct {
     uint32_t pos_decoded, pos_rejected;
     uint32_t sent;
     uint32_t uat_msgs, uat_fixed, uat_bad, uat_skipped;
+    uint32_t modes_bad_parity; /* DF17/18 whose CRC-24 parity does not check: dropped */
 } sb_stats;
 
 typedef enum { SB_MODE_UNKNOWN = 0, SB_MODE_PUBLIC = 1, SB_MODE_ENCRYPTED = 2 } sb_mode;
@@ -67,6 +68,9 @@ typedef struct {
     /* alt_ft is pressure altitude only; geometric height never goes in a 0x14, so it is not kept. */
     int32_t alt_ft, vs_fpm;
     double gs_kt, track_deg;
+    double gs_t, trk_t, vs_t; /* speed, track and vertical rate freshness, each on its own */
+    int8_t adsb_version;      /* from operational status; -1 until one arrives */
+    uint8_t nic_sup_a;        /* NIC supplement-A, from operational status */
     uint8_t even[14], odd[14];
     double even_t, odd_t;
     uint32_t msgs;

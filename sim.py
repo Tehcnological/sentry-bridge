@@ -3,7 +3,7 @@
 
 Generates moving targets around a fixed origin, encodes real DF17 squitters (identification,
 airborne position with CPR, velocity), wraps them the way the Sentry does in
-public mode (0x21 + ff ff ff + DF17 with a non-standard 3-byte trailer), and adds
+public mode (0x21 + ff ff ff time of reception + DF17 with its real parity), and adds
 Heartbeat, Ownship and a static 0x25 frame. UAT targets are sent as 0x24 frames
 (ff ff ff + 48-byte UAT long message with Reed-Solomon parity) with byte errors injected,
 like the Sentry passes them on: some clean, some correctable, some not. With --fisb it also sends
@@ -46,8 +46,9 @@ def modes_parity(first88: int) -> int:
     return data & 0xFFFFFF
 
 
-def df17(icao: int, me: int, ca: int = 5) -> bytes:
-    first88 = (17 << 83) | (ca << 80) | (icao << 56) | me
+def df17(icao: int, me: int, ca: int = 5, df: int = 17) -> bytes:
+    """A 14-byte extended squitter with its parity: DF17, or DF18 with ca as the CF field."""
+    first88 = (df << 83) | (ca << 80) | (icao << 56) | me
     return ((first88 << 24) | modes_parity(first88)).to_bytes(14, "big")
 
 
@@ -86,11 +87,11 @@ def me_identification(callsign: str, tc: int = 4, ca: int = 1) -> int:
     return me
 
 
-def me_airborne_position(lat, lon, alt_ft, odd, tc=11) -> int:
+def me_airborne_position(lat, lon, alt_ft, odd, tc=11, nic_sup_b=0) -> int:
     n = int(round((alt_ft + 1000) / 25.0))
     alt12 = ((n & 0x7F0) << 1) | 0x10 | (n & 0x0F)
     yz, xz = cpr_encode(lat, lon, odd)
-    return (tc << 51) | (alt12 << 36) | (odd << 34) | (yz << 17) | xz
+    return (tc << 51) | ((nic_sup_b & 1) << 48) | (alt12 << 36) | (odd << 34) | (yz << 17) | xz
 
 
 def me_velocity(gs_kt: float, track_deg: float, vs_fpm: float) -> int:
@@ -105,10 +106,10 @@ def me_velocity(gs_kt: float, track_deg: float, vs_fpm: float) -> int:
     return me
 
 
-def wrap_0x21(modes: bytes, rng: random.Random) -> bytes:
-    """Sentry public-mode wrapper: 21 ff ff ff + DF17 (parity replaced by a trailer)."""
-    body = modes[:11] + bytes(rng.randrange(256) for _ in range(3))
-    return gdl90.frame(bytes((0x21, 0xFF, 0xFF, 0xFF)) + body)
+def wrap_0x21(modes: bytes) -> bytes:
+    """Sentry public-mode frame: 21, the 3-byte time of reception (ff ff ff = not valid), then the
+    14-byte DF17 with its real parity, which the Sentry passes on unchanged."""
+    return gdl90.frame(bytes((0x21, 0xFF, 0xFF, 0xFF)) + modes)
 
 
 # ------------------------------------------------------------------ UAT encoding
@@ -184,10 +185,11 @@ def uplink_0x07(rng: random.Random) -> bytes:
     return gdl90.frame(bytes((gdl90.MSG_UPLINK, 0xFF, 0xFF, 0xFF)) + bytes(block))
 
 
-def me_operational_status(nacp: int, version: int = 2, subtype: int = 0) -> int:
-    """TC 31 aircraft operational status (DO-260A/B layout): version in ME bits 41-43,
-    NACp in ME bits 45-48. Capability, mode and integrity fields are left zero."""
-    return (31 << 51) | (subtype << 48) | ((version & 7) << 13) | ((nacp & 0xF) << 8)
+def me_operational_status(nacp: int, version: int = 2, subtype: int = 0, nic_sup_a: int = 0) -> int:
+    """TC 31 aircraft operational status (DO-260A/B layout): version in ME bits 41-43, NIC
+    supplement-A in ME bit 44, NACp in ME bits 45-48. Capability and mode fields are left zero."""
+    return ((31 << 51) | (subtype << 48) | ((version & 7) << 13) | ((nic_sup_a & 1) << 12)
+            | ((nacp & 0xF) << 8))
 
 
 def wrap_0x24(block48: bytes) -> bytes:
@@ -260,7 +262,6 @@ class SimSentry:
         self.fisb = fisb
         self.fisb_rng = random.Random(seed + 1000)  # separate, so --fisb leaves the other frames unchanged
         self.opstatus = opstatus
-        self.ops_rng = random.Random(seed + 2000)   # likewise for operational status
         # counts of UAT messages sent, by what the bridge should make of them
         self.uat_sent = {"clean": 0, "correctable": 0, "uncorrectable": 0}
         self.ownship = ownship or Track(0xADF00D, "N12345", ORIGIN[0], ORIGIN[1], 5500, 100, 0, 0)
@@ -295,15 +296,15 @@ class SimSentry:
                 dg.append(self._uat_frame(tr, lat, lon, alt, sec))
                 continue
             odd = sec % 2
-            dg.append(wrap_0x21(df17(tr.icao, me_airborne_position(lat, lon, alt, odd)), self.rng))
+            dg.append(wrap_0x21(df17(tr.icao, me_airborne_position(lat, lon, alt, odd))))
             lat2, lon2, alt2 = tr.at(t + 0.5)
-            dg.append(wrap_0x21(df17(tr.icao, me_airborne_position(lat2, lon2, alt2, 1 - odd)), self.rng))
-            dg.append(wrap_0x21(df17(tr.icao, me_velocity(tr.gs, tr.trk, tr.vs)), self.rng))
+            dg.append(wrap_0x21(df17(tr.icao, me_airborne_position(lat2, lon2, alt2, 1 - odd))))
+            dg.append(wrap_0x21(df17(tr.icao, me_velocity(tr.gs, tr.trk, tr.vs))))
             if sec % 5 == 0:
-                dg.append(wrap_0x21(df17(tr.icao, me_identification(tr.callsign, 4, tr.emitter_ca)), self.rng))
+                dg.append(wrap_0x21(df17(tr.icao, me_identification(tr.callsign, 4, tr.emitter_ca))))
             if self.opstatus and sec % 3 == 1:
                 me = me_operational_status(tr.nacp, tr.adsb_version)
-                dg.append(wrap_0x21(df17(tr.icao, me), self.ops_rng))
+                dg.append(wrap_0x21(df17(tr.icao, me)))
         if self.fisb:
             dg.append(uplink_0x07(self.fisb_rng))
         return dg

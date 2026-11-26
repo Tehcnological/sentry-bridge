@@ -35,6 +35,9 @@ The mode changes what is sent, not where it is sent.
 data stream instead.
 
 - It **resets to ForeFlight mode at every power-up**, including after Power Savings switches it off.
+  The firmware keeps the setting in memory only and never saves it, so nothing on the Sentry can make
+  it stick; an app that needs it has to switch it on again after each start (Sentry Bridge does this
+  when it sees the Sentry come up encrypted).
 - ForeFlight shows a "Sentry in Compatibility Mode" banner with a **Disable** button. In this mode
   ForeFlight still shows GPS and traffic, but loses CO and temperature alerts, AHRS, pressure and battery.
 
@@ -47,15 +50,34 @@ In Compatibility Mode, each GDL90 message type:
 | `0x00` | 1 per second | Standard heartbeat |
 | `0x0A` | 1 per second | Standard ownship report (address 000000, pressure altitude) |
 | `0x0B` | 1 per second | Standard ownship geometric altitude |
-| `0x21` | 5 to 20 per second | 1090 MHz traffic: `ff ff ff` + the 14-byte Mode S message (DF17/18), with a uAvionix trailer in place of the parity |
-| `0x24` | in bursts | 978 MHz UAT traffic: `ff ff ff` + the 48-byte message (34 data + 14 parity bytes), **not error corrected** |
+| `0x07` | about 1 per second per ground station | Standard FIS-B uplink: time of reception + the 432-byte uplink, **already error corrected** |
+| `0x21` | 5 to 20 per second | 1090 MHz traffic: 3-byte time of reception + the 14-byte Mode S message (DF17/18) with its real parity |
+| `0x24` | in bursts | 978 MHz UAT traffic: 3-byte time of reception + the 48-byte message (34 data + 14 parity bytes), **not error corrected** |
 | `0x25` | 1 per second | Device identification, always the same |
 | `0x28` | every 5 seconds | Sensor summary (subtype `06 01`); not decoded and too slow for attitude |
 
 In ForeFlight mode the stream contains only `0x25` and the encrypted `0x26`.
 
+**Raw traffic is passed on unchanged.** The Sentry does not decode traffic itself in either mode: it
+forwards the receiver's 1090 and UAT messages as they arrive, so no standard `0x14` traffic reports
+appear. The three bytes after the message ID are the GDL90 time of reception (24 bits, least
+significant byte first, 80 ns units); `ff ff ff` means "not valid", which is all we have seen, with or
+without a GPS fix. Skip them whatever their value. The 14-byte Mode S message keeps its own CRC-24
+parity (generator 0x1FFF409); in a recording of 8,266 messages every one checked, so a message that
+fails the check is damaged and should be dropped.
+
+**Weather arrives ready to use.** For FIS-B the Sentry de-interleaves the six blocks of each uplink,
+corrects each one with Reed-Solomon RS(92,72) (same field as below), drops the whole uplink if any block
+has more than 10 bad bytes, and sends the good ones as standard `0x07`. An app only has to relay them.
+
+**Sensors are left out in this mode.** The firmware does not build its attitude, pressure, CO, battery
+and navigation reports in Compatibility Mode. The readings stay available from the
+[`/stats` WebSocket](#live-statistics-stats).
+
 **UAT messages need error correction.** They use Reed-Solomon RS(48,34) over GF(256), primitive
-polynomial 0x187, first consecutive root 120 (as in dump978). On the ground most arrive damaged: in one
+polynomial 0x187, first consecutive root 120 (as in dump978); basic messages, if they appear, are
+RS(30,18). A long message must carry payload type 1 to 10 and a basic one type 0; anything else is
+damaged. On the ground most arrive damaged: in one
 recording 4 of 60 were clean, 14 correctable and 42 not. Drop the ones that cannot be corrected; they
 carry wrong addresses and positions that still look plausible. The callsign field alternates between
 the flight ID and the squawk code, so keep the last flight ID.
@@ -109,7 +131,8 @@ Compatibility Mode. Sentry Bridge shows battery, CO and temperature from it.
 
 The battery and CO fields are at the top level of the JSON; the others are under `sensor`. The message
 also has counters for the system, data link, GPS and traffic (`uptime_s`, `gdl90`, `host`, `NMEA`,
-`traffic` and others). The pressure sensor reads several degrees warmer than `sensor.ats.temp_c`, so
+`traffic` and others). The traffic-table counts are expected to stay at zero: the firmware forwards raw
+traffic without tracking it (*unconfirmed* on hardware). The pressure sensor reads several degrees warmer than `sensor.ats.temp_c`, so
 the `ats` value is the better cabin temperature. Attitude values swing widely and are not usable for
 flight without calibration. `/stats?action=get` does not return JSON; use the WebSocket.
 

@@ -77,6 +77,20 @@ static int sbd_nl(double lat)
     return (int)floor(2 * M_PI / acos(1 - a / b));
 }
 
+/* Mode S CRC-24 remainder (generator 0x1FFF409) over a whole 112-bit message. DF17 and DF18 carry
+   plain parity in their last 24 bits, so a valid message leaves 0. */
+static uint32_t sbd_crc24(const uint8_t *msg)
+{
+    uint32_t rem = 0;
+    int i, k;
+    for (i = 0; i < 14; i++) {
+        rem ^= (uint32_t)msg[i] << 16;
+        for (k = 0; k < 8; k++)
+            rem = (rem & 0x800000u) ? ((rem << 1) ^ 0xFFF409u) & 0xFFFFFFu : (rem << 1) & 0xFFFFFFu;
+    }
+    return rem;
+}
+
 static int sbd_typecode(const uint8_t *msg)
 {
     return (int)sbd_me(msg, 0, 4);
@@ -282,7 +296,8 @@ static int sbd_uat_mdb(const uint8_t *mdb, size_t len, sbd_uat *r)
     if (len != 18 && len != 34)
         return 0;
     r->payload_type = (int)sbd_field(mdb, 0, 4);
-    if (r->payload_type > 10 || (len == 18 && r->payload_type != 0))
+    /* payload type 0 is the basic (18-byte) message only; long messages carry types 1-10 */
+    if (r->payload_type > 10 || (len == 18) != (r->payload_type == 0))
         return 0;
     r->qualifier = (int)sbd_field(mdb, 5, 7);
     r->address = sbd_field(mdb, 8, 31);

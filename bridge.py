@@ -83,9 +83,20 @@ _EMITTER = {
     (3, 1): 9, (3, 2): 10, (3, 3): 11, (3, 4): 12, (3, 6): 14, (3, 7): 15,
     (2, 1): 17, (2, 3): 18, (2, 4): 19, (2, 5): 19, (2, 6): 19, (2, 7): 19,
 }
-# NIC implied by airborne position typecode (approximate, assumes supplements = 0)
-_NIC_BY_TC = {9: 11, 10: 10, 11: 8, 12: 7, 13: 6, 14: 5, 15: 4, 16: 3, 17: 1, 18: 0,
+# NIC implied by position typecode when the integrity supplements are 0 (DO-260B 2.2.3.2.3.1.3).
+# Only TC 11 and 16 change with supplements (nic_for); surface TC 7-8 keep this conservative value.
+_NIC_BY_TC = {9: 11, 10: 10, 11: 8, 12: 7, 13: 6, 14: 5, 15: 4, 16: 2, 17: 1, 18: 0,
               20: 11, 21: 10, 22: 0, 5: 11, 6: 10, 7: 8, 8: 0}
+
+
+def nic_for(tc: int, version: int, sup_a: bool, sup_b: bool) -> int:
+    """NIC of a position message. TC 11 is NIC 9 instead of 8, and TC 16 NIC 3 instead of 2, when the
+    supplements say so: version 2 needs supplement-A (operational status) and supplement-B (ME bit 8 of
+    the position), version 1 has only the one supplement. Unknown version: the lower value."""
+    nic = _NIC_BY_TC.get(tc, 8)
+    if tc in (11, 16) and sup_a and (version == 1 or (version == 2 and sup_b)):
+        nic += 1
+    return nic
 
 
 def dist_nm(lat1, lon1, lat2, lon2) -> float:
@@ -113,6 +124,11 @@ class Target:
     track_deg: float | None = None
     track_type: int = 0
     vs_fpm: int | None = None
+    gs_t: float = 0.0           # speed, track and vertical rate freshness, each on its own
+    trk_t: float = 0.0
+    vs_t: float = 0.0
+    adsb_version: int = -1      # from operational status; -1 until one arrives
+    nic_sup_a: bool = False     # NIC supplement-A, from operational status
     last_seen: float = 0.0
     even: tuple | None = None   # (hex, t)
     odd: tuple | None = None
@@ -140,6 +156,7 @@ class Stats:
     uat_fixed: int = 0          # ... of which needed byte corrections
     uat_bad: int = 0            # uncorrectable, dropped
     uat_skipped: int = 0        # valid but not traffic (beacons, reserved, no position)
+    modes_bad_parity: int = 0   # DF17/18 whose CRC-24 parity does not check: dropped
 
 
 class Bridge:
@@ -256,7 +273,7 @@ class Bridge:
             return
         if r.qualifier in (0, 2, 6) and self.ownship_icao is not None and r.address == self.ownship_icao:
             return
-        t = self._target(addr_type, r.address)
+        t = self._target(addr_type, r.address, now)
         t.last_seen = now
         t.msgs += 1
         t.uat = True
@@ -271,18 +288,26 @@ class Bridge:
             t.alt_ft, t.alt_t = alt, now
         t.airborne = r.airborne
         t.gs_kt = r.gs_kt
+        if r.gs_kt is not None:
+            t.gs_t = now
         if r.track_deg is not None:
-            t.track_deg, t.track_type = r.track_deg, r.track_type
+            t.track_deg, t.track_type, t.trk_t = r.track_deg, r.track_type, now
         t.vs_fpm = r.vs_fpm if r.airborne else 0
+        if t.vs_fpm is not None:
+            t.vs_t = now
         if self._accept(t, r.lat, r.lon, now, None):
             t.lat, t.lon, t.pos_t, t.nic, t.lost = r.lat, r.lon, now, r.nic, False
             self.stats.pos_decoded += 1
         else:
             self.stats.pos_rejected += 1
 
-    def _target(self, addr_type: int, icao: int) -> Target:
-        """The target for an address. A new one takes the lowest free slot; when all MAX_TARGETS
-        are in use it replaces the target heard least recently (lowest slot on a tie), as in C."""
+    def _target(self, addr_type: int, icao: int, now: float) -> Target:
+        """The target for an address. A new one takes the lowest free slot. When all MAX_TARGETS are
+        in use it replaces, in this order: a target not being reported (no position, lost or stale)
+        heard least recently; else the one farthest from the reference; without a reference, the one
+        heard least recently. Lowest slot on a tie, as in C. Keeping near traffic matters most, and
+        least-recently-heard alone churns the table and drops near targets once more aircraft than
+        slots are heard."""
         key = (addr_type, icao)
         t = self.targets.get(key)
         if t is None:
@@ -290,7 +315,14 @@ class Bridge:
                 used = {other.slot for other in self.targets.values()}
                 slot = next(i for i in range(MAX_TARGETS) if i not in used)
             else:
-                victim = min(self.targets.values(), key=lambda other: (other.last_seen, other.slot))
+                ref = self.ref_position(now)
+
+                def order(o):
+                    if o.lat is None or o.lost or now - o.pos_t > self.stale_s:
+                        return (0, o.last_seen, 0, o.slot)
+                    far = dist_nm(ref[0], ref[1], o.lat, o.lon) if ref is not None else 0.0
+                    return (1, -far, o.last_seen, o.slot)
+                victim = min(self.targets.values(), key=order)
                 self._forget((victim.addr_type, victim.icao))
                 slot = victim.slot
             t = self.targets[key] = Target(icao=icao, addr_type=addr_type, slot=slot)
@@ -309,13 +341,19 @@ class Bridge:
         self.own_alt = r.alt_ft
 
     def _raw_modes(self, msg: bytes, now: float):
-        body = msg[4:] if msg[1:4] == b"\xff\xff\xff" else msg[1:]
-        if len(body) < 11:
+        # ID, 3-byte GDL90 time of reception (ff ff ff = not valid), then the 14-byte message with its
+        # parity. The Sentry passes the message on unchanged in Compatibility Mode.
+        if len(msg) != 18:
             self.stats.modes_other += 1
             return
+        body = msg[4:]
         df = body[0] >> 3
         if df not in (17, 18):
             self.stats.modes_other += 1
+            return
+        hexmsg = body.hex().upper()
+        if pms.crc(hexmsg) != 0:   # DF17/18 parity is plain CRC-24 (no address overlay): remainder 0
+            self.stats.modes_bad_parity += 1
             return
         addr_type = 0
         if df == 18:
@@ -328,8 +366,7 @@ class Bridge:
         if addr_type in (0, 2) and self.ownship_icao is not None and icao == self.ownship_icao:
             return
         self.stats.modes_msgs += 1
-        hexmsg = (body[:14] + bytes(max(0, 14 - len(body)))).hex().upper()
-        t = self._target(addr_type, icao)
+        t = self._target(addr_type, icao, now)
         t.last_seen = now
         t.msgs += 1
         tc = body[4] >> 3
@@ -344,18 +381,24 @@ class Bridge:
             elif tc == 19:
                 spd, ang, vr, kind = pms.adsb.velocity(hexmsg)
                 if spd is not None:
-                    t.gs_kt = spd
+                    t.gs_kt, t.gs_t = spd, now
                 if ang is not None:
-                    t.track_deg = ang
+                    t.track_deg, t.trk_t = ang, now
                     t.track_type = 1 if kind == "GS" else 2
                 t.vs_fpm = vr
+                if vr is not None:
+                    t.vs_t = now
             elif tc == 31:
-                # Aircraft operational status, DO-260A/B (version 1 or 2): NACp in ME bits 45-48.
-                # Version 0 has no NACp field, so those targets stay at 0 (unknown).
-                me = int.from_bytes(bytes.fromhex(hexmsg)[4:11], "big")
+                # Aircraft operational status: version in ME bits 41-43. DO-260A/B (version 1 or 2)
+                # put NIC supplement-A in ME bit 44 and NACp in ME bits 45-48. Version 0 has neither,
+                # so those targets keep NACp 0 (unknown) and the lower NIC.
+                me = int.from_bytes(body[4:11], "big")
                 subtype, version = (me >> 48) & 0x7, (me >> 13) & 0x7
-                if subtype <= 1 and version >= 1:
-                    t.nacp = (me >> 8) & 0xF
+                if subtype <= 1:
+                    t.adsb_version = version
+                    if version >= 1:
+                        t.nic_sup_a = bool((me >> 12) & 1)
+                        t.nacp = (me >> 8) & 0xF
         except Exception as e:  # malformed or unexpected message: count and move on
             self.stats.modes_other += 1
             self.log(f"decode error {icao:06X} tc={tc}: {e}")
@@ -371,9 +414,10 @@ class Bridge:
             return False
         return True
 
-    def _set_pos(self, t: Target, lat, lon, tc, now):
+    def _set_pos(self, t: Target, lat, lon, tc, hexmsg, now):
         t.lat, t.lon, t.pos_t, t.lost = lat, lon, now, False
-        t.nic = _NIC_BY_TC.get(tc, 8)
+        sup_b = bool(int(hexmsg[9], 16) & 1)   # ME bit 8: NIC supplement-B in an airborne position
+        t.nic = nic_for(tc, t.adsb_version, t.nic_sup_a, sup_b)
         self.stats.pos_decoded += 1
 
     def _airborne(self, t: Target, hexmsg: str, tc: int, now: float):
@@ -391,7 +435,7 @@ class Bridge:
             lat, lon = pms.adsb.position_with_ref(hexmsg, t.lat, t.lon)
             lon = fold_lon(lon)
             if self._accept(t, lat, lon, now, (t.lat, t.lon)):
-                return self._set_pos(t, lat, lon, tc, now)
+                return self._set_pos(t, lat, lon, tc, hexmsg, now)
             # Lost track: stop reporting, but keep the last accepted position as the speed-check
             # anchor so neither this jump nor a repeat of it can return through the decodes below.
             t.lost = True
@@ -405,7 +449,7 @@ class Bridge:
                 # 170 NM is the local-CPR ambiguity radius; a global fix only has to be in radio range.
                 lat, lon = pos[0], fold_lon(pos[1])
                 if self._accept(t, lat, lon, now, self.ref_position(now), MAX_GLOBAL_REF_NM):
-                    self._set_pos(t, lat, lon, tc, now)
+                    self._set_pos(t, lat, lon, tc, hexmsg, now)
                     return True
                 self.stats.pos_rejected += 1
                 return False
@@ -415,7 +459,7 @@ class Bridge:
             lat, lon = pms.adsb.position_with_ref(hexmsg, ref[0], ref[1])
             lon = fold_lon(lon)
             if self._accept(t, lat, lon, now, ref):
-                self._set_pos(t, lat, lon, tc, now)
+                self._set_pos(t, lat, lon, tc, hexmsg, now)
                 return True
             self.stats.pos_rejected += 1
         return False
@@ -428,13 +472,13 @@ class Bridge:
         lat, lon = pms.adsb.position_with_ref(hexmsg, ref[0], ref[1])
         lon = fold_lon(lon)
         if self._accept(t, lat, lon, now, None) and dist_nm(ref[0], ref[1], lat, lon) < 40:
-            self._set_pos(t, lat, lon, tc, now)
+            self._set_pos(t, lat, lon, tc, hexmsg, now)
         spd, trk, _, _ = pms.adsb.surface_velocity(hexmsg)
         if spd is not None:
-            t.gs_kt = spd
+            t.gs_kt, t.gs_t = spd, now
         if trk is not None:
-            t.track_deg, t.track_type = trk, 1
-        t.vs_fpm = 0
+            t.track_deg, t.track_type, t.trk_t = trk, 1, now
+        t.vs_fpm, t.vs_t = 0, now
 
     # ----------------------------------------------------------- output
     def tick(self, now: float) -> list[bytes]:
@@ -443,8 +487,15 @@ class Bridge:
         for key in [k for k, t in self.targets.items() if now - t.last_seen > DROP_AFTER_S]:
             self._forget(key)
         for t in self.targets.values():
+            # Each field ages on its own: a target that stops sending one must not show it stale.
             if t.alt_ft is not None and now - t.alt_t > self.stale_s:
                 t.alt_ft = None
+            if t.gs_kt is not None and now - t.gs_t > self.stale_s:
+                t.gs_kt = None
+            if t.track_deg is not None and now - t.trk_t > self.stale_s:
+                t.track_deg = None
+            if t.vs_fpm is not None and now - t.vs_t > self.stale_s:
+                t.vs_fpm = None
             if t.lat is None or t.lost or now - t.pos_t > self.stale_s:
                 continue
             self._ghost_check(t)
@@ -483,7 +534,7 @@ class Bridge:
         return (f"mode={self.mode} dgrams={s.datagrams} frames[{ids}] modes={s.modes_msgs} other={s.modes_other} "
                 f"uat={s.uat_msgs}(fixed {s.uat_fixed}, bad {s.uat_bad}) "
                 f"targets={len(self.targets)} positioned={live} (uat {live_uat}) sent={s.sent} "
-                f"rejected={s.pos_rejected} crc_bad={s.crc_bad} gps={'ok' if self.gps_valid else 'no'} ref={ref}")
+                f"rejected={s.pos_rejected} crc_bad={s.crc_bad} parity_bad={s.modes_bad_parity} gps={'ok' if self.gps_valid else 'no'} ref={ref}")
 
 
 # ------------------------------------------------------------------ socket runner
