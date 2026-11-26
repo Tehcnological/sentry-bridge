@@ -66,6 +66,7 @@ typedef struct {
     char callsign[9];
     double lat, lon, pos_t, last_seen, alt_t;
     double first_seen; /* when this table entry was created */
+    double ref_nm, ref_nm_t; /* distance from the reference, cached for eviction scans, and when */
     /* alt_ft is pressure altitude only; geometric height never goes in a 0x14, so it is not kept. */
     int32_t alt_ft, vs_fpm;
     double gs_kt, track_deg;

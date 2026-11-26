@@ -77,6 +77,7 @@ DROP_AFTER_S = 60.0
 MAX_TARGETS = 256              # SB_MAX_TARGETS: the C core's fixed target table
 ACQUIRE_SLOTS = 32             # new targets protected from eviction while they collect a CPR pair...
 ACQUIRE_S = GLOBAL_PAIR_WINDOW_S   # ...for this long after first heard
+EVICT_DIST_S = 1.0             # a full-table scan reuses a target's distance from the reference this long
 MAX_FRAME_BYTES = 1024         # the C core's frame buffer (sb_feed raw[])
 STREAM_GAP_S = 10.0            # silence longer than this means the Sentry (or bridge) restarted
 ENABLE_RETRY_S = 20.0          # auto-enable: wait between attempts
@@ -136,6 +137,8 @@ class Target:
     nic_sup_a: bool = False     # NIC supplement-A, from operational status
     last_seen: float = 0.0
     first_seen: float = 0.0     # when this table entry was created
+    ref_nm: float = 0.0         # distance from the reference, cached for eviction scans...
+    ref_nm_t: float = -math.inf  # ...computed at this time
     even: tuple | None = None   # (hex, t)
     odd: tuple | None = None
     msgs: int = 0
@@ -333,8 +336,13 @@ class Bridge:
                         return (1 if crowded else 3, o.first_seen, 0, o.slot)
                     if o.lat is None or o.lost or now - o.pos_t > self.stale_s:
                         return (0, o.last_seen, 0, o.slot)
-                    far = dist_nm(ref[0], ref[1], o.lat, o.lon) if ref is not None else 0.0
-                    return (2, -far, o.last_seen, o.slot)
+                    if ref is None:
+                        return (2, 0.0, o.last_seen, o.slot)
+                    # A full table scans every target for each newcomer; recomputing the distance at most
+                    # once a second keeps that affordable on small boards without an FPU.
+                    if now - o.ref_nm_t >= EVICT_DIST_S:
+                        o.ref_nm, o.ref_nm_t = dist_nm(ref[0], ref[1], o.lat, o.lon), now
+                    return (2, -o.ref_nm, o.last_seen, o.slot)
                 victim = min(self.targets.values(), key=order)
                 self._forget((victim.addr_type, victim.icao))
                 slot = victim.slot

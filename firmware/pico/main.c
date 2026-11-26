@@ -19,13 +19,13 @@
 
 #include "fw_bridge.h"
 
-/* sb_feed keeps about 3 KB of frame buffers on the stack: see PICO_STACK_SIZE in CMakeLists.txt. */
+/* sb_feed keeps about 3.5 KB of frame buffers on the stack (about 5 KB at peak): see PICO_STACK_SIZE in CMakeLists.txt. */
 _Static_assert(PICO_STACK_SIZE >= 0x2000, "the bridge needs an 8 KB stack");
 
 #define RECEIVER_HTTP_PORT 80
 #define HTTP_TIMEOUT_S 5.0
 
-static fw_bridge bridge;  /* about 45 KB: static, not on the 8 KB stack */
+static fw_bridge bridge;  /* about 55 KB: static, not on the 8 KB stack */
 static struct udp_pcb *rx, *tx;
 static ip_addr_t broadcast, receiver;
 static uint8_t datagram[1600];

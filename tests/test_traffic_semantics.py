@@ -11,6 +11,7 @@ import math
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -462,6 +463,18 @@ class TestPythonFrameRules(FrameRules, unittest.TestCase):
         return bridge.Bridge(log=lambda m: None, **kw)
 
     reports = TrafficSemantics.reports
+
+    def test_full_table_scan_computes_each_distance_once_a_second(self):
+        """Every newcomer in a full table scans all targets. On a board without an FPU, a distance per
+        target per newcomer was more than one core at 400 aircraft, so distances are reused for a second."""
+        b = self.make_bridge()
+        self.fill_table(b)
+        with mock.patch.object(bridge, "dist_nm", wraps=bridge.dist_nm) as dist:
+            for n in range(100):
+                b.feed(modes(sim.me_identification("NEW"), addr=0xB00000 + n), SENTRY, 1 + n / 200)
+            self.assertLessEqual(dist.call_count, bridge.MAX_TARGETS)
+            b.feed(modes(sim.me_identification("NEW"), addr=0xB10000), SENTRY, 2)
+            self.assertGreater(dist.call_count, bridge.MAX_TARGETS)   # a second later they are fresh again
 
 
 @unittest.skipIf(LIB is None, "no C compiler available")
