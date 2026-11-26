@@ -74,9 +74,10 @@ def fold_lon(lon):
     return lon
 GLOBAL_PAIR_WINDOW_S = 10.0
 DROP_AFTER_S = 60.0
-MAX_TARGETS = 256              # SB_MAX_TARGETS: the C core's fixed target table
+MAX_TARGETS = 1024             # SB_MAX_TARGETS: the C core's fixed target table (256 on microcontrollers)
 ACQUIRE_SLOTS = 32             # new targets protected from eviction while they collect a CPR pair...
 ACQUIRE_S = GLOBAL_PAIR_WINDOW_S   # ...for this long after first heard
+MIN_RESIDENCE_S = 2.0          # a crowded table replaces a new target only after it has had this long
 MAX_FRAME_BYTES = 1024         # the C core's frame buffer (sb_feed raw[])
 STREAM_GAP_S = 10.0            # silence longer than this means the Sentry (or bridge) restarted
 ENABLE_RETRY_S = 20.0          # auto-enable: wait between attempts
@@ -282,7 +283,9 @@ class Bridge:
             return
         if r.qualifier in (0, 2, 6) and self.ownship_icao is not None and r.address == self.ownship_icao:
             return
-        t = self._target(addr_type, r.address, now)
+        t = self._target(addr_type, r.address, now)   # always positioned at once: it carries a position
+        if t is None:
+            return
         t.last_seen = now
         t.msgs += 1
         t.uat = True
@@ -310,8 +313,9 @@ class Bridge:
         else:
             self.stats.pos_rejected += 1
 
-    def _target(self, addr_type: int, icao: int, now: float) -> Target:
-        """The target for an address. A new one takes the lowest free slot. When all MAX_TARGETS are
+    def _target(self, addr_type: int, icao: int, now: float, placed=lambda: True) -> Target | None:
+        """The target for an address, or None when a full table turns a newcomer away (see below). A new
+        one takes the lowest free slot. When all MAX_TARGETS are
         in use it replaces, in this order: a target not being reported (lost, stale, or never positioned
         and older than ACQUIRE_S) heard least recently; when more than ACQUIRE_SLOTS new targets are
         still collecting their first position, the oldest of those; a positioned target, the farthest
@@ -319,7 +323,10 @@ class Bridge:
         Lowest slot on a tie, as in C. Keeping near traffic matters most: least-recently-heard alone
         churns the table and drops near targets once more aircraft than slots are heard. New targets
         get a short window, or newcomers whose even and odd messages interleave would keep evicting
-        each other before either has a pair."""
+        each other before either has a pair. When the victim would be such a newcomer, in the table for less
+        than MIN_RESIDENCE_S, the message is dropped instead, unless placed() says this one message positions
+        the newcomer at once: otherwise newcomers evict each other faster than any can pair, and above
+        MAX_TARGETS aircraft only those one message can place are ever shown (none without a reference)."""
         key = (addr_type, icao)
         t = self.targets.get(key)
         if t is None:
@@ -346,6 +353,8 @@ class Bridge:
                         o.ref_nm, o.ref_gen = dist_nm(ref[0], ref[1], o.lat, o.lon), self._ref_gen
                     return (2, -o.ref_nm, o.last_seen, o.slot)
                 victim = min(self.targets.values(), key=order)
+                if crowded and acquiring(victim) and now - victim.first_seen < MIN_RESIDENCE_S and not placed():
+                    return None
                 self._forget((victim.addr_type, victim.icao))
                 slot = victim.slot
             t = self.targets[key] = Target(icao=icao, addr_type=addr_type, slot=slot, first_seen=now)
@@ -389,10 +398,12 @@ class Bridge:
         if addr_type in (0, 2) and self.ownship_icao is not None and icao == self.ownship_icao:
             return
         self.stats.modes_msgs += 1
-        t = self._target(addr_type, icao, now)
+        tc = body[4] >> 3
+        t = self._target(addr_type, icao, now, lambda: self._placed_at_once(hexmsg, tc, now))
+        if t is None:
+            return
         t.last_seen = now
         t.msgs += 1
-        tc = body[4] >> 3
         try:
             if 1 <= tc <= 4:
                 t.callsign = pms.adsb.callsign(hexmsg).replace("_", "").strip()
@@ -425,6 +436,19 @@ class Bridge:
         except Exception as e:  # malformed or unexpected message: count and move on
             self.stats.modes_other += 1
             self.log(f"decode error {icao:06X} tc={tc}: {e}")
+
+    def _placed_at_once(self, hexmsg: str, tc: int, now: float) -> bool:
+        """Whether this message alone positions a new target: the reference decode _airborne or _surface
+        would accept (a new target has no position and no CPR pair of its own)."""
+        ref = self.ref_position(now)
+        if ref is None or not (5 <= tc <= 18 or 20 <= tc <= 22):
+            return False
+        lat, lon = pms.adsb.position_with_ref(hexmsg, ref[0], ref[1])
+        lon = fold_lon(lon)
+        if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            return False
+        d = dist_nm(ref[0], ref[1], lat, lon)
+        return d < 40 if tc <= 8 else d <= MAX_REF_DECODE_NM
 
     def _accept(self, t: Target, lat: float, lon: float, now: float, ref, limit=MAX_LOCAL_REF_NM) -> bool:
         if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):

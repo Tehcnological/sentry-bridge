@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
         0x00,0x00,0xfb,0x21,0x8f,0xf1,0xa9,0x6a,0x13,0x81,0x83,0xfb,0x30,0x85,0x9a,0xf6
     };
     static const uint8_t ids[] = {0x00,0x0A,0x21,0x24,0x26,0x07,0x14,0x28};
-    sb_bridge b;
+    static sb_bridge b; /* about 213 KB */
     sb_config cfg;
     uint8_t raw[1024], framed[2052], corrected[34];
     unsigned long iterations = argc > 1 ? strtoul(argv[1], NULL, 10) : 100000;
@@ -124,10 +124,10 @@ int main(int argc, char **argv) {
         sb_uat_correct(raw, random_u32() % 64, corrected, &nerr);
         sb_tick(&b, now, emit, NULL);
         sb_wants_enable(&b, now);
-        /* the first half of each cycle the clock barely moves, so the 256-slot table fills and eviction
-           runs; the second half ages, drops and gaps the stream */
-        now += (i & 2048) ? ((random_u32() % 4 == 0) ? 21.0 : 0.1) : 0.001;
-        if (i % 4096 == 4095) sb_init(&b, &cfg);
+        /* the first half of each cycle the clock barely moves, so the table fills (about 1,600 new DF17/18
+           addresses for SB_MAX_TARGETS slots) and eviction runs; the second half ages, drops and gaps the stream */
+        now += (i & 8192) ? ((random_u32() % 4 == 0) ? 21.0 : 0.1) : 0.001;
+        if (i % 16384 == 16383) sb_init(&b, &cfg);
     }
     json_checks(iterations);
     printf("Completed %lu iterations plus JSON helper checks (seed 0x%08X)\n", iterations, (unsigned)seed);

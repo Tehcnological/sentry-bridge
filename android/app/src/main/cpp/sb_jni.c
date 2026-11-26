@@ -11,7 +11,7 @@
 
 #include "sbcore.h"
 
-#define MAX_COLLECT 512
+#define MAX_COLLECT (SB_MAX_TARGETS + 256) /* a tick emits one frame per target */
 /* Relayed frames are the Sentry's own, up to a full datagram: a FIS-B uplink (0x07) is ~440 bytes,
    far over SB_MAX_FRAME (traffic reports only). One UDP datagram is at most 65507 bytes. */
 #define POOL_BYTES (128 * 1024)

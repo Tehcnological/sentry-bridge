@@ -25,7 +25,9 @@ extern "C" {
 #endif
 
 #define SB_VERSION "0.4.0"
-#define SB_MAX_TARGETS 256
+#ifndef SB_MAX_TARGETS
+#define SB_MAX_TARGETS 1024 /* target table; microcontroller builds define 256 (firmware/esp32c3, firmware/pico) */
+#endif
 #define SB_MAX_FRAME 128 /* largest frame sb_tick() emits (a stuffed 0x14 is <= 64). Frames relayed by
                             sb_feed() are the Sentry's own and can be much larger: a FIS-B uplink is ~440 */
 
