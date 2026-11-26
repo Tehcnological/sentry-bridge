@@ -24,7 +24,7 @@
 extern "C" {
 #endif
 
-#define SB_VERSION "0.4.0"
+#define SB_VERSION "0.4.1"
 #ifndef SB_MAX_TARGETS
 #define SB_MAX_TARGETS 1024 /* target table; microcontroller builds define 256 (firmware/esp32c3, firmware/pico) */
 #endif
