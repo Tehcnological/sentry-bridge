@@ -9,11 +9,12 @@ if (-not $SkipBuild) {
 $testConfig = Get-Content -LiteralPath (Join-Path $SbLocalTools 'windows-environment.json') -Raw | ConvertFrom-Json
 $testPython = $testConfig.python
 $testBuild = Join-Path $testRoot 'build\windows'
-$testEnvNames = @('SBCORE_LIB','SENTRY_BRIDGE_BIN','SENTRY_JNI_LIB','JAVA_HOME','PATH','PYTHONDONTWRITEBYTECODE','TEMP','TMP')
+$testEnvNames = @('SBCORE_LIB','SBCORE256_LIB','SENTRY_BRIDGE_BIN','SENTRY_JNI_LIB','JAVA_HOME','PATH','PYTHONDONTWRITEBYTECODE','TEMP','TMP')
 $testPriorEnvironment = @{}
 foreach ($testName in $testEnvNames) { $testPriorEnvironment[$testName] = [Environment]::GetEnvironmentVariable($testName, 'Process') }
 try {
     $env:SBCORE_LIB = Join-Path $testBuild 'sbcore.dll'
+    $env:SBCORE256_LIB = Join-Path $testBuild 'sbcore256.dll'
     $env:SENTRY_BRIDGE_BIN = Join-Path $testBuild 'sentry-bridge.exe'
     $env:SENTRY_JNI_LIB = Join-Path $testBuild 'sbjni.dll'
     $env:JAVA_HOME = (Get-Content -LiteralPath (Join-Path $SbLocalTools 'android-environment.json') -Raw | ConvertFrom-Json).javaHome
@@ -26,7 +27,7 @@ try {
     $env:TEMP = Join-Path $SbScratch 'tmp'
     $env:TMP = $env:TEMP
     New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
-    foreach ($testNative in @($env:SBCORE_LIB, $env:SENTRY_BRIDGE_BIN, $env:SENTRY_JNI_LIB)) {
+    foreach ($testNative in @($env:SBCORE_LIB, $env:SBCORE256_LIB, $env:SENTRY_BRIDGE_BIN, $env:SENTRY_JNI_LIB)) {
         if (-not (Test-Path -LiteralPath $testNative)) { throw "Native test build missing: $testNative" }
     }
     & $testPython -c 'import pyModeS, reedsolo'

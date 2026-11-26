@@ -94,6 +94,7 @@ def main(argv=None):
         run(["cmake", "--build", build, "--parallel", "2"], environment)
         suffix = ".dylib" if system == "Darwin" else ".so"
         libraries = {"SBCORE_LIB": build / ("libsbcore" + suffix),
+                     "SBCORE256_LIB": build / ("libsbcore256" + suffix),
                      "SENTRY_JNI_LIB": build / ("libsbjni" + suffix),
                      "SENTRY_BRIDGE_BIN": build / "sentry-bridge"}
         for name, path in libraries.items():
