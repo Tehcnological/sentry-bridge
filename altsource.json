@@ -18,6 +18,16 @@
       "category": "utilities",
       "versions": [
         {
+          "version": "0.4.1",
+          "buildVersion": "1",
+          "date": "2026-11-26",
+          "minOSVersion": "26.0",
+          "localizedDescription": "Release notes: https://github.com/Tehcnological/sentry-bridge/releases/tag/v0.4.1",
+          "downloadURL": "https://github.com/Tehcnological/sentry-bridge/releases/download/v0.4.1/sentry-bridge.ipa",
+          "size": 7155067,
+          "sha256": "e4bc5d2121082d49aa204012c47e511a7d552291ea502eca40f55cd21c020b86"
+        },
+        {
           "version": "0.4.0",
           "buildVersion": "1",
           "date": "2026-11-25",
@@ -58,11 +68,11 @@
           "NSLocationWhenInUseUsageDescription": "GPS check compares this device's position with the Sentry's and warns on screen when they disagree. The position stays on this device: it is never stored, never sent to the EFB and never changes ownship or traffic data."
         }
       },
-      "version": "0.4.0",
-      "versionDate": "2026-11-25",
-      "versionDescription": "Release notes: https://github.com/Tehcnological/sentry-bridge/releases/tag/v0.4.0",
-      "downloadURL": "https://github.com/Tehcnological/sentry-bridge/releases/download/v0.4.0/sentry-bridge.ipa",
-      "size": 7156408
+      "version": "0.4.1",
+      "versionDate": "2026-11-26",
+      "versionDescription": "Release notes: https://github.com/Tehcnological/sentry-bridge/releases/tag/v0.4.1",
+      "downloadURL": "https://github.com/Tehcnological/sentry-bridge/releases/download/v0.4.1/sentry-bridge.ipa",
+      "size": 7155067
     }
   ],
   "news": []
