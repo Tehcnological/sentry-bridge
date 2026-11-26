@@ -136,7 +136,9 @@ class IOSAdapter(unittest.TestCase):
         s=self.status(h);self.assertEqual(s.weather,1);self.assertEqual(s.heartbeat,1);self.assertTrue(s.gps_valid);self.assertGreater(s.crc_bad,0)
         self.assertEqual(s.parity_bad,0)
         # A published DF17 position with one parity bit flipped: dropped, and counted apart from link CRC errors.
-        self.send(gdl90.frame(b'\x21\xff\xff\xff'+bytes.fromhex('8D40621D58C382D690C8AC2863A6')));self.step(h)
+        self.send(gdl90.frame(b'\x21\xff\xff\xff'+bytes.fromhex('8D40621D58C382D690C8AC2863A6')))
+        end=time.monotonic()+1   # one 10 ms poll is no deadline on a busy runner
+        while self.status(h).parity_bad==0 and time.monotonic()<end:self.step(h)
         self.assertEqual(self.status(h).parity_bad,1)
     def test_ownship_position_is_reported_read_only(self):
         """The GPS check reads the Sentry's ownship position; the relayed ownship frame stays byte for byte."""
