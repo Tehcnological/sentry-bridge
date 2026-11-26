@@ -411,6 +411,35 @@ class FrameRules:
         self.assertNotIn(1, addresses)
         self.assertIn(255, addresses)
 
+    def test_full_table_ranks_a_moved_1090_target_by_its_new_position(self):
+        """A target's cached distance must not outlive its position: 255 moves 2 NM in between two scans,
+        so 254 is now the farthest."""
+        b = self.make_bridge(ref=sim.ORIGIN)
+        self.fill_table(b, with_ownship=False)
+        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts 256, caches all
+        for odd in (0, 1):
+            b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] - 125.5 / 60, sim.ORIGIN[1], 5000, odd), addr=255),
+                   SENTRY, 10)
+        b.feed(modes(sim.me_identification("NEW2"), addr=0xABCDE1), SENTRY, 10.1)
+        addresses = {r.address for r in self.reports(b, 10.2)}
+        self.assertIn(255, addresses)
+        self.assertNotIn(254, addresses)
+
+    def test_full_table_ranks_a_moved_uat_target_by_its_new_position(self):
+        """The same for a UAT target, whose positions take another path: it moves out 2 NM and becomes
+        the farthest."""
+        b = self.make_bridge(ref=sim.ORIGIN)
+        self.fill_table(b, with_ownship=False)
+        uat_at = lambda nm: sim.wrap_0x24(uat.rs_encode(
+            sim.uat_payload(0xABC000, sim.ORIGIN[0] - nm / 60, sim.ORIGIN[1], 5000, 100, 180, 0), uat.LONG_ROOTS))
+        b.feed(uat_at(126.8), SENTRY, 0.5)                                          # evicts 256
+        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts 255, caches all
+        b.feed(uat_at(128.8), SENTRY, 10)
+        b.feed(modes(sim.me_identification("NEW2"), addr=0xABCDE1), SENTRY, 10.1)
+        addresses = {r.address for r in self.reports(b, 10.2)}
+        self.assertNotIn(0xABC000, addresses)
+        self.assertIn(254, addresses)
+
     def test_full_table_evicts_an_unreported_target_first(self):
         b = self.make_bridge()
         self.fill_table(b)

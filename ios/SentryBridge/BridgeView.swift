@@ -319,6 +319,7 @@ struct BridgeView: View {
                         .font(.caption).foregroundStyle(secondary)
                     statusRow("Heartbeat frames", "\(model.snapshot.heartbeat)")
                     statusRow("CRC failures", "\(model.snapshot.crcBad)")
+                    statusRow("1090 parity failures", "\(model.snapshot.parityBad)")
                     statusRow("Longest reception gap", String(format: "%.1f s", model.snapshot.maxGap))
                     Text(model.snapshot.detail).font(.caption).textSelection(.enabled)
                     statusRow("Weather frames", "\(model.snapshot.weather)")

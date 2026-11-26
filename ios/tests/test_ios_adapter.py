@@ -16,7 +16,7 @@ class Status(C.Structure):
     _fields_=[('received',C.c_uint64),('forwarded',C.c_uint64),('send_errors',C.c_uint64),('rejected_sources',C.c_uint64),
               ('traffic',C.c_uint32),('weather',C.c_uint32),('heartbeat',C.c_uint32),('crc_bad',C.c_uint32),
               ('gps_valid',C.c_int),('mode',C.c_int),('age',C.c_double),('elapsed',C.c_double),('max_gap',C.c_double),('detail',C.c_char*256),
-              ('own_valid',C.c_int),('own_lat',C.c_double),('own_lon',C.c_double),('own_age',C.c_double),('unreachable',C.c_uint32)]
+              ('own_valid',C.c_int),('own_lat',C.c_double),('own_lon',C.c_double),('own_age',C.c_double),('unreachable',C.c_uint32),('parity_bad',C.c_uint32)]
 
 @unittest.skipUnless(sys.platform=='darwin','Darwin/iOS adapter validation runs on Mac')
 class IOSAdapter(unittest.TestCase):
@@ -134,6 +134,10 @@ class IOSAdapter(unittest.TestCase):
         self.assertEqual(self.wait_frames(h,3),[weather,own,heartbeat])
         self.send(b'\x7e\x07\x00\x00\x7e');self.step(h);self.assertEqual(self.frames(),[])
         s=self.status(h);self.assertEqual(s.weather,1);self.assertEqual(s.heartbeat,1);self.assertTrue(s.gps_valid);self.assertGreater(s.crc_bad,0)
+        self.assertEqual(s.parity_bad,0)
+        # A published DF17 position with one parity bit flipped: dropped, and counted apart from link CRC errors.
+        self.send(gdl90.frame(b'\x21\xff\xff\xff'+bytes.fromhex('8D40621D58C382D690C8AC2863A6')));self.step(h)
+        self.assertEqual(self.status(h).parity_bad,1)
     def test_ownship_position_is_reported_read_only(self):
         """The GPS check reads the Sentry's ownship position; the relayed ownship frame stays byte for byte."""
         h,e=self.open();self.assertTrue(h,e)

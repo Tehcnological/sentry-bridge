@@ -105,7 +105,7 @@ struct BridgeSnapshot {
     var followMessage: String?
     var received: UInt64 = 0, forwarded: UInt64 = 0, sendErrors: UInt64 = 0
     var traffic: UInt32 = 0, weather: UInt32 = 0, heartbeat: UInt32 = 0
-    var crcBad: UInt32 = 0
+    var crcBad: UInt32 = 0, parityBad: UInt32 = 0
     var gps = false, mode: Int32 = 0
     var age = -1.0, elapsed = 0.0, maxGap = 0.0
     /// The Sentry's own fix, read for the GPS cross-reference only; the worker never changes it.
@@ -132,7 +132,7 @@ struct BridgeSnapshot {
     init() {}
     init(_ s: sbio_status) {
         received = s.received; forwarded = s.forwarded; sendErrors = s.send_errors
-        traffic = s.traffic; weather = s.weather; heartbeat = s.heartbeat; crcBad = s.crc_bad
+        traffic = s.traffic; weather = s.weather; heartbeat = s.heartbeat; crcBad = s.crc_bad; parityBad = s.parity_bad
         gps = s.gps_valid != 0; mode = s.mode; age = s.age; elapsed = s.elapsed; maxGap = s.max_gap
         sentryFix = SentryFix(gps: gps, valid: s.own_valid != 0, lat: s.own_lat, lon: s.own_lon, age: s.own_age)
         var detail = s.detail
