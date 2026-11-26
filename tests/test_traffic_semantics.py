@@ -26,6 +26,7 @@ import uat
 SENTRY = "192.168.4.1"
 ADDR = 0xA12345
 LIB = sbcore_ffi.load()
+LIB256 = sbcore_ffi.load(max_targets=256)   # the size the microcontroller firmware builds use
 
 
 def modes(me, addr=ADDR, df=0x8D):
@@ -375,15 +376,18 @@ class FrameRules:
         self.assertGreater(s.pos_decoded, 3000)
 
 
+    N = bridge.MAX_TARGETS
+    STEP = 128.0 / bridge.MAX_TARGETS   # NM between neighbouring targets of fill_table
+
     def fill_table(self, b, with_ownship=True):
-        """All 256 slots: positioned targets 0.5..128 NM south of the origin (address n at n/2 NM). The
+        """Every slot: positioned targets up to 128 NM south of the origin (address n at n * STEP NM). The
         nearest is heard first, so least-recently-heard and farthest-first pick different victims."""
         if with_ownship:
             b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0], lon=sim.ORIGIN[1], alt_ft=1000,
                                                     nic=9), gdl90.MSG_OWNSHIP), SENTRY, 0)
         for nm in range(1, bridge.MAX_TARGETS + 1):
-            lat = sim.ORIGIN[0] - nm / 120.0
-            t = 0.001 * nm
+            lat = sim.ORIGIN[0] - nm * self.STEP / 60.0
+            t = 0.256 * nm / self.N
             for odd in (0, 1):
                 b.feed(modes(sim.me_airborne_position(lat, sim.ORIGIN[1], 5000, odd), addr=nm), SENTRY, t)
 
@@ -394,7 +398,7 @@ class FrameRules:
         b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0], lon=sim.ORIGIN[1], alt_ft=1000,
                                                 nic=9), gdl90.MSG_OWNSHIP), SENTRY, 1)
         addresses = {r.address for r in self.reports(b, 1)}
-        self.assertNotIn(256, addresses)            # farthest, though not the least recently heard
+        self.assertNotIn(self.N, addresses)         # farthest, though not the least recently heard
         self.assertIn(1, addresses)                 # nearest, though heard first
         self.assertEqual(len(addresses), bridge.MAX_TARGETS - 1)
 
@@ -403,27 +407,28 @@ class FrameRules:
         every target from the new position, not reuse distances measured from the old one."""
         b = self.make_bridge()
         self.fill_table(b)
-        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts 256, the farthest
+        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts N, the farthest
         b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0] - 200 / 60.0, lon=sim.ORIGIN[1],
                                                 alt_ft=1000, nic=9), gdl90.MSG_OWNSHIP), SENTRY, 1.1)
         b.feed(modes(sim.me_identification("NEW2"), addr=0xABCDE1), SENTRY, 1.2)     # now 1 is the farthest
         addresses = {r.address for r in self.reports(b, 1.3)}
         self.assertNotIn(1, addresses)
-        self.assertIn(255, addresses)
+        self.assertIn(self.N - 1, addresses)
 
     def test_full_table_ranks_a_moved_1090_target_by_its_new_position(self):
-        """A target's cached distance must not outlive its position: 255 moves 2 NM in between two scans,
-        so 254 is now the farthest."""
+        """A target's cached distance must not outlive its position: N-1 moves 2 NM in between two scans,
+        so N-2 is now the farthest."""
         b = self.make_bridge(ref=sim.ORIGIN)
         self.fill_table(b, with_ownship=False)
-        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts 256, caches all
+        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts N, caches all
+        moved = ((self.N - 1) * self.STEP - 2) / 60
         for odd in (0, 1):
-            b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] - 125.5 / 60, sim.ORIGIN[1], 5000, odd), addr=255),
+            b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] - moved, sim.ORIGIN[1], 5000, odd), addr=self.N - 1),
                    SENTRY, 10)
         b.feed(modes(sim.me_identification("NEW2"), addr=0xABCDE1), SENTRY, 10.1)
         addresses = {r.address for r in self.reports(b, 10.2)}
-        self.assertIn(255, addresses)
-        self.assertNotIn(254, addresses)
+        self.assertIn(self.N - 1, addresses)
+        self.assertNotIn(self.N - 2, addresses)
 
     def test_full_table_ranks_a_moved_uat_target_by_its_new_position(self):
         """The same for a UAT target, whose positions take another path: it moves out 2 NM and becomes
@@ -432,25 +437,26 @@ class FrameRules:
         self.fill_table(b, with_ownship=False)
         uat_at = lambda nm: sim.wrap_0x24(uat.rs_encode(
             sim.uat_payload(0xABC000, sim.ORIGIN[0] - nm / 60, sim.ORIGIN[1], 5000, 100, 180, 0), uat.LONG_ROOTS))
-        b.feed(uat_at(126.8), SENTRY, 0.5)                                          # evicts 256
-        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts 255, caches all
-        b.feed(uat_at(128.8), SENTRY, 10)
+        near = (self.N - 2) * self.STEP - 0.2   # nearer than N-2, so N-1 is the next farthest
+        b.feed(uat_at(near), SENTRY, 0.5)                                            # evicts N
+        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts N-1, caches all
+        b.feed(uat_at(near + 2), SENTRY, 10)
         b.feed(modes(sim.me_identification("NEW2"), addr=0xABCDE1), SENTRY, 10.1)
         addresses = {r.address for r in self.reports(b, 10.2)}
         self.assertNotIn(0xABC000, addresses)
-        self.assertIn(254, addresses)
+        self.assertIn(self.N - 2, addresses)
 
     def test_full_table_evicts_an_unreported_target_first(self):
         b = self.make_bridge()
         self.fill_table(b)
-        b.feed(modes(sim.me_identification("NOPOS"), addr=0xABCDE0), SENTRY, 0.5)   # evicts 256 NM
-        b.feed(modes(sim.me_identification("NEW"), addr=0xABCDE1), SENTRY, 0.6)     # NOPOS is new: 255 NM goes
+        b.feed(modes(sim.me_identification("NOPOS"), addr=0xABCDE0), SENTRY, 0.5)   # evicts N
+        b.feed(modes(sim.me_identification("NEW"), addr=0xABCDE1), SENTRY, 0.6)     # NOPOS is new: N-1 goes
         self.assertEqual(len(self.reports(b, 1)), bridge.MAX_TARGETS - 2)
         late = bridge.ACQUIRE_S + 0.6                # NOPOS never got a position: now it goes first
         b.feed(modes(sim.me_identification("LATE"), addr=0xABCDE2), SENTRY, late)
         addresses = {r.address for r in self.reports(b, late)}
         self.assertEqual(len(addresses), bridge.MAX_TARGETS - 2)
-        self.assertIn(254, addresses)
+        self.assertIn(self.N - 2, addresses)
 
     def test_aircraft_beyond_half_a_zone_is_not_placed_at_its_alias(self):
         """An aircraft 200 NM north of ownship: its first message decoded against ownship alone lands
@@ -473,8 +479,9 @@ class FrameRules:
         self.fill_table(b, with_ownship=False)
         new = (0xAAAA01, 0xAAAA02)
         for sec in range(1, 6):
-            for addr in range(1, 201):   # these stay fresh; 201-256 become the least recently heard
-                b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] - addr / 120.0, sim.ORIGIN[1], 5000, sec % 2),
+            for addr in range(1, self.N - 55):   # these stay fresh; the last 56 become the least recently heard
+                b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] - addr * self.STEP / 60, sim.ORIGIN[1], 5000,
+                                                      sec % 2),
                              addr=addr), SENTRY, sec)
             for odd in (0, 1):
                 for addr in new:
@@ -483,13 +490,53 @@ class FrameRules:
         addresses = {r.address for r in self.reports(b, 5.6)}
         self.assertTrue(set(new) <= addresses)
 
+    def crowd_with_newcomers(self, b, t):
+        """A full table plus ACQUIRE_SLOTS + 1 new targets without a position (identifications), first heard
+        at t, so it is crowded: the next victim would be one of them."""
+        for n in range(bridge.ACQUIRE_SLOTS + 1):
+            b.feed(modes(sim.me_identification("NEW"), addr=0xB00000 + n), SENTRY, t)
+
+    def test_crowded_table_keeps_new_targets_long_enough_to_pair(self):
+        """A crowded full table drops a newcomer's message rather than evict a new target that has had less
+        than MIN_RESIDENCE_S, unless that one message places the newcomer near the reference."""
+        b = self.make_bridge()
+        self.fill_table(b)
+        self.crowd_with_newcomers(b, 1)
+        b.feed(modes(sim.me_identification("WAIT"), addr=0xC00000), SENTRY, 1.5)        # turned away
+        far = sim.ORIGIN[0] + 100 / 60.0                                                # beyond a one-message decode
+        b.feed(modes(sim.me_airborne_position(far, sim.ORIGIN[1], 3000, 0), addr=0xC00002), SENTRY, 1.5)
+        b.feed(modes(sim.me_airborne_position(far, sim.ORIGIN[1], 3000, 1), addr=0xC00002), SENTRY, 1.6)
+        b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] + 0.1, sim.ORIGIN[1], 3000, 0), addr=0xC00001),
+               SENTRY, 1.7)                                                             # placed at once: admitted
+        late = 1 + bridge.MIN_RESIDENCE_S + 0.1
+        b.feed(modes(sim.me_airborne_position(far, sim.ORIGIN[1], 3000, 0), addr=0xC00003), SENTRY, late)
+        b.feed(modes(sim.me_airborne_position(far, sim.ORIGIN[1], 3000, 1), addr=0xC00003), SENTRY, late + 0.1)
+        addresses = {r.address for r in self.reports(b, late + 0.2)}
+        self.assertIn(0xC00001, addresses)
+        self.assertNotIn(0xC00002, addresses)    # turned away twice: no pair
+        self.assertIn(0xC00003, addresses)        # the oldest new target had its time: replaced
+
+    def test_more_aircraft_than_slots_are_still_shown(self):
+        """A few more aircraft than slots, all heard at full rate, no reference: before MIN_RESIDENCE_S,
+        newcomers evicted each other before any could pair and no aircraft was shown at all."""
+        b = self.make_bridge()
+        n = self.N + 8
+        for sec in range(12):
+            for odd in (0, 1):
+                for i in range(n):
+                    lat = sim.ORIGIN[0] + (i % 40) * 0.05
+                    lon = sim.ORIGIN[1] + (i // 40) * 0.05
+                    b.feed(modes(sim.me_airborne_position(lat, lon, 5000, odd), addr=0xD00000 + i), SENTRY,
+                           sec + odd * 0.5 + i * 0.4 / n)
+        self.assertGreater(len(self.reports(b, 12)), self.N - 2 * bridge.ACQUIRE_SLOTS)
+
     def test_full_table_without_reference_evicts_least_recently_heard(self):
         b = self.make_bridge()
         self.fill_table(b, with_ownship=False)
         b.feed(modes(sim.me_identification("NEW"), addr=0xABCDE0), SENTRY, 1)
         addresses = {r.address for r in self.reports(b, 1)}
         self.assertNotIn(1, addresses)              # heard first; distance means nothing without a reference
-        self.assertIn(256, addresses)
+        self.assertIn(self.N, addresses)
         self.assertEqual(len(addresses), bridge.MAX_TARGETS - 1)
 
 
@@ -518,7 +565,8 @@ class TestPythonFrameRules(FrameRules, unittest.TestCase):
             self.assertLessEqual(dist.call_count, bridge.MAX_TARGETS)
             b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0] + 0.01, lon=sim.ORIGIN[1],
                                                     alt_ft=1000, nic=9), gdl90.MSG_OWNSHIP), SENTRY, 1.6)
-            b.feed(modes(sim.me_identification("NEW"), addr=0xB10000), SENTRY, 1.7)
+            # after the crowded table's turn-away window, so this newcomer scans the table again
+            b.feed(modes(sim.me_identification("NEW"), addr=0xB10000), SENTRY, 1.1 + bridge.MIN_RESIDENCE_S)
             self.assertGreater(dist.call_count, bridge.MAX_TARGETS)   # ownship moved: measured again
 
 
@@ -526,6 +574,22 @@ class TestPythonFrameRules(FrameRules, unittest.TestCase):
 class TestCFrameRules(FrameRules, unittest.TestCase):
     def make_bridge(self, **kw):
         return sbcore_ffi.CBridge(LIB, **kw)
+
+    reports = TrafficSemantics.reports
+
+
+@unittest.skipIf(LIB256 is None, "no C compiler available")
+class TestC256FrameRules(FrameRules, unittest.TestCase):
+    """The same rules with the 256-slot table of firmware/esp32c3 and firmware/pico."""
+    N, STEP = 256, 0.5
+
+    def setUp(self):
+        patch = mock.patch.object(bridge, "MAX_TARGETS", 256)   # the tests read the size from bridge
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def make_bridge(self, **kw):
+        return sbcore_ffi.CBridge(LIB256, **kw)
 
     reports = TrafficSemantics.reports
 

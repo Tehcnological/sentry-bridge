@@ -34,6 +34,7 @@ const char sb_settings_path[] = "/settings/?action=get";
 #define GLOBAL_PAIR_WINDOW_S 10.0
 #define ACQUIRE_SLOTS 32 /* new targets protected from eviction while they collect a CPR pair... */
 #define ACQUIRE_S GLOBAL_PAIR_WINDOW_S /* ...for this long after first heard */
+#define MIN_RESIDENCE_S 2.0 /* a crowded table replaces a new target only after it has had this long */
 #define DROP_AFTER_S 60.0
 #define STREAM_GAP_S 10.0
 #define ENABLE_RETRY_S 20.0
@@ -459,14 +460,36 @@ static void evict_key(const sb_bridge *b, sb_target *t, double now, int crowded,
     }
 }
 
-static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type, double now) {
+static int is_air_tc(int tc) { return (tc >= 9 && tc <= 18) || (tc >= 20 && tc <= 22); }
+
+/* Whether a new target is positioned by this one message (bridge.py _placed_at_once): the reference
+   decode do_airborne or do_surface would accept. m is NULL for UAT, which always carries a position. */
+static int placed_at_once(sb_bridge *b, const uint8_t *m, double now) {
+    double rlat, rlon, lat = 0, lon = 0, d;
+    int tc;
+    if (!m) return 1;
+    tc = sbd_typecode(m);
+    if (!ref_position(b, now, &rlat, &rlon) || !((tc >= 5 && tc <= 8) || is_air_tc(tc))) return 0;
+    sbd_cpr_local(m, tc <= 8 ? 90.0 : 360.0, rlat, rlon, &lat, &lon);
+    if (!(lat >= -90 && lat <= 90) || !(lon >= -180 && lon <= 180)) return 0;
+    d = dist_nm(rlat, rlon, lat, lon);
+    return tc <= 8 ? d < 40 : d <= MAX_REF_DECODE_NM;
+}
+
+/* The new target, or NULL when a crowded full table turns it away: the victim would be a new target that
+   has had less than MIN_RESIDENCE_S to collect its CPR pair, and this message (m) cannot position the
+   newcomer by itself. Without that, newcomers evict each other faster than any can pair. */
+static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type, double now, const uint8_t *m) {
     int i, victim = -1;
     sb_target *t;
     for (i = 0; i < SB_MAX_TARGETS; i++)
         if (!b->targets[i].used) { victim = i; break; }
     if (victim < 0) {
         double rlat = 0, rlon = 0, best[3], k[3];
-        int has_ref = ref_position(b, now, &rlat, &rlon), crowded, n_acquiring = 0;
+        int has_ref, crowded, n_acquiring = 0;
+        /* Turned-away aircraft keep sending: skip the full scan until the newest refusal's victim is due. */
+        if (now < b->refuse_until && !placed_at_once(b, m, now)) return NULL;
+        has_ref = ref_position(b, now, &rlat, &rlon);
         if (has_ref && (!b->ref_gen || rlat != b->ref_at_lat || rlon != b->ref_at_lon)) {
             b->ref_at_lat = rlat; b->ref_at_lon = rlon;
             if (!++b->ref_gen) b->ref_gen = 1; /* 0 means never measured */
@@ -481,6 +504,11 @@ static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type, double 
                 victim = i;
                 memcpy(best, k, sizeof best);
             }
+        }
+        if (crowded && acquiring(&b->targets[victim], now) &&
+            now - b->targets[victim].first_seen < MIN_RESIDENCE_S && !placed_at_once(b, m, now)) {
+            b->refuse_until = b->targets[victim].first_seen + MIN_RESIDENCE_S;
+            return NULL;
         }
     }
     t = &b->targets[victim];
@@ -517,8 +545,6 @@ static void set_pos(sb_bridge *b, sb_target *t, double lat, double lon, const ui
     t->nic = (uint8_t)nic_for(tc, t->adsb_version, t->nic_sup_a, m[4] & 1); /* ME bit 8: supplement-B */
     b->stats.pos_decoded++;
 }
-
-static int is_air_tc(int tc) { return (tc >= 9 && tc <= 18) || (tc >= 20 && tc <= 22); }
 
 /* returns 0, or -1 when the reference rejects the CPR pair (counted as modes_other by the caller) */
 static int do_airborne(sb_bridge *b, sb_target *t, const uint8_t *m, int tc, double now) {
@@ -602,7 +628,7 @@ static void raw_modes(sb_bridge *b, const uint8_t *msg, size_t len, double now) 
     b->stats.modes_msgs++;
     memcpy(m, body, 14);
     t = find_target(b, icao, addr_type);
-    if (!t) t = new_target(b, icao, addr_type, now);
+    if (!t && !(t = new_target(b, icao, addr_type, now, m))) return;
     t->last_seen = now;
     t->msgs++;
     tc = body[4] >> 3;
@@ -652,7 +678,7 @@ static void raw_uat(sb_bridge *b, const uint8_t *msg, size_t len, double now) {
         r.address == (uint32_t)b->cfg.ownship_icao)
         return;
     t = find_target(b, r.address, addr_type);
-    if (!t) t = new_target(b, r.address, addr_type, now);
+    if (!t && !(t = new_target(b, r.address, addr_type, now, NULL))) return;
     t->last_seen = now;
     t->msgs++;
     t->uat = 1;

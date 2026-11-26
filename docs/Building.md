@@ -138,7 +138,7 @@ UAT error-correction tests can compare against it.
 ### Reproducible corruption stress test
 
 `tools/fuzz_core.c` feeds arbitrary bytes, CRC-valid and damaged frames, 1090 messages with valid
-or broken parity (some truncated) and corrupted UAT blocks into the core, and fills the 256-slot
+or broken parity (some truncated) and corrupted UAT blocks into the core, and fills the
 traffic table so eviction runs. It also passes every truncation and seeded mutations of
 EFB announcements and receiver settings to the JSON helpers, each in a buffer of exactly its length.
 Inputs use a fixed seed and contain no flight data.

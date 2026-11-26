@@ -60,8 +60,8 @@ def _lib_name() -> str:
     return "libsbcore.so"
 
 
-def _build() -> Path | None:
-    out = ROOT / "build" / _lib_name()
+def _build(max_targets: int | None = None) -> Path | None:
+    out = ROOT / "build" / (_lib_name() if max_targets is None else f"{max_targets}-{_lib_name()}")
     sources = [ROOT / "core" / n for n in ("sbcore.c", "sbcore.h", "sbdecode.c")] + [ROOT / "firmware/common" / n for n in ("fw_bridge.c", "fw_bridge.h")]
     if out.exists() and out.stat().st_mtime >= max(p.stat().st_mtime for p in sources):
         return out
@@ -70,6 +70,8 @@ def _build() -> Path | None:
         return None
     out.parent.mkdir(exist_ok=True)
     cmd = [cc, "-std=c99", "-O2", "-shared", "-o", str(out), "-I" + str(ROOT / "core"), str(SRC), str(ROOT / "firmware/common/fw_bridge.c")]
+    if max_targets is not None:   # the microcontroller table size (firmware/esp32c3, firmware/pico)
+        cmd.append(f"-DSB_MAX_TARGETS={max_targets}")
     if sys.platform != "win32":
         cmd[3:3] = ["-fPIC"]
         cmd.append("-lm")
@@ -80,8 +82,8 @@ def _build() -> Path | None:
     return out
 
 
-def load():
-    path = os.environ.get("SBCORE_LIB") or _build()
+def load(max_targets: int | None = None):
+    path = (os.environ.get("SBCORE_LIB") if max_targets is None else None) or _build(max_targets)
     if not path:
         return None
     lib = ctypes.CDLL(str(path))

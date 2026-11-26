@@ -167,7 +167,7 @@ class TestParity(unittest.TestCase):
         everything downstream of it) must match, with ownship as the reference and without one."""
         rng = random.Random(256)
         tracks = []
-        for i in range(330):
+        for i in range(bridge.MAX_TARGETS + 74):
             d, brg = 200 * rng.random() ** 0.5, rng.uniform(0, 360)
             tracks.append(sim.Track(0xC00000 + i, f"E{i:04d}", REF[0] + d / 60 * math.cos(math.radians(brg)),
                                     REF[1] + d / 60 * math.sin(math.radians(brg)) / math.cos(math.radians(REF[0])),
@@ -226,7 +226,7 @@ class TestParity(unittest.TestCase):
         self.assertEqual(py.stats.frames[gdl90.MSG_UPLINK], 2)
 
     def test_target_table_limit(self):
-        """More aircraft than the C table holds (256): both keep and replace the same targets, for
+        """More aircraft than the C table holds (MAX_TARGETS): both keep and replace the same targets, for
         1090 and UAT, with distinct and identical arrival times, refreshes and slot reuse."""
         def position(i, odd, base=0xA00000):
             lat, lon = REF[0] + (i % 20) * 0.05, REF[1] + (i // 20) * 0.05
@@ -239,7 +239,7 @@ class TestParity(unittest.TestCase):
             with self.subTest(step=step):
                 t = 1_700_000_000.0
                 seq = []
-                for i in range(300):
+                for i in range(bridge.MAX_TARGETS + 44):
                     seq.append((t, position(i, i % 2)))
                     t += step
                 for i in range(50):   # the first aircraft again: replaced ones return, kept ones refresh
@@ -250,7 +250,7 @@ class TestParity(unittest.TestCase):
                 seq.append((t + 2, gdl90.encode_heartbeat(True, 0)))
                 ticks, reports, py = self.replay(seq, ref=REF)
                 self.assertEqual(len(py.targets), 20)
-                self.assertGreater(reports, 256)
+                self.assertGreater(reports, bridge.MAX_TARGETS)
 
     def test_helpers(self):
         for data in (b'{"App":"ForeFlight","GDL90":{"port":4000}}', b"i-want-to-play-ffm-udp",
