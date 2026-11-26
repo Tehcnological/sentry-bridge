@@ -42,6 +42,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      ios_ui: ${{ steps.filter.outputs.ios_ui }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -61,12 +62,19 @@ jobs:
             *) range="" ;;
           esac
           # Anything unclear (manual run, new or rewritten history, no files) runs everything.
-          code=true
+          code=true; ios_ui=true
           if [ -n "$range" ] && files=$(git diff --name-only "$range") && [ -n "$files" ]; then
             if ! printf '%s\n' "$files" | grep -qvE '^docs/|\.md$'; then code=false; fi
+            # The ~30 min simulator UI tests run on a pull request only when the app or this workflow
+            # changes; core changes still get the iOS build and adapter tests, and master runs them all.
+            if [ "$EVENT" = pull_request ] && ! printf '%s\n' "$files" | grep -qE '^ios/|^\.github/workflows/ci\.yml$'; then
+              ios_ui=false
+            fi
           fi
+          [ "$code" = true ] || ios_ui=false
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "Build every platform: $code"
+          echo "ios_ui=$ios_ui" >> "$GITHUB_OUTPUT"
+          echo "Build every platform: $code; iOS UI tests: $ios_ui"
 
   lint:
     name: Lint
@@ -269,7 +277,7 @@ jobs:
   ios-ui:
     name: iOS UI (${{ matrix.shard }}/2)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.ios_ui == 'true'
     runs-on: xcode-27
     timeout-minutes: 45  # ~20 min of UI tests and room for retries
     strategy:
@@ -325,7 +333,7 @@ jobs:
   ios-lite:
     name: iOS Lite UI
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.ios_ui == 'true'
     runs-on: xcode-27
     timeout-minutes: 45  # ~15 min of UI tests and room for retries
     env:

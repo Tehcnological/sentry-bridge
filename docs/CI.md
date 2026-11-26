@@ -26,6 +26,9 @@ tests as annotations on the pull request.
 - A new push to a pull request cancels its previous run. Runs on `master` are not cancelled.
 - A change touching only `docs/` or `*.md` files runs Lint and Linux and skips the rest. Linux stays
   because tests read some of the documents.
+- The iOS UI tests (iOS UI 1/2, 2/2 and iOS Lite UI, about 30 minutes) run on a pull request only when
+  it changes `ios/` or this workflow. Other code changes, including the shared core, still get the iOS
+  job (build, adapter tests, host worker). Every push to `master` and every manual run runs them all.
 
 ## Required check
 
