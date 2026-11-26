@@ -26,6 +26,9 @@ const char sb_settings_path[] = "/settings/?action=get";
 #define NM_PER_RAD 3440.065
 #define MAX_LOCAL_REF_NM 170.0
 #define MAX_GLOBAL_REF_NM 300.0 /* beyond 1090 radio range */
+/* a one-message decode against ownship is ambiguous: an aircraft d NM away (180 < d <= 300) lands about
+   360 - d NM away in the wrong zone, so only results this close can be trusted (bridge.py) */
+#define MAX_REF_DECODE_NM (360.0 - MAX_GLOBAL_REF_NM)
 #define MAX_TARGET_KT 900.0
 #define JUMP_SLACK_NM 0.1
 #define GLOBAL_PAIR_WINDOW_S 10.0
@@ -541,7 +544,7 @@ static int do_airborne(sb_bridge *b, sb_target *t, const uint8_t *m, int tc, dou
     /* 3) local decode against ownship or the fixed reference */
     if (ref_position(b, now, &rlat, &rlon)) {
         sbd_cpr_local(m, 360.0, rlat, rlon, &lat, &lon);
-        if (accept_pos(t, lat, lon, now, 1, rlat, rlon, MAX_LOCAL_REF_NM)) { set_pos(b, t, lat, lon, m, tc, now); return 0; }
+        if (accept_pos(t, lat, lon, now, 1, rlat, rlon, MAX_REF_DECODE_NM)) { set_pos(b, t, lat, lon, m, tc, now); return 0; }
         b->stats.pos_rejected++;
     }
     return 0;

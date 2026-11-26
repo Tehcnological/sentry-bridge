@@ -56,6 +56,9 @@ except ImportError:  # pragma: no cover
 NM_PER_RAD = 3440.065
 MAX_LOCAL_REF_NM = 170.0       # airborne local CPR decode is valid within ~180 NM of ref
 MAX_GLOBAL_REF_NM = 300.0      # beyond 1090 radio range: a global fix farther from ownship is bad data
+# A one-message decode against ownship is ambiguous: an aircraft d NM away (180 < d <= 300) lands about
+# 360 - d NM away in the wrong zone, so only results this close can be trusted.
+MAX_REF_DECODE_NM = 360.0 - MAX_GLOBAL_REF_NM
 MAX_TARGET_KT = 900.0          # sanity limit between successive positions
 JUMP_SLACK_NM = 0.1            # ...plus this much, for CPR rounding and arrival jitter
 
@@ -468,7 +471,7 @@ class Bridge:
         if ref is not None:
             lat, lon = pms.adsb.position_with_ref(hexmsg, ref[0], ref[1])
             lon = fold_lon(lon)
-            if self._accept(t, lat, lon, now, ref):
+            if self._accept(t, lat, lon, now, ref, MAX_REF_DECODE_NM):
                 self._set_pos(t, lat, lon, tc, hexmsg, now)
                 return True
             self.stats.pos_rejected += 1

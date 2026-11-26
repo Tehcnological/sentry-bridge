@@ -409,6 +409,20 @@ class FrameRules:
         self.assertEqual(len(addresses), bridge.MAX_TARGETS - 2)
         self.assertIn(254, addresses)
 
+    def test_aircraft_beyond_half_a_zone_is_not_placed_at_its_alias(self):
+        """An aircraft 200 NM north of ownship: its first message decoded against ownship alone lands
+        about 160 NM south. It must not be shown there, and its even/odd pair must place it correctly."""
+        b = self.make_bridge(ref=sim.ORIGIN)
+        lat = sim.ORIGIN[0] + 200 / 60.0
+        b.feed(modes(sim.me_airborne_position(lat, sim.ORIGIN[1], 30000, 0)), SENTRY, 0)
+        self.assertEqual(self.reports(b, 0.2), [])
+        b.feed(modes(sim.me_airborne_position(lat, sim.ORIGIN[1], 30000, 1)), SENTRY, 0.5)
+        r, = self.reports(b, 1)
+        self.assertLess(bridge.dist_nm(r.lat, r.lon, lat, sim.ORIGIN[1]), 0.1)
+        near = self.make_bridge(ref=sim.ORIGIN)   # close traffic still decodes from one message
+        near.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] + 50 / 60.0, sim.ORIGIN[1], 30000, 0)), SENTRY, 0)
+        self.assertEqual(len(self.reports(near, 0.2)), 1)
+
     def test_interleaved_newcomers_get_their_pair_in_a_full_table(self):
         """Two new aircraft whose even and odd messages interleave must not evict each other before
         either has a pair (no reference, so only a global decode can place them)."""
