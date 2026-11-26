@@ -58,6 +58,21 @@ static void json_checks(unsigned long iterations) {
     }
 }
 
+/* Mode S CRC-24 (generator 0x1FFF409) over the first 11 bytes, written into the last 3, so the decoder
+   past the parity check is fuzzed too. */
+static void set_parity(uint8_t *m) {
+    uint32_t crc = 0;
+    int i, k;
+    for (i = 0; i < 11; i++) {
+        crc ^= (uint32_t)m[i] << 16;
+        for (k = 0; k < 8; k++) {
+            crc <<= 1;
+            if (crc & 0x1000000) crc ^= 0x1FFF409;
+        }
+    }
+    m[11] = (uint8_t)(crc >> 16); m[12] = (uint8_t)(crc >> 8); m[13] = (uint8_t)crc;
+}
+
 int main(int argc, char **argv) {
     static const uint8_t uat_seed[] = {
         0x08,0xa6,0x40,0x78,0x2f,0x54,0x7b,0x60,0xff,0x7c,0x07,0x19,0x00,0xa4,0x1c,0x80,
@@ -92,10 +107,12 @@ int main(int argc, char **argv) {
                 memcpy(raw + 4, uat_seed, sizeof uat_seed);
                 for (j = random_u32() % 17; j > 0; j--)
                     raw[4 + random_u32() % 48] ^= (uint8_t)(1 + random_u32() % 255);
-            } else if (kind == 2) { /* supported DF17/18 with random ME fields and truncations */
+            } else if (kind == 2) { /* supported DF17/18, random address and ME, mostly valid parity */
                 static const uint8_t dfs[] = {0x8D,0x90,0x91,0x92,0x95};
-                len = 4 + random_u32() % 18; raw[0] = 0x21;
+                len = random_u32() % 16 ? 18 : 4 + random_u32() % 18; raw[0] = 0x21;
                 memset(raw + 1, 0xFF, 3); raw[4] = dfs[random_u32() % sizeof dfs];
+                set_parity(raw + 4);
+                if (random_u32() % 8 == 0) raw[4 + random_u32() % 14] ^= (uint8_t)(1u << (random_u32() % 8));
             } else {
                 if (!len) len = 1;
                 raw[0] = ids[random_u32() % sizeof ids];
@@ -107,7 +124,9 @@ int main(int argc, char **argv) {
         sb_uat_correct(raw, random_u32() % 64, corrected, &nerr);
         sb_tick(&b, now, emit, NULL);
         sb_wants_enable(&b, now);
-        now += (random_u32() % 4 == 0) ? 21.0 : 0.1;
+        /* the first half of each cycle the clock barely moves, so the 256-slot table fills and eviction
+           runs; the second half ages, drops and gaps the stream */
+        now += (i & 2048) ? ((random_u32() % 4 == 0) ? 21.0 : 0.1) : 0.001;
         if (i % 4096 == 4095) sb_init(&b, &cfg);
     }
     json_checks(iterations);

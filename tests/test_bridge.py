@@ -233,16 +233,27 @@ class TestBridgeBehaviour(unittest.TestCase):
             b.feed(bytes(rng.randrange(256) for _ in range(n)), SENTRY, 0.0)
         b.tick(0.0)
 
-    def test_trailer_shorter_than_parity(self):
+    def test_mode_s_frame_must_be_exactly_18_bytes(self):
+        """0x21 is ID + 3-byte time of reception + 14-byte message. Shorter or longer is malformed."""
+        for change in (lambda m: m[:-2], lambda m: m + b"\x00", lambda m: m[:-14]):
+            s = sim.SimSentry(tracks=[sim.default_tracks()[0]])
+            b = bridge.Bridge(sentry_ip=SENTRY, log=lambda m: None)
+            for t in range(4):
+                for d in s.datagrams(t):
+                    f = gdl90.parse(d)[0]
+                    if f.msg_id == 0x21:
+                        d = gdl90.frame(change(f.msg))
+                    b.feed(d, SENTRY, float(t))
+            self.assertEqual(b.tick(3.0), [])
+            self.assertEqual(b.stats.modes_msgs, 0)
+            self.assertGreater(b.stats.modes_other, 0)
         s = sim.SimSentry(tracks=[sim.default_tracks()[0]])
         b = bridge.Bridge(sentry_ip=SENTRY, log=lambda m: None)
         for t in range(4):
             for d in s.datagrams(t):
-                f = gdl90.parse(d)[0]
-                if f.msg_id == 0x21:
-                    d = gdl90.frame(f.msg[:-2])  # drop 2 trailer bytes
                 b.feed(d, SENTRY, float(t))
         self.assertEqual(len(b.tick(3.0)), 1)
+        self.assertEqual(b.stats.modes_bad_parity, 0)
 
     def test_keepalive_schedule(self):
         due = bridge.keepalive_due

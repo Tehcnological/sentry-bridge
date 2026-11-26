@@ -1,13 +1,17 @@
 """GDL90 meanings checked independently for Python and C, beyond byte-for-byte parity.
 
-All positions and identities are synthetic. GNSS height is encoded directly in metres,
-because sim.me_airborne_position encodes the barometric format only.
+Positions and identities are synthetic, except the published worked examples in
+test_public_extended_squitter_vectors and the sanitized recording (tests/data/compat-sanitized.txt.gz,
+real traffic with synthetic addresses, callsigns and location). GNSS height is encoded directly in
+metres, because sim.me_airborne_position encodes the barometric format only.
 """
 
+import gzip
 import math
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -25,9 +29,8 @@ LIB = sbcore_ffi.load()
 
 
 def modes(me, addr=ADDR, df=0x8D):
-    body = bytearray(sim.df17(addr, me))
-    body[0] = df
-    return gdl90.frame(b"\x21\xff\xff\xff" + body)
+    """0x21 frame; df is the whole first byte (DF and CA/CF), with parity computed for it."""
+    return gdl90.frame(b"\x21\xff\xff\xff" + sim.df17(addr, me, ca=df & 7, df=df >> 3))
 
 
 def surface_me(lat, lon, odd=0, tc=5):
@@ -259,6 +262,243 @@ class TrafficSemantics:
                 b.feed(position(), SENTRY, start)
                 self.assertEqual(len(self.reports(b, start + 15)), 1)
                 self.assertEqual(self.reports(b, start + 16), [])
+
+
+class FrameRules:
+    """Framing, parity, integrity and freshness rules, each checked on Python and C."""
+
+    @staticmethod
+    def raw(hexmsg, tor=b"\xff\xff\xff"):
+        return gdl90.frame(b"\x21" + tor + bytes.fromhex(hexmsg))
+
+    def test_public_extended_squitter_vectors(self):
+        """Worked examples published in J. Sun, "The 1090 Megahertz Riddle" (2nd ed.), not produced
+        by this project's encoder: identification, an even/odd airborne pair and a velocity."""
+        b = self.make_bridge()   # no reference: the pair must decode globally
+        b.feed(self.raw("8D40621D58C386435CC412692AD6"), SENTRY, 0)   # odd
+        b.feed(self.raw("8D40621D58C382D690C8AC2863A7"), SENTRY, 10)  # even, newest
+        b.feed(self.raw("8D4840D6202CC371C32CE0576098"), SENTRY, 10)  # KLM1023
+        b.feed(self.raw("8D485020994409940838175B284F"), SENTRY, 10)  # 159.20 kt, 182.88 deg, -832 fpm
+        for addr, lat in ((0x4840D6, 52.3), (0x485020, 52.2)):        # synthetic positions for those two
+            for odd in (0, 1):
+                b.feed(modes(sim.me_airborne_position(lat, 3.9, 20000, odd), addr=addr), SENTRY, 10)
+        reps = {r.address: r for r in self.reports(b, 11)}
+        self.assertEqual(set(reps), {0x40621D, 0x4840D6, 0x485020})
+        pos = reps[0x40621D]
+        self.assertAlmostEqual(pos.lat, 52.25720, places=4)
+        self.assertAlmostEqual(pos.lon, 3.91937, places=4)
+        self.assertEqual(pos.alt_ft, 38000)
+        self.assertEqual(reps[0x4840D6].callsign, "KLM1023")
+        vel = reps[0x485020]
+        self.assertEqual((vel.gs_kt, vel.vs_fpm), (159, -832))
+        self.assertAlmostEqual(vel.track_deg, 182.88, delta=360 / 256)
+        self.assertEqual(b.stats.modes_bad_parity, 0)
+
+    def test_every_single_bit_error_is_rejected(self):
+        good = bytes.fromhex("8D40621D58C382D690C8AC2863A7")
+        b = self.make_bridge(ref=(52.25, 3.92))
+        for i in range(112):
+            bad = bytearray(good)
+            bad[i // 8] ^= 0x80 >> (i % 8)
+            b.feed(gdl90.frame(b"\x21\xff\xff\xff" + bad), SENTRY, 0)
+        self.assertEqual(self.reports(b, 1), [])
+        self.assertEqual(b.stats.modes_msgs, 0)
+        self.assertEqual(b.stats.modes_other, 5)          # a flipped DF bit is no longer DF17
+        self.assertEqual(b.stats.modes_bad_parity, 107)
+
+    def test_df18_variants_need_their_own_parity(self):
+        b = self.make_bridge(ref=sim.ORIGIN)
+        for cf in (0, 1, 2, 5, 6):   # ADS-B non-transponder, non-ICAO, TIS-B fine, TIS-B other, ADS-R
+            b.feed(position(df=0x90 | cf), SENTRY, 0)
+        self.assertEqual((b.stats.modes_msgs, b.stats.modes_bad_parity), (5, 0))
+        wrong = bytearray(sim.df17(ADDR, sim.me_airborne_position(*sim.ORIGIN, 2500, 0)))
+        wrong[0] = 0x90                                    # DF17 parity under a DF18 header
+        b.feed(gdl90.frame(b"\x21\xff\xff\xff" + wrong), SENTRY, 0)
+        self.assertEqual((b.stats.modes_msgs, b.stats.modes_bad_parity), (5, 1))
+
+    def test_time_of_reception_value_does_not_matter(self):
+        for tor in (b"\xff\xff\xff", b"\x12\x34\x56", b"\x00\x00\x00"):
+            b = self.make_bridge(ref=sim.ORIGIN)
+            b.feed(gdl90.frame(b"\x21" + tor + sim.df17(ADDR, sim.me_airborne_position(*sim.ORIGIN, 2500, 0))),
+                   SENTRY, 0)
+            u = bytearray(gdl90.parse(uat_frame(qualifier=1))[0].msg)
+            u[1:4] = tor
+            b.feed(gdl90.frame(bytes(u)), SENTRY, 0)
+            self.assertEqual({r.addr_type for r in self.reports(b, 1)}, {0, 1}, tor.hex())
+
+    def test_nic_follows_integrity_supplements(self):
+        # (typecode, op-status version or None, supplement-A, supplement-B) -> NIC
+        cases = {(11, None, 1, 1): 8, (11, 2, 1, 1): 9, (11, 2, 1, 0): 8, (11, 2, 0, 1): 8, (11, 1, 1, 0): 9,
+                 (11, 0, 1, 1): 8, (16, None, 0, 0): 2, (16, 2, 1, 1): 3, (16, 2, 0, 0): 2, (16, 1, 1, 0): 3,
+                 (12, 2, 1, 1): 7, (10, None, 0, 0): 10}
+        for (tc, version, sup_a, sup_b), nic in cases.items():
+            b = self.make_bridge(ref=sim.ORIGIN)
+            if version is not None:
+                b.feed(modes(sim.me_operational_status(9, version, nic_sup_a=sup_a)), SENTRY, 0)
+            b.feed(modes(sim.me_airborne_position(*sim.ORIGIN, 2500, 0, tc, nic_sup_b=sup_b)), SENTRY, 0)
+            self.assertEqual(self.reports(b, 1)[0].nic, nic, (tc, version, sup_a, sup_b))
+
+    def test_uat_payload_type_must_match_length(self):
+        payload = lambda ptype: sim.uat_payload(ADDR, *sim.ORIGIN, 2500, 100, 90, 0, ptype=ptype)
+        frame = lambda block: gdl90.frame(b"\x24\xff\xff\xff" + block)
+        b = self.make_bridge()
+        b.feed(frame(uat.rs_encode(payload(0), uat.LONG_ROOTS)), SENTRY, 0)          # long, type 0
+        b.feed(frame(uat.rs_encode(payload(1)[:18], uat.BASIC_ROOTS)), SENTRY, 0)    # basic, type 1
+        self.assertEqual((b.stats.uat_bad, b.stats.uat_msgs), (2, 0))
+        self.assertEqual(self.reports(b, 1), [])
+        b.feed(frame(uat.rs_encode(payload(0)[:18], uat.BASIC_ROOTS)), SENTRY, 0)    # basic, type 0
+        self.assertEqual(b.stats.uat_msgs, 1)
+        self.assertEqual(len(self.reports(b, 1)), 1)
+
+    def test_velocity_and_track_age_on_their_own(self):
+        b = self.make_bridge(ref=sim.ORIGIN, stale_s=15.0)
+        b.feed(modes(sim.me_velocity(250, 90, 1000)), SENTRY, 0)
+        for t in range(21):   # positions keep arriving, velocity does not
+            b.feed(position(odd=t % 2), SENTRY, t)
+            r, = self.reports(b, t)
+            if t <= 15:
+                self.assertEqual((r.gs_kt, r.track_deg, r.vs_fpm), (250, 90.0, 1024), t)
+            else:
+                self.assertEqual((r.gs_kt, r.track_deg, r.vs_fpm), (None, None, None), t)
+            self.assertEqual(r.alt_ft, 2500)
+
+    def test_sanitized_real_recording_is_not_rejected(self):
+        """Traffic recorded from a real Sentry in Compatibility Mode, sanitized (see the file header):
+        every Mode S frame must pass the parity check and every kept UAT frame must correct."""
+        b = self.make_bridge(ref=None)
+        for t, d in recording():
+            b.feed(d, SENTRY, t)
+        s = b.stats
+        self.assertEqual((s.modes_bad_parity, s.modes_other, s.crc_bad, s.uat_bad), (0, 0, 0, 0))
+        self.assertEqual(s.modes_msgs, 8266)
+        self.assertEqual(s.uat_msgs, 18)
+        self.assertGreater(s.pos_decoded, 3000)
+
+
+    def fill_table(self, b, with_ownship=True):
+        """All 256 slots: positioned targets 0.5..128 NM south of the origin (address n at n/2 NM). The
+        nearest is heard first, so least-recently-heard and farthest-first pick different victims."""
+        if with_ownship:
+            b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0], lon=sim.ORIGIN[1], alt_ft=1000,
+                                                    nic=9), gdl90.MSG_OWNSHIP), SENTRY, 0)
+        for nm in range(1, bridge.MAX_TARGETS + 1):
+            lat = sim.ORIGIN[0] - nm / 120.0
+            t = 0.001 * nm
+            for odd in (0, 1):
+                b.feed(modes(sim.me_airborne_position(lat, sim.ORIGIN[1], 5000, odd), addr=nm), SENTRY, t)
+
+    def test_full_table_evicts_the_farthest_positioned_target(self):
+        b = self.make_bridge()
+        self.fill_table(b)
+        b.feed(modes(sim.me_identification("NEW")), SENTRY, 1)
+        b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0], lon=sim.ORIGIN[1], alt_ft=1000,
+                                                nic=9), gdl90.MSG_OWNSHIP), SENTRY, 1)
+        addresses = {r.address for r in self.reports(b, 1)}
+        self.assertNotIn(256, addresses)            # farthest, though not the least recently heard
+        self.assertIn(1, addresses)                 # nearest, though heard first
+        self.assertEqual(len(addresses), bridge.MAX_TARGETS - 1)
+
+    def test_full_table_ranks_distances_from_the_current_reference(self):
+        """Ownship jumps between two full-table scans less than a second apart: the second scan must rank
+        every target from the new position, not reuse distances measured from the old one."""
+        b = self.make_bridge()
+        self.fill_table(b)
+        b.feed(modes(sim.me_identification("NEW1"), addr=0xABCDE0), SENTRY, 1)       # evicts 256, the farthest
+        b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0] - 200 / 60.0, lon=sim.ORIGIN[1],
+                                                alt_ft=1000, nic=9), gdl90.MSG_OWNSHIP), SENTRY, 1.1)
+        b.feed(modes(sim.me_identification("NEW2"), addr=0xABCDE1), SENTRY, 1.2)     # now 1 is the farthest
+        addresses = {r.address for r in self.reports(b, 1.3)}
+        self.assertNotIn(1, addresses)
+        self.assertIn(255, addresses)
+
+    def test_full_table_evicts_an_unreported_target_first(self):
+        b = self.make_bridge()
+        self.fill_table(b)
+        b.feed(modes(sim.me_identification("NOPOS"), addr=0xABCDE0), SENTRY, 0.5)   # evicts 256 NM
+        b.feed(modes(sim.me_identification("NEW"), addr=0xABCDE1), SENTRY, 0.6)     # NOPOS is new: 255 NM goes
+        self.assertEqual(len(self.reports(b, 1)), bridge.MAX_TARGETS - 2)
+        late = bridge.ACQUIRE_S + 0.6                # NOPOS never got a position: now it goes first
+        b.feed(modes(sim.me_identification("LATE"), addr=0xABCDE2), SENTRY, late)
+        addresses = {r.address for r in self.reports(b, late)}
+        self.assertEqual(len(addresses), bridge.MAX_TARGETS - 2)
+        self.assertIn(254, addresses)
+
+    def test_aircraft_beyond_half_a_zone_is_not_placed_at_its_alias(self):
+        """An aircraft 200 NM north of ownship: its first message decoded against ownship alone lands
+        about 160 NM south. It must not be shown there, and its even/odd pair must place it correctly."""
+        b = self.make_bridge(ref=sim.ORIGIN)
+        lat = sim.ORIGIN[0] + 200 / 60.0
+        b.feed(modes(sim.me_airborne_position(lat, sim.ORIGIN[1], 30000, 0)), SENTRY, 0)
+        self.assertEqual(self.reports(b, 0.2), [])
+        b.feed(modes(sim.me_airborne_position(lat, sim.ORIGIN[1], 30000, 1)), SENTRY, 0.5)
+        r, = self.reports(b, 1)
+        self.assertLess(bridge.dist_nm(r.lat, r.lon, lat, sim.ORIGIN[1]), 0.1)
+        near = self.make_bridge(ref=sim.ORIGIN)   # close traffic still decodes from one message
+        near.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] + 50 / 60.0, sim.ORIGIN[1], 30000, 0)), SENTRY, 0)
+        self.assertEqual(len(self.reports(near, 0.2)), 1)
+
+    def test_interleaved_newcomers_get_their_pair_in_a_full_table(self):
+        """Two new aircraft whose even and odd messages interleave must not evict each other before
+        either has a pair (no reference, so only a global decode can place them)."""
+        b = self.make_bridge()
+        self.fill_table(b, with_ownship=False)
+        new = (0xAAAA01, 0xAAAA02)
+        for sec in range(1, 6):
+            for addr in range(1, 201):   # these stay fresh; 201-256 become the least recently heard
+                b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] - addr / 120.0, sim.ORIGIN[1], 5000, sec % 2),
+                             addr=addr), SENTRY, sec)
+            for odd in (0, 1):
+                for addr in new:
+                    b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] + 0.1, sim.ORIGIN[1], 3000, odd), addr=addr),
+                           SENTRY, sec + 0.5)
+        addresses = {r.address for r in self.reports(b, 5.6)}
+        self.assertTrue(set(new) <= addresses)
+
+    def test_full_table_without_reference_evicts_least_recently_heard(self):
+        b = self.make_bridge()
+        self.fill_table(b, with_ownship=False)
+        b.feed(modes(sim.me_identification("NEW"), addr=0xABCDE0), SENTRY, 1)
+        addresses = {r.address for r in self.reports(b, 1)}
+        self.assertNotIn(1, addresses)              # heard first; distance means nothing without a reference
+        self.assertIn(256, addresses)
+        self.assertEqual(len(addresses), bridge.MAX_TARGETS - 1)
+
+
+def recording():
+    """(seconds, datagram) pairs of tests/data/compat-sanitized.txt.gz."""
+    path = Path(__file__).resolve().parent / "data" / "compat-sanitized.txt.gz"
+    with gzip.open(path, "rt") as fh:
+        return [(float(t), bytes.fromhex(h)) for t, h in (line.split() for line in fh if not line.startswith("#"))]
+
+
+class TestPythonFrameRules(FrameRules, unittest.TestCase):
+    def make_bridge(self, **kw):
+        return bridge.Bridge(log=lambda m: None, **kw)
+
+    reports = TrafficSemantics.reports
+
+    def test_full_table_scan_reuses_distances_until_the_reference_moves(self):
+        """Every newcomer in a full table scans all targets. On a board without an FPU, a distance per
+        target per newcomer was more than one core at 400 aircraft, so each distance is kept until the
+        reference or that target's position changes."""
+        b = self.make_bridge()
+        self.fill_table(b)
+        with mock.patch.object(bridge, "dist_nm", wraps=bridge.dist_nm) as dist:
+            for n in range(100):
+                b.feed(modes(sim.me_identification("NEW"), addr=0xB00000 + n), SENTRY, 1 + n / 200)
+            self.assertLessEqual(dist.call_count, bridge.MAX_TARGETS)
+            b.feed(gdl90.encode_report(gdl90.Report(address=0, lat=sim.ORIGIN[0] + 0.01, lon=sim.ORIGIN[1],
+                                                    alt_ft=1000, nic=9), gdl90.MSG_OWNSHIP), SENTRY, 1.6)
+            b.feed(modes(sim.me_identification("NEW"), addr=0xB10000), SENTRY, 1.7)
+            self.assertGreater(dist.call_count, bridge.MAX_TARGETS)   # ownship moved: measured again
+
+
+@unittest.skipIf(LIB is None, "no C compiler available")
+class TestCFrameRules(FrameRules, unittest.TestCase):
+    def make_bridge(self, **kw):
+        return sbcore_ffi.CBridge(LIB, **kw)
+
+    reports = TrafficSemantics.reports
 
 
 class TestPythonTraffic(TrafficSemantics, unittest.TestCase):

@@ -60,6 +60,13 @@ static int  sbd_uat_mdb(const uint8_t *mdb, size_t len, sbd_uat *r);
 
 ## 1090ES
 
+### Parity
+
+`sbd_crc24(msg)`: the CRC-24 remainder of all 112 bits, generator 0x1FFF409 (feedback 0xFFF409):
+start at 0; for each byte, XOR it into bits 16..23 of the remainder, then shift left 8 times, XORing
+0xFFF409 after each shift that carried out of bit 23. DF17 and DF18 carry plain parity in their last 24
+bits (no address overlay), so a valid message gives 0. The caller drops a message that does not.
+
 ### Type code and CPR format
 - `sbd_typecode`: ME bits 0..4.
 - `sbd_cpr_odd`: ME bit 21 (0 = even, 1 = odd).
@@ -150,7 +157,7 @@ Clear `*r` first. Return 0 to reject, 1 otherwise.
 
 | Field | Bits | Use |
 |---|---|---|
-| payload type | 0..4 | reject if > 10, or if `len == 18` and not 0 |
+| payload type | 0..4 | reject if > 10, if `len == 18` and not 0, or if `len == 34` and 0 (type 0 is the basic message only) |
 | address qualifier | 5..7 | `qualifier` |
 | address | 8..31 | `address` |
 | latitude | 32..54 (23) | |

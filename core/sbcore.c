@@ -26,9 +26,14 @@ const char sb_settings_path[] = "/settings/?action=get";
 #define NM_PER_RAD 3440.065
 #define MAX_LOCAL_REF_NM 170.0
 #define MAX_GLOBAL_REF_NM 300.0 /* beyond 1090 radio range */
+/* a one-message decode against ownship is ambiguous: an aircraft d NM away (180 < d <= 300) lands about
+   360 - d NM away in the wrong zone, so only results this close can be trusted (bridge.py) */
+#define MAX_REF_DECODE_NM (360.0 - MAX_GLOBAL_REF_NM)
 #define MAX_TARGET_KT 900.0
 #define JUMP_SLACK_NM 0.1
 #define GLOBAL_PAIR_WINDOW_S 10.0
+#define ACQUIRE_SLOTS 32 /* new targets protected from eviction while they collect a CPR pair... */
+#define ACQUIRE_S GLOBAL_PAIR_WINDOW_S /* ...for this long after first heard */
 #define DROP_AFTER_S 60.0
 #define STREAM_GAP_S 10.0
 #define ENABLE_RETRY_S 20.0
@@ -249,14 +254,23 @@ static int emitter_for(int tc, int ca) {
     return 0;
 }
 
+/* NIC of a position typecode with the integrity supplements at 0 (as bridge.py _NIC_BY_TC) */
 static int nic_for_tc(int tc) {
     switch (tc) {
     case 9: return 11; case 10: return 10; case 11: return 8; case 12: return 7;
-    case 13: return 6; case 14: return 5; case 15: return 4; case 16: return 3;
+    case 13: return 6; case 14: return 5; case 15: return 4; case 16: return 2;
     case 17: return 1; case 18: return 0; case 20: return 11; case 21: return 10;
     case 22: return 0; case 5: return 11; case 6: return 10; case 7: return 8; case 8: return 0;
     default: return 8;
     }
+}
+
+/* TC 11 is NIC 9 and TC 16 NIC 3 when the supplements say so: version 2 needs supplement-A (operational
+   status) and supplement-B (ME bit 8 of the position), version 1 has only the one supplement (bridge.py nic_for) */
+static int nic_for(int tc, int version, int sup_a, int sup_b) {
+    int nic = nic_for_tc(tc);
+    if ((tc == 11 || tc == 16) && sup_a && (version == 1 || (version == 2 && sup_b))) nic++;
+    return nic;
 }
 
 /* ------------------------------------------------------------------ UAT (DO-282B) Reed-Solomon */
@@ -378,8 +392,8 @@ static int uat_decode_frame(const uint8_t *msg, size_t len, sbd_uat *r) {
     uint8_t data[48];
     int nerr;
     if (len < 4 || msg[0] != 0x24) return 0;
-    if (msg[1] == 0xFF && msg[2] == 0xFF && msg[3] == 0xFF) { body = msg + 4; blen = len - 4; }
-    else { body = msg + 1; blen = len - 1; }
+    body = msg + 4; /* bytes 1-3: GDL90 time of reception (ff ff ff = not valid), skipped whatever its value */
+    blen = len - 4;
     if (blen != 48 && blen != 30) return 0;
     if (!sb_uat_correct(body, blen, data, &nerr)) return 0;
     if (!sbd_uat_mdb(data, blen == 48 ? 34 : 18, r)) return 0;
@@ -415,15 +429,58 @@ static sb_target *find_target(sb_bridge *b, uint32_t icao, int addr_type) {
     return NULL;
 }
 
-static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type) {
+static int ref_position(sb_bridge *b, double now, double *lat, double *lon) {
+    if (b->has_own && now - b->own_t < 10) { *lat = b->own_lat; *lon = b->own_lon; return 1; }
+    if (b->cfg.has_ref) { *lat = b->cfg.ref_lat; *lon = b->cfg.ref_lon; return 1; }
+    return 0;
+}
+
+static int acquiring(const sb_target *t, double now) { return !t->has_pos && now - t->first_seen < ACQUIRE_S; }
+
+/* Eviction order when the table is full (bridge.py _target): a target not being reported (lost, stale, or
+   never positioned and older than ACQUIRE_S) heard least recently; when more than ACQUIRE_SLOTS new targets
+   are still collecting their first position, the oldest of those; a positioned target, the farthest from
+   the reference (without one, the one heard least recently); last, the oldest new target. Smaller key goes
+   first; the lowest slot wins a tie. */
+static void evict_key(sb_bridge *b, sb_target *t, double now, int crowded, int has_ref, double rlat,
+                      double rlon, double k[3]) {
+    if (acquiring(t, now)) {
+        k[0] = crowded ? 1 : 3; k[1] = t->first_seen; k[2] = 0;
+    } else if (!t->has_pos || t->lost || now - t->pos_t > b->cfg.stale_s) {
+        k[0] = 0; k[1] = t->last_seen; k[2] = 0;
+    } else {
+        /* Every newcomer scans the whole table. Distances are cached until the reference or the target's
+           position changes, so boards without an FPU keep up (bridge.py _target does the same). */
+        if (has_ref && t->ref_gen != b->ref_gen) {
+            t->ref_nm = dist_nm(rlat, rlon, t->lat, t->lon);
+            t->ref_gen = b->ref_gen;
+        }
+        k[0] = 2; k[1] = has_ref ? -t->ref_nm : 0.0; k[2] = t->last_seen;
+    }
+}
+
+static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type, double now) {
     int i, victim = -1;
     sb_target *t;
     for (i = 0; i < SB_MAX_TARGETS; i++)
         if (!b->targets[i].used) { victim = i; break; }
-    if (victim < 0) { /* full: evict the target heard least recently */
+    if (victim < 0) {
+        double rlat = 0, rlon = 0, best[3], k[3];
+        int has_ref = ref_position(b, now, &rlat, &rlon), crowded, n_acquiring = 0;
+        if (has_ref && (!b->ref_gen || rlat != b->ref_at_lat || rlon != b->ref_at_lon)) {
+            b->ref_at_lat = rlat; b->ref_at_lon = rlon; b->ref_gen++;
+        }
+        for (i = 0; i < SB_MAX_TARGETS; i++) n_acquiring += acquiring(&b->targets[i], now);
+        crowded = n_acquiring > ACQUIRE_SLOTS;
         victim = 0;
-        for (i = 1; i < SB_MAX_TARGETS; i++)
-            if (b->targets[i].last_seen < b->targets[victim].last_seen) victim = i;
+        evict_key(b, &b->targets[0], now, crowded, has_ref, rlat, rlon, best);
+        for (i = 1; i < SB_MAX_TARGETS; i++) {
+            evict_key(b, &b->targets[i], now, crowded, has_ref, rlat, rlon, k);
+            if (k[0] < best[0] || (k[0] == best[0] && (k[1] < best[1] || (k[1] == best[1] && k[2] < best[2])))) {
+                victim = i;
+                memcpy(best, k, sizeof best);
+            }
+        }
     }
     t = &b->targets[victim];
     memset(t, 0, sizeof *t);
@@ -432,14 +489,10 @@ static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type) {
     t->addr_type = (uint8_t)addr_type;
     t->nic = 8;
     t->nacp = 0; /* unknown until a decoded mode-status message supplies it */
+    t->adsb_version = -1;
+    t->first_seen = now;
     t->airborne = 1;
     return t;
-}
-
-static int ref_position(sb_bridge *b, double now, double *lat, double *lon) {
-    if (b->has_own && now - b->own_t < 10) { *lat = b->own_lat; *lon = b->own_lon; return 1; }
-    if (b->cfg.has_ref) { *lat = b->cfg.ref_lat; *lon = b->cfg.ref_lon; return 1; }
-    return 0;
 }
 
 static int accept_pos(sb_target *t, double lat, double lon, double now, int has_ref, double rlat, double rlon,
@@ -453,13 +506,14 @@ static int accept_pos(sb_target *t, double lat, double lon, double now, int has_
     return 1;
 }
 
-static void set_pos(sb_bridge *b, sb_target *t, double lat, double lon, int tc, double now) {
+static void set_pos(sb_bridge *b, sb_target *t, double lat, double lon, const uint8_t *m, int tc, double now) {
     t->has_pos = 1;
     t->lost = 0;
     t->lat = lat;
     t->lon = lon;
     t->pos_t = now;
-    t->nic = (uint8_t)nic_for_tc(tc);
+    t->ref_gen = 0;
+    t->nic = (uint8_t)nic_for(tc, t->adsb_version, t->nic_sup_a, m[4] & 1); /* ME bit 8: supplement-B */
     b->stats.pos_decoded++;
 }
 
@@ -479,7 +533,7 @@ static int do_airborne(sb_bridge *b, sb_target *t, const uint8_t *m, int tc, dou
     /* 1) local decode against the target's own recent position */
     if (t->has_pos && now - t->pos_t < 60) {
         sbd_cpr_local(m, 360.0, t->lat, t->lon, &lat, &lon);
-        if (accept_pos(t, lat, lon, now, 1, t->lat, t->lon, MAX_LOCAL_REF_NM)) { set_pos(b, t, lat, lon, tc, now); return 0; }
+        if (accept_pos(t, lat, lon, now, 1, t->lat, t->lon, MAX_LOCAL_REF_NM)) { set_pos(b, t, lat, lon, m, tc, now); return 0; }
         /* Lost track: stop reporting, but keep the last accepted position as the speed-check anchor
            so neither this jump nor a repeat of it can return through the decodes below. */
         t->lost = 1;
@@ -492,7 +546,7 @@ static int do_airborne(sb_bridge *b, sb_target *t, const uint8_t *m, int tc, dou
         if (sbd_cpr_global(t->even, t->odd, t->even_t, t->odd_t, &lat, &lon)) {
             /* 170 NM is the local-CPR ambiguity radius; a global fix only has to be in radio range. */
             int hr = ref_position(b, now, &rlat, &rlon);
-            if (accept_pos(t, lat, lon, now, hr, rlat, rlon, MAX_GLOBAL_REF_NM)) { set_pos(b, t, lat, lon, tc, now); return 0; }
+            if (accept_pos(t, lat, lon, now, hr, rlat, rlon, MAX_GLOBAL_REF_NM)) { set_pos(b, t, lat, lon, m, tc, now); return 0; }
             b->stats.pos_rejected++;
             return 0;
         }
@@ -500,7 +554,7 @@ static int do_airborne(sb_bridge *b, sb_target *t, const uint8_t *m, int tc, dou
     /* 3) local decode against ownship or the fixed reference */
     if (ref_position(b, now, &rlat, &rlon)) {
         sbd_cpr_local(m, 360.0, rlat, rlon, &lat, &lon);
-        if (accept_pos(t, lat, lon, now, 1, rlat, rlon, MAX_LOCAL_REF_NM)) { set_pos(b, t, lat, lon, tc, now); return 0; }
+        if (accept_pos(t, lat, lon, now, 1, rlat, rlon, MAX_REF_DECODE_NM)) { set_pos(b, t, lat, lon, m, tc, now); return 0; }
         b->stats.pos_rejected++;
     }
     return 0;
@@ -514,26 +568,28 @@ static void do_surface(sb_bridge *b, sb_target *t, const uint8_t *m, int tc, dou
     else if (!ref_position(b, now, &rlat, &rlon)) return;
     sbd_cpr_local(m, 90.0, rlat, rlon, &lat, &lon);
     if (accept_pos(t, lat, lon, now, 0, 0, 0, 0) && dist_nm(rlat, rlon, lat, lon) < 40)
-        set_pos(b, t, lat, lon, tc, now);
+        set_pos(b, t, lat, lon, m, tc, now);
     sbd_surface_velocity(m, &v);
-    if (v.has_spd) { t->has_gs = 1; t->gs_kt = v.spd; }
-    if (v.has_trk) { t->has_trk = 1; t->track_deg = v.trk; t->track_type = 1; }
+    if (v.has_spd) { t->has_gs = 1; t->gs_kt = v.spd; t->gs_t = now; }
+    if (v.has_trk) { t->has_trk = 1; t->track_deg = v.trk; t->track_type = 1; t->trk_t = now; }
     t->has_vs = 1;
     t->vs_fpm = 0;
+    t->vs_t = now;
 }
 
 static void raw_modes(sb_bridge *b, const uint8_t *msg, size_t len, double now) {
     const uint8_t *body;
-    size_t blen;
     uint8_t m[14];
     int df, tc, addr_type = 0;
     uint32_t icao;
     sb_target *t;
-    if (len >= 4 && msg[1] == 0xFF && msg[2] == 0xFF && msg[3] == 0xFF) { body = msg + 4; blen = len - 4; }
-    else { body = msg + 1; blen = len - 1; }
-    if (blen < 11) { b->stats.modes_other++; return; }
+    /* ID, 3-byte GDL90 time of reception (ff ff ff = not valid), then the 14-byte message with its parity.
+       The Sentry passes the message on unchanged in Compatibility Mode. */
+    if (len != 18) { b->stats.modes_other++; return; }
+    body = msg + 4;
     df = body[0] >> 3;
     if (df != 17 && df != 18) { b->stats.modes_other++; return; }
+    if (sbd_crc24(body)) { b->stats.modes_bad_parity++; return; } /* DF17/18: plain parity, remainder 0 */
     if (df == 18) {
         int cf = body[0] & 7;
         if (cf == 3 || cf == 4 || cf == 7) { b->stats.modes_other++; return; }
@@ -543,10 +599,9 @@ static void raw_modes(sb_bridge *b, const uint8_t *msg, size_t len, double now) 
     if ((addr_type == 0 || addr_type == 2) && b->cfg.ownship_icao >= 0 &&
         icao == (uint32_t)b->cfg.ownship_icao) return;
     b->stats.modes_msgs++;
-    memset(m, 0, sizeof m);
-    memcpy(m, body, blen < 14 ? blen : 14);
+    memcpy(m, body, 14);
     t = find_target(b, icao, addr_type);
-    if (!t) t = new_target(b, icao, addr_type);
+    if (!t) t = new_target(b, icao, addr_type, now);
     t->last_seen = now;
     t->msgs++;
     tc = body[4] >> 3;
@@ -563,14 +618,22 @@ static void raw_modes(sb_bridge *b, const uint8_t *msg, size_t len, double now) 
     } else if (tc == 19) {
         sbd_velocity v;
         sbd_airborne_velocity(m, &v);
-        if (v.has_spd) { t->has_gs = 1; t->gs_kt = v.spd; }
-        if (v.has_trk) { t->has_trk = 1; t->track_deg = v.trk; t->track_type = (uint8_t)(v.gs_type ? 1 : 2); }
+        if (v.has_spd) { t->has_gs = 1; t->gs_kt = v.spd; t->gs_t = now; }
+        if (v.has_trk) {
+            t->has_trk = 1; t->track_deg = v.trk; t->track_type = (uint8_t)(v.gs_type ? 1 : 2); t->trk_t = now;
+        }
         t->has_vs = (uint8_t)v.has_vs;
         t->vs_fpm = v.vs;
-    } else if (tc == 31 && ME(m, 5, 3) <= 1 && ME(m, 40, 3) >= 1) {
-        /* Aircraft operational status, DO-260A/B (version 1 or 2): NACp in ME bits 45-48.
-           Version 0 has no NACp field, so those targets stay at 0 (unknown). */
-        t->nacp = (uint8_t)ME(m, 44, 4);
+        if (v.has_vs) t->vs_t = now;
+    } else if (tc == 31 && ME(m, 5, 3) <= 1) {
+        /* Aircraft operational status: version in ME bits 41-43. DO-260A/B (version 1 or 2) put NIC
+           supplement-A in ME bit 44 and NACp in ME bits 45-48. Version 0 has neither, so those targets
+           keep NACp 0 (unknown) and the lower NIC. */
+        t->adsb_version = (int8_t)ME(m, 40, 3);
+        if (t->adsb_version >= 1) {
+            t->nic_sup_a = (uint8_t)ME(m, 43, 1);
+            t->nacp = (uint8_t)ME(m, 44, 4);
+        }
     }
 }
 
@@ -588,7 +651,7 @@ static void raw_uat(sb_bridge *b, const uint8_t *msg, size_t len, double now) {
         r.address == (uint32_t)b->cfg.ownship_icao)
         return;
     t = find_target(b, r.address, addr_type);
-    if (!t) t = new_target(b, r.address, addr_type);
+    if (!t) t = new_target(b, r.address, addr_type, now);
     t->last_seen = now;
     t->msgs++;
     t->uat = 1;
@@ -605,15 +668,20 @@ static void raw_uat(sb_bridge *b, const uint8_t *msg, size_t len, double now) {
     t->airborne = (uint8_t)(r.airground != 2);
     t->has_gs = (uint8_t)r.has_gs;
     t->gs_kt = r.gs_kt;
-    if (r.has_trk) { t->has_trk = 1; t->track_deg = r.track_deg; t->track_type = (uint8_t)r.track_type; }
+    if (r.has_gs) t->gs_t = now;
+    if (r.has_trk) {
+        t->has_trk = 1; t->track_deg = r.track_deg; t->track_type = (uint8_t)r.track_type; t->trk_t = now;
+    }
     if (t->airborne) { t->has_vs = (uint8_t)r.has_vs; t->vs_fpm = r.vs_fpm; }
     else { t->has_vs = 1; t->vs_fpm = 0; }
+    if (t->has_vs) t->vs_t = now;
     if (accept_pos(t, r.lat, r.lon, now, 0, 0, 0, 0)) {
         t->has_pos = 1;
         t->lost = 0;
         t->lat = r.lat;
         t->lon = r.lon;
         t->pos_t = now;
+        t->ref_gen = 0;
         t->nic = (uint8_t)r.nic;
         b->stats.pos_decoded++;
     } else
@@ -731,7 +799,11 @@ int sb_tick(sb_bridge *b, double now, sb_emit_fn emit, void *ctx) {
         sb_target *t = &b->targets[i];
         traffic r;
         size_t fl;
+        /* each field ages on its own: a target that stops sending one must not show it stale */
         if (t->has_alt && now - t->alt_t > b->cfg.stale_s) t->has_alt = 0;
+        if (t->has_gs && now - t->gs_t > b->cfg.stale_s) t->has_gs = 0;
+        if (t->has_trk && now - t->trk_t > b->cfg.stale_s) t->has_trk = 0;
+        if (t->has_vs && now - t->vs_t > b->cfg.stale_s) t->has_vs = 0;
         if (!t->used || !t->has_pos || t->lost || now - t->pos_t > b->cfg.stale_s) continue;
         ghost_check(b, t);
         memset(&r, 0, sizeof r);
@@ -793,10 +865,11 @@ int sb_summary(const sb_bridge *b, char *buf, size_t cap) {
     if (pos < cap)
         pos += (size_t)snprintf(buf + pos, cap - pos,
                                 "] modes=%u other=%u uat=%u(fixed %u, bad %u) targets=%d positioned=%d (uat %d) "
-                                "sent=%u rejected=%u crc_bad=%u gps=%s ref=%s",
+                                "sent=%u rejected=%u crc_bad=%u parity_bad=%u gps=%s ref=%s",
                                 (unsigned)s->modes_msgs, (unsigned)s->modes_other, (unsigned)s->uat_msgs,
                                 (unsigned)s->uat_fixed, (unsigned)s->uat_bad, targets, live, live_uat,
                                 (unsigned)s->sent, (unsigned)s->pos_rejected, (unsigned)s->crc_bad,
+                                (unsigned)s->modes_bad_parity,
                                 b->gps_valid ? "ok" : "no",
                                 b->has_own ? "ownship" : (b->cfg.has_ref ? "fixed" : "none"));
     return (int)pos;

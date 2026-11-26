@@ -3,6 +3,7 @@ frames, same counters, same mode decisions. Runs on simulated traffic (including
 scenario and UAT frames with injected byte errors), structured fuzz and random garbage.
 Skips if no C compiler is available."""
 
+import math
 import random
 import sys
 import unittest
@@ -23,7 +24,7 @@ LIB = sbcore_ffi.load()
 SENTRY = "192.168.4.1"
 REF = sim.ORIGIN   # fallback CPR reference near the simulated traffic
 STAT_FIELDS = ["datagrams", "crc_bad", "modes_msgs", "modes_other", "pos_decoded", "pos_rejected", "sent",
-               "uat_msgs", "uat_fixed", "uat_bad", "uat_skipped"]
+               "uat_msgs", "uat_fixed", "uat_bad", "uat_skipped", "modes_bad_parity"]
 
 
 def busy_traffic():
@@ -149,13 +150,49 @@ class TestParity(unittest.TestCase):
                 if tc == 19 and rng.random() < 0.5:
                     me0 = (19 << 3) | rng.choice([3, 4])          # airspeed + heading subtypes
                 df = rng.choice([0x8D, 0x8D, 0x8D, 0x90, 0x91, 0x92, 0x95])
-                body = bytes([df]) + rng.choice(icaos).to_bytes(3, "big") + bytes([me0]) + \
-                    bytes(rng.randrange(256) for _ in range(6)) + bytes(rng.randrange(256) for _ in range(3))
+                first11 = bytes([df]) + rng.choice(icaos).to_bytes(3, "big") + bytes([me0]) + \
+                    bytes(rng.randrange(256) for _ in range(6))
+                parity = sim.modes_parity(int.from_bytes(first11, "big"))
+                if rng.random() < 0.1:   # some with broken parity, so the rejection path is compared too
+                    parity ^= 1 << rng.randrange(24)
+                body = first11 + parity.to_bytes(3, "big")
                 seq.append((t, gdl90.frame(b"\x21\xff\xff\xff" + body)))
                 t += rng.choice([0.05, 0.2, 0.5, 1.0, 3.0])
             ticks, reports, py = self.replay(seq, ref=ref)
             self.assertGreater(py.stats.pos_decoded, 50)
             self.assertGreater(reports, 50)
+
+    def test_crowded_sky_eviction(self):
+        """More aircraft than table slots, reception falling with range: the eviction order (and
+        everything downstream of it) must match, with ownship as the reference and without one."""
+        rng = random.Random(256)
+        tracks = []
+        for i in range(330):
+            d, brg = 200 * rng.random() ** 0.5, rng.uniform(0, 360)
+            tracks.append(sim.Track(0xC00000 + i, f"E{i:04d}", REF[0] + d / 60 * math.cos(math.radians(brg)),
+                                    REF[1] + d / 60 * math.sin(math.radians(brg)) / math.cos(math.radians(REF[0])),
+                                    9000, rng.uniform(90, 480), rng.uniform(0, 360), 0))
+        for send_ownship in (True, False):
+            s = sim.SimSentry(tracks=tracks, seed=5, send_ownship=send_ownship)
+            seq = []
+            for sec in range(25):
+                for d in s.datagrams(float(sec)):
+                    if rng.random() < 0.3:
+                        continue
+                    seq.append((1_700_000_000.0 + sec + rng.uniform(0, 0.9), d))
+            seq.sort(key=lambda p: p[0])
+            ticks, reports, py = self.replay(seq)
+            self.assertEqual(len(py.targets), bridge.MAX_TARGETS)
+            self.assertGreater(reports, 1000)
+
+    def test_sanitized_real_recording(self):
+        """Real Compatibility Mode traffic (synthetic identities and location), with and without a
+        reference and relay: both implementations must give identical reports and counters."""
+        from test_traffic_semantics import recording
+        for kw in ({}, {"ref": REF, "relay": True}):
+            ticks, reports, py = self.replay(recording(), **kw)
+            self.assertEqual(py.stats.modes_bad_parity, 0)
+            self.assertGreater(reports, 1000)
 
     def test_garbage(self):
         rng = random.Random(1234)

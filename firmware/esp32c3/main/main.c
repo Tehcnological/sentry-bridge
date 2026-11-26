@@ -30,7 +30,7 @@
 static const char *TAG = "sentry-bridge";
 static EventGroupHandle_t net;
 static esp_netif_t *sta;
-static fw_bridge bridge;  /* about 45 KB: static, not on a task stack */
+static fw_bridge bridge;  /* about 55 KB: static, not on a task stack */
 static int out_sock = -1;
 static struct sockaddr_in broadcast;
 static QueueHandle_t http_queue;
@@ -165,7 +165,7 @@ void app_main(void) {
     fw_init(&bridge, &hooks);
     ESP_LOGI(TAG, "Sentry Bridge %s for ESP32-C3", SB_VERSION);
 
-    static uint8_t buf[1600];  /* off the stack: sb_feed already uses about 3 KB of it */
+    static uint8_t buf[1600];  /* off the stack: sb_feed already uses about 3.5 KB of it, about 5 KB at peak */
     for (;;) {
         join_receiver();
         int in_sock = udp_input();
