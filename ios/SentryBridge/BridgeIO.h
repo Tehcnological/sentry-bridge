@@ -16,6 +16,9 @@ typedef struct {
     /* Bit i set: the latest send to destination i (in the order added, This device first) failed.
        send_errors counts only frames that reached no destination. */
     uint32_t unreachable;
+    /* Mode S messages dropped for failing their CRC-24 parity: radio noise, or a receiver that sends
+       another layout. Kept apart from crc_bad, which counts damaged GDL90 frames on the link. */
+    uint32_t parity_bad;
 } sbio_status;
 /* Serialized worker API. Strict exclusive bind; IPv4 unicast only. */
 sbio *sbio_open(const char *source_ip, uint16_t input_port,

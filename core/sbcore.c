@@ -442,7 +442,7 @@ static int acquiring(const sb_target *t, double now) { return !t->has_pos && now
    are still collecting their first position, the oldest of those; a positioned target, the farthest from
    the reference (without one, the one heard least recently); last, the oldest new target. Smaller key goes
    first; the lowest slot wins a tie. */
-static void evict_key(sb_bridge *b, sb_target *t, double now, int crowded, int has_ref, double rlat,
+static void evict_key(const sb_bridge *b, sb_target *t, double now, int crowded, int has_ref, double rlat,
                       double rlon, double k[3]) {
     if (acquiring(t, now)) {
         k[0] = crowded ? 1 : 3; k[1] = t->first_seen; k[2] = 0;
@@ -468,7 +468,8 @@ static sb_target *new_target(sb_bridge *b, uint32_t icao, int addr_type, double 
         double rlat = 0, rlon = 0, best[3], k[3];
         int has_ref = ref_position(b, now, &rlat, &rlon), crowded, n_acquiring = 0;
         if (has_ref && (!b->ref_gen || rlat != b->ref_at_lat || rlon != b->ref_at_lon)) {
-            b->ref_at_lat = rlat; b->ref_at_lon = rlon; b->ref_gen++;
+            b->ref_at_lat = rlat; b->ref_at_lon = rlon;
+            if (!++b->ref_gen) b->ref_gen = 1; /* 0 means never measured */
         }
         for (i = 0; i < SB_MAX_TARGETS; i++) n_acquiring += acquiring(&b->targets[i], now);
         crowded = n_acquiring > ACQUIRE_SLOTS;
