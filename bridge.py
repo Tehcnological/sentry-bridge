@@ -72,6 +72,8 @@ def fold_lon(lon):
 GLOBAL_PAIR_WINDOW_S = 10.0
 DROP_AFTER_S = 60.0
 MAX_TARGETS = 256              # SB_MAX_TARGETS: the C core's fixed target table
+ACQUIRE_SLOTS = 32             # new targets protected from eviction while they collect a CPR pair...
+ACQUIRE_S = GLOBAL_PAIR_WINDOW_S   # ...for this long after first heard
 MAX_FRAME_BYTES = 1024         # the C core's frame buffer (sb_feed raw[])
 STREAM_GAP_S = 10.0            # silence longer than this means the Sentry (or bridge) restarted
 ENABLE_RETRY_S = 20.0          # auto-enable: wait between attempts
@@ -130,6 +132,7 @@ class Target:
     adsb_version: int = -1      # from operational status; -1 until one arrives
     nic_sup_a: bool = False     # NIC supplement-A, from operational status
     last_seen: float = 0.0
+    first_seen: float = 0.0     # when this table entry was created
     even: tuple | None = None   # (hex, t)
     odd: tuple | None = None
     msgs: int = 0
@@ -303,11 +306,14 @@ class Bridge:
 
     def _target(self, addr_type: int, icao: int, now: float) -> Target:
         """The target for an address. A new one takes the lowest free slot. When all MAX_TARGETS are
-        in use it replaces, in this order: a target not being reported (no position, lost or stale)
-        heard least recently; else the one farthest from the reference; without a reference, the one
-        heard least recently. Lowest slot on a tie, as in C. Keeping near traffic matters most, and
-        least-recently-heard alone churns the table and drops near targets once more aircraft than
-        slots are heard."""
+        in use it replaces, in this order: a target not being reported (lost, stale, or never positioned
+        and older than ACQUIRE_S) heard least recently; when more than ACQUIRE_SLOTS new targets are
+        still collecting their first position, the oldest of those; a positioned target, the farthest
+        from the reference (without one, the one heard least recently); last, the oldest new target.
+        Lowest slot on a tie, as in C. Keeping near traffic matters most: least-recently-heard alone
+        churns the table and drops near targets once more aircraft than slots are heard. New targets
+        get a short window, or newcomers whose even and odd messages interleave would keep evicting
+        each other before either has a pair."""
         key = (addr_type, icao)
         t = self.targets.get(key)
         if t is None:
@@ -316,16 +322,20 @@ class Bridge:
                 slot = next(i for i in range(MAX_TARGETS) if i not in used)
             else:
                 ref = self.ref_position(now)
+                acquiring = lambda o: o.lat is None and now - o.first_seen < ACQUIRE_S
+                crowded = sum(map(acquiring, self.targets.values())) > ACQUIRE_SLOTS
 
                 def order(o):
+                    if acquiring(o):
+                        return (1 if crowded else 3, o.first_seen, 0, o.slot)
                     if o.lat is None or o.lost or now - o.pos_t > self.stale_s:
                         return (0, o.last_seen, 0, o.slot)
                     far = dist_nm(ref[0], ref[1], o.lat, o.lon) if ref is not None else 0.0
-                    return (1, -far, o.last_seen, o.slot)
+                    return (2, -far, o.last_seen, o.slot)
                 victim = min(self.targets.values(), key=order)
                 self._forget((victim.addr_type, victim.icao))
                 slot = victim.slot
-            t = self.targets[key] = Target(icao=icao, addr_type=addr_type, slot=slot)
+            t = self.targets[key] = Target(icao=icao, addr_type=addr_type, slot=slot, first_seen=now)
         return t
 
     def _forget(self, key):

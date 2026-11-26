@@ -401,10 +401,30 @@ class FrameRules:
         b = self.make_bridge()
         self.fill_table(b)
         b.feed(modes(sim.me_identification("NOPOS"), addr=0xABCDE0), SENTRY, 0.5)   # evicts 256 NM
-        b.feed(modes(sim.me_identification("NEW"), addr=0xABCDE1), SENTRY, 0.6)     # evicts NOPOS
-        addresses = {r.address for r in self.reports(b, 1)}
-        self.assertEqual(len(addresses), bridge.MAX_TARGETS - 1)
-        self.assertIn(255, addresses)               # the next farthest survives
+        b.feed(modes(sim.me_identification("NEW"), addr=0xABCDE1), SENTRY, 0.6)     # NOPOS is new: 255 NM goes
+        self.assertEqual(len(self.reports(b, 1)), bridge.MAX_TARGETS - 2)
+        late = bridge.ACQUIRE_S + 0.6                # NOPOS never got a position: now it goes first
+        b.feed(modes(sim.me_identification("LATE"), addr=0xABCDE2), SENTRY, late)
+        addresses = {r.address for r in self.reports(b, late)}
+        self.assertEqual(len(addresses), bridge.MAX_TARGETS - 2)
+        self.assertIn(254, addresses)
+
+    def test_interleaved_newcomers_get_their_pair_in_a_full_table(self):
+        """Two new aircraft whose even and odd messages interleave must not evict each other before
+        either has a pair (no reference, so only a global decode can place them)."""
+        b = self.make_bridge()
+        self.fill_table(b, with_ownship=False)
+        new = (0xAAAA01, 0xAAAA02)
+        for sec in range(1, 6):
+            for addr in range(1, 201):   # these stay fresh; 201-256 become the least recently heard
+                b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] - addr / 120.0, sim.ORIGIN[1], 5000, sec % 2),
+                             addr=addr), SENTRY, sec)
+            for odd in (0, 1):
+                for addr in new:
+                    b.feed(modes(sim.me_airborne_position(sim.ORIGIN[0] + 0.1, sim.ORIGIN[1], 3000, odd), addr=addr),
+                           SENTRY, sec + 0.5)
+        addresses = {r.address for r in self.reports(b, 5.6)}
+        self.assertTrue(set(new) <= addresses)
 
     def test_full_table_without_reference_evicts_least_recently_heard(self):
         b = self.make_bridge()
