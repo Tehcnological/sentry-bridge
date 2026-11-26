@@ -1,6 +1,6 @@
 """ctypes binding to the C core (core/sbcore.c), used by the parity tests.
 
-Finds the shared library via $SBCORE_LIB, or compiles core/sbcore.c with the first C compiler
+Finds the shared library via $SBCORE_LIB ($SBCORE256_LIB for the 256-target build), or compiles core/sbcore.c with the first C compiler
 on PATH into build/ (cached). Returns None when neither works, and the tests skip.
 """
 
@@ -83,7 +83,8 @@ def _build(max_targets: int | None = None) -> Path | None:
 
 
 def load(max_targets: int | None = None):
-    path = (os.environ.get("SBCORE_LIB") if max_targets is None else None) or _build(max_targets)
+    env = {None: "SBCORE_LIB", 256: "SBCORE256_LIB"}.get(max_targets)
+    path = (os.environ.get(env) if env else None) or _build(max_targets)
     if not path:
         return None
     lib = ctypes.CDLL(str(path))

@@ -126,7 +126,8 @@ python -m unittest discover -s tests -v
 
 Tests that need a compiler or JDK skip themselves when it is missing. The local release gate requires
 zero skips. They find native builds in
-`build-c/` or `build/`, or through `SBCORE_LIB` and `SENTRY_BRIDGE_BIN`. Windows JNI replay uses
+`build-c/` or `build/`, or through `SBCORE_LIB` (`SBCORE256_LIB` for the 256-target build the firmware uses) and
+`SENTRY_BRIDGE_BIN`. Windows JNI replay uses
 the CMake-built `sbjni.dll` through `SENTRY_JNI_LIB`; Linux/macOS can compile the wrapper directly.
 
 `tools/smoke_bridge.py <bridge command>` checks any build end to end: it streams simulated traffic
