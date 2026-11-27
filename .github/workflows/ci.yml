@@ -1,6 +1,7 @@
 name: CI
 
-# Standard GitHub-hosted runners only, with no secrets: signed releases stay local.
+# GitHub-hosted runners, or Chris's own machines for his own runs when SELF_HOSTED is on (pick-runner below).
+# The only secret is a read-only runner-status token used by pick-runner. Signed releases stay local.
 # Details and limits: docs/CI.md.
 on:
   push:
@@ -36,6 +37,28 @@ env:
     testSavedRoutingSurvivesRelaunch testOccupiedReceiverPortIsActionable testDemoWithSampleData testSyntheticUDPRoundTrip
 
 jobs:
+  # Picks the self-hosted runner only when the repo variable SELF_HOSTED is 'on', Tehcnological started the run
+  # (never a fork PR or anyone else), and the machine is online and idle. Otherwise the GitHub-hosted runner, as before,
+  # so a job never waits on a machine that is off. RUNNER_STATUS_TOKEN is a fine-grained PAT with only
+  # Administration: read on this repo. The runner re-checks the same rules in its own job-started hook.
+  pick-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      windows: ${{ steps.pick.outputs.windows }}
+      macos: ${{ steps.pick.outputs.macos }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          TRUSTED: ${{ vars.SELF_HOSTED == 'on' && github.repository_owner == 'Tehcnological' && github.actor == 'Tehcnological' && github.triggering_actor == 'Tehcnological' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+        run: |
+          idle() { [ "$TRUSTED" = true ] && [ -n "$GH_TOKEN" ] && [ "$(timeout 30 gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq "[.runners[] | select(.status == \"online\" and (.busy | not) and any(.labels[]; .name == \"$1\"))] | length" 2>/dev/null || echo 0)" -gt 0 ] 2>/dev/null; }
+          if idle cmd1; then echo 'windows=["self-hosted","cmd1","windows","x64"]'; else echo 'windows="windows-latest"'; fi >> "$GITHUB_OUTPUT"
+          if idle macmini; then echo 'macos=["self-hosted","macmini","macos","arm64"]'; else echo 'macos="macos-latest"'; fi >> "$GITHUB_OUTPUT"
+
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
@@ -122,9 +145,9 @@ jobs:
 
   windows:
     name: Windows
-    needs: changes
+    needs: [changes, pick-runner]
     if: needs.changes.outputs.code == 'true'
-    runs-on: windows-latest
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.windows) }}
     timeout-minutes: 45
     steps:
       # The release source checks compare exact bytes, so keep the committed LF line endings.
@@ -157,9 +180,9 @@ jobs:
 
   macos:
     name: macOS
-    needs: changes
+    needs: [changes, pick-runner]
     if: needs.changes.outputs.code == 'true'
-    runs-on: macos-latest
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.macos) }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -380,7 +403,7 @@ jobs:
   # The one required check. Skipped platforms pass here, so docs-only changes can merge.
   ci:
     name: CI
-    needs: [changes, lint, linux, windows, macos, android, ios, ios-ui, ios-lite]
+    needs: [pick-runner, changes, lint, linux, windows, macos, android, ios, ios-ui, ios-lite]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -390,5 +413,5 @@ jobs:
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           echo "$NEEDS" | jq -e '
-            ([.changes, .lint, .linux] | all(.result == "success"))
+            ([."pick-runner", .changes, .lint, .linux] | all(.result == "success"))
             and ([.windows, .macos, .android, .ios, ."ios-ui", ."ios-lite"] | all(.result == "success" or .result == "skipped"))' > /dev/null
