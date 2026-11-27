@@ -2,7 +2,8 @@
 
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs on every pull request to `master`, on
 every push to `master`, and by hand from the Actions tab. It uses standard GitHub-hosted runners, which
-are free for public repositories, and no secrets.
+are free for public repositories. The Windows and macOS jobs can instead run on Chris's own machines
+(see Self-hosted runners below).
 
 ## Jobs
 
@@ -56,6 +57,20 @@ They are not required checks: Bugbot often reports a neutral result, and neither
   secrets or write access. First-time contributors need approval before their runs start.
 - Actions are pinned to commits. Dependabot proposes updates monthly. Gradle and the org.json test
   dependency are checked against SHA-256 hashes.
+
+## Self-hosted runners
+
+The `pick-runner` job sends the Windows job to CMD1 (`self-hosted, cmd1, windows, x64`) and the macOS job to
+the Mac mini (`self-hosted, macmini, macos, arm64`) only when all of these hold:
+
+- the repository variable `SELF_HOSTED` is `on` (off by default; delete it or set it to anything else to stop);
+- `Tehcnological` started the run (actor and triggering actor), by a push, by hand, or by a pull request from a
+  branch of this repository, never from a fork;
+- the machine's runner is online and idle, checked with the `RUNNER_STATUS_TOKEN` secret, a fine-grained token
+  with only Administration: read on this repository.
+
+Otherwise the job runs on `windows-latest` or `macos-latest` as before, so it never waits for a machine that is
+off. The runners enforce the same rules in a job-started hook, so a fork that edits `runs-on` is refused there.
 
 ## Limits
 
